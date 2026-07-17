@@ -2,7 +2,7 @@ const pool = require('../../config/database');
  const authRepository = {
     findUserByPhone: async (phone)=>{
         const result = await pool.query(`
-            SELECT id, phone, email, password_hash, failed_login_attempts, locked_until
+            SELECT id, phone, email, password_hash, failed_login_attempts, locked_until, (locked_until > NOW()) AS is_locked
             FROM users
             WHERE phone = $1
             `, [phone]

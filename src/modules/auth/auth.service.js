@@ -17,7 +17,7 @@ const authService = {
         }
 
         if(user.locked_until){
-            if(new Date(user.locked_until) > new Date()){
+            if(user.is_locked){
                 const err = new Error("Tài khoản bị tạm khóa");
             err.statusCode = 403;
             throw err
@@ -31,9 +31,9 @@ const authService = {
         if(!isCorrectPassword){
             const attempts = Number(user.failed_login_attempts || 0 ) + 1;
             await authRepository.updateFailedLogin(user.phone, attempts,attempts >= 5 ? 30 : 0);
-            const err = new Error(attempts >= 5 ? "Tài khoản của bạn đã bị tạm khóa" : "Sai mật khẩu");
+            const err = new Error(attempts >= 5 ? "Tài khoản bị tạm khóa" : "Sai mật khẩu");
             err.remainingAttempts = Math.max(5 - attempts, 0)
-            err.statusCode = 401;
+            err.statusCode =attempts >= 5 ? 403 : 401;
             throw err;
         }
 

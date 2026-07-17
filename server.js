@@ -11,6 +11,11 @@ app.use(express.json());
 app.use('/api/v2',router);
 
 app.use(errorHandler);
-server.listen(PORT,()=>{
+
+if(process.env.NODE_ENV != "test"){
+    server.listen(PORT,()=>{
     console.log(`Server running ${PORT}`);
 });
+}
+
+module.exports = app;

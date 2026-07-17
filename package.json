@@ -3,6 +3,17 @@
     "bcrypt": "^6.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "uuidv7": "^1.2.1"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "SET NODE_EVN=test&& jest",
+    "prepare": "husky"
   }
 }

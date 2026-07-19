@@ -1,5 +1,4 @@
 const pool = require('../../config/database');
-const { register } = require('./auth.service');
  const authRepository = {
     findUserByPhone: async (phone) => {
         const result = await pool.query(`

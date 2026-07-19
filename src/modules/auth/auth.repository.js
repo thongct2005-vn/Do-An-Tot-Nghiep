@@ -1,5 +1,6 @@
 const pool = require('../../config/database');
  const authRepository = {
+/*Login -----------------------------------------------------------*/
     findUserByPhone: async (phone) => {
         const result = await pool.query(`
             SELECT id, phone, email, password_hash, failed_login_attempts, locked_until, (locked_until > NOW()) AS is_locked
@@ -31,6 +32,17 @@ const pool = require('../../config/database');
             `, [phone, attempts, lockMinutes]
         );
     },
+
+    updateRefeshToken: async(refreshToken, userId)=>{
+        await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`,[refreshToken, userId]);
+    },
+
+    findUserByRefeshToken:async(refreshToken)=>{
+        const result = await pool.query(`SELECT id, phone FROM users WHERE refresh_token = $1`,[refreshTokenToe]);
+        return result.rows[0];
+    },
+
+/*Register -----------------------------------------------------------*/
 
     addUser: async (userId, walletId, phone, passwordHash)=>{
         const client = await pool.connect();

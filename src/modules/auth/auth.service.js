@@ -4,6 +4,25 @@ const bcrypt = require('bcrypt');
 const { isValidPhone, isValidPasswordOrPin} = require('../../utils/validators');
 const { uuidv7 } = require('uuidv7');
 const authService = {
+    isPhoneExist: async({phone})=>{
+        if(!phone){
+            const err = new Error("Thiếu số điện thoại");
+            err.statusCode = 400;
+            throw err;
+        }
+
+        if(!isValidPhone(phone)){
+            const err = new Error("Số điện thoại không hợp lệ");
+            err.statusCode = 400;
+            throw err;
+        }
+
+        const user = await authRepository.findUserByPhone(phone);
+        return{
+            is_phone_exists: user!=null
+        }
+    },
+
     login: async ({phone, password}) =>{
         if(!phone || !password){
             const err = new Error("Thiếu số điện thoại hoặc mật khẩu");

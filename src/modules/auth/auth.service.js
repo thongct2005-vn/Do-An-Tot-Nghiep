@@ -19,7 +19,7 @@ const authService = {
 
         const user = await authRepository.findUserByPhone(phone);
         return{
-            is_phone_exists: user!=null
+            'is_phone_exists': user!=null
         }
     },
 

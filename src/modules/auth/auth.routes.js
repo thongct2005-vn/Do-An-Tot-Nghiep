@@ -5,4 +5,5 @@ const authController = require('./auth.controller');
 
 router.post('/login',authController.login);
 router.post('/register',authController.register);
+router.post('/checkPhoneExists',authController.isPhoneExist);
 module.exports = router;

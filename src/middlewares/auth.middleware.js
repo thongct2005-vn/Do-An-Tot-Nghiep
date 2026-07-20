@@ -8,7 +8,6 @@ const authMiddleware = {
     try {
       const authHeader = req.headers["authorization"];
       const accessToken = authHeader && authHeader.split(" ")[1];
-
       if (!accessToken) {
         const err = new Error(
           "Thiếu thông tin xác thực, vui lòng đăng nhập lại",

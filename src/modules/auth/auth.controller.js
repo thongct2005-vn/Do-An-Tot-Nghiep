@@ -45,8 +45,8 @@ const authController = {
       const { id, phone } = req.user;
       const data = {
         user_info: {
-          user_id: user.id,
-          phone: user.phone,
+          user_id: id,
+          phone: phone,
         },
       };
       return successResponse(res, 200, "Lấy thông tin người dùng thành công", data);
@@ -54,7 +54,7 @@ const authController = {
       next(e);
     }
   },
-  
+
   /*Register----------------------------------------- */
 
   async register(req, res, next) {

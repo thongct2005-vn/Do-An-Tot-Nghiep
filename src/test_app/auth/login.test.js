@@ -16,8 +16,8 @@ describe(`Kiểm tra đăng nhập (${endpointLogin})`,() => {
         const userId = uuidv7();
 
         await pool.query(`INSERT INTO users(id, user_type, full_name, email, phone, password_hash,
-             status, created_at, updated_at, failed_login_attempts, locked_until) 
-            VALUES ($1, 'USER', 'Thong', NULL, $2, $3, 'ACTIVE', NULL, NULL, 0, NULL)`
+             status, created_at, updated_at, failed_login_attempts, locked_until, refresh_token) 
+            VALUES ($1, 'USER', 'Thong', NULL, $2, $3, 'ACTIVE', NULL, NULL, 0, NULL, NULL)`
             ,[userId, phone, password_hash]
         );
         
@@ -69,7 +69,7 @@ describe(`Kiểm tra đăng nhập (${endpointLogin})`,() => {
         expect(res.statusCode).toBe(401);
         expect(res.body.status).toBe("error");
         expect(res.body.code).toBe(401);
-        expect(res.body.message).toBe("Sai mật khẩu");
+        expect(res.body.message).toBe("Mật khẩu không chính xác");
     });
 
     test ("Đăng nhập nhưng tài khoản bị tạm khóa", async()=>{

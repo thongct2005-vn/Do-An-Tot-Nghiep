@@ -1,27 +1,32 @@
-const pool = require('../../config/database');
- const authRepository = {
-/*Login -----------------------------------------------------------*/
-    findUserByPhone: async (phone) => {
-        const result = await pool.query(`
+const pool = require("../../config/database");
+const authRepository = {
+  /*Login -----------------------------------------------------------*/
+  async findUserByPhone(phone) {
+    const result = await pool.query(
+      `
             SELECT id, phone, email, password_hash, failed_login_attempts, locked_until, (locked_until > NOW()) AS is_locked
             FROM users
             WHERE phone = $1
-            `, [phone]
-            );
-        return result.rows[0];
-    },
+            `,
+      [phone],
+    );
+    return result.rows[0];
+  },
 
-    resetFailedLogin: async (phone) => {
-        await pool.query(`
+  async resetFailedLogin(phone) {
+    await pool.query(
+      `
             UPDATE users
             SET failed_login_attempts = 0, locked_until = NULL
             WHERE phone = $1
-            `, [phone]
-        );
-    },
+            `,
+      [phone],
+    );
+  },
 
-    updateFailedLogin: async (phone, attempts, lockMinutes = 0) => {
-        await pool.query(`
+  async updateFailedLogin(phone, attempts, lockMinutes = 0) {
+    await pool.query(
+      `
             UPDATE users
             SET failed_login_attempts = $2,
             locked_until = CASE
@@ -29,52 +34,65 @@ const pool = require('../../config/database');
                 ELSE locked_until
             END
             WHERE phone = $1
-            `, [phone, attempts, lockMinutes]
-        );
-    },
+            `,
+      [phone, attempts, lockMinutes],
+    );
+  },
 
-    updateRefeshToken: async(refreshToken, userId)=>{
-        await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`,[refreshToken, userId]);
-    },
+  async updateRefeshToken(refreshToken, userId) {
+    await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
+      refreshToken,
+      userId,
+    ]);
+  },
 
-    findUserByRefeshToken:async(refreshToken)=>{
-        const result = await pool.query(`SELECT id, phone FROM users WHERE refresh_token = $1`,[refreshTokenToe]);
-        return result.rows[0];
-    },
+  async findUserByRefreshToken(refreshToken) {
+    const result = await pool.query(
+      `SELECT id, phone FROM users WHERE refresh_token = $1`,
+      [refreshToken],
+    );
+    return result.rows[0];
+  },
 
-/*Register -----------------------------------------------------------*/
+  /*Register -----------------------------------------------------------*/
 
-    addUser: async (userId, walletId, phone, passwordHash)=>{
-        const client = await pool.connect();
-        try{
-            await client.query('BEGIN');
+  async addUser(userId, walletId, phone, passwordHash) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-            await client.query(`
+      await client.query(
+        `
             INSERT INTO users(id, phone, password_hash)
             VALUES ($1, $2, $3)
-            `, [userId, phone, passwordHash]);
+            `,
+        [userId, phone, passwordHash],
+      );
 
-            await client.query(`
+      await client.query(
+        `
             INSERT INTO wallets(id, user_id)
             VALUES ($1, $2)
-            `, [walletId, userId]);
+            `,
+        [walletId, userId],
+      );
 
-            await client.query(`
+      await client.query(
+        `
             INSERT INTO wallet_balances(wallet_id)
             VALUES ($1)
-            `, [walletId]);
+            `,
+        [walletId],
+      );
 
-            await client.query('COMMIT');
-        }
-        catch(e){
-            await client.query('ROLLBACK');
-            throw e
-        }
-        finally{
-            client.release();
-        }
-    },
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+};
 
- }
-
- module.exports = authRepository
+module.exports = authRepository;

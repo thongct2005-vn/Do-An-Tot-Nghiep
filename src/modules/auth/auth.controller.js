@@ -2,7 +2,7 @@ const { successResponse } = require("../../utils/apiResponse");
 const authService = require("./auth.service");
 
 const authController = {
-  isPhoneExist: async (req, res, next) => {
+  async isPhoneExist(req, res, next) {
     try {
       const { phone } = req.body;
       const result = await authService.isPhoneExist({ phone });
@@ -19,7 +19,7 @@ const authController = {
 
   /*Login----------------------------------------- */
 
-  login: async (req, res, next) => {
+  async login(req, res, next) {
     try {
       const { phone, password } = req.body;
       const result = await authService.login({ phone, password });
@@ -29,19 +29,35 @@ const authController = {
     }
   },
 
-  refresshToken: async(req, res, next)=>{
-    try{
-        const { refressh_token} = req.body;
-        const result = await authService.refreshToken({refressh_token});
-        return successResponse(res, 200, "Làm mới token thành công", result);
-    }
-    catch(e){
-        next(e);
+  async refreshToken(req, res, next) {
+    try {
+      const { refressh_token } = req.body;
+      const result = await authService.refreshToken({ refressh_token });
+      return successResponse(res, 200, "Làm mới token thành công", result);
+    } catch (e) {
+      next(e);
     }
   },
+
+  //Lấy thông tin từ accessToken truyền lên
+  async getMe(req, res, next) {
+    try {
+      const { id, phone } = req.user;
+      const data = {
+        user_info: {
+          user_id: user.id,
+          phone: user.phone,
+        },
+      };
+      return successResponse(res, 200, "Lấy thông tin người dùng thành công", data);
+    } catch (e) {
+      next(e);
+    }
+  },
+  
   /*Register----------------------------------------- */
 
-  register: async (req, res, next) => {
+  async register(req, res, next) {
     try {
       const { phone, password } = req.body;
       const result = await authService.register({ phone, password });

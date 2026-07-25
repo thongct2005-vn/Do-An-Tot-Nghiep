@@ -8,6 +8,7 @@ const {
 } = require("../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const jwt = require("jsonwebtoken");
+const tokenUtil = require("../../utils/jwt");
 const ACCESS_SECRET = process.env.ACCESS_SECRET;
 const REFRESH_SECRET = process.env.REFRESH_SECRET;
 
@@ -78,20 +79,13 @@ const authService = {
         attempts >= 5 ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
       );
       err.remainingAttempts = Math.max(5 - attempts, 0);
-      err.statusCode = attempts >= 5 ? 403 : 401;
+      err.statusCode = attempts >= 5 ? 403 : 400;
       throw err;
     }
 
     await authRepository.resetFailedLogin(user.phone);
 
-    const accessToken = jwt.sign(
-      { id: user.id, phone: user.phone },
-      ACCESS_SECRET,
-      { expiresIn: "15m" },
-    );
-    const refreshToken = jwt.sign({ id: user.id }, REFRESH_SECRET, {
-      expiresIn: "30d",
-    });
+    const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
 
     await authRepository.updateRefeshToken(refreshToken, user.id);
     return {
@@ -102,6 +96,7 @@ const authService = {
       user_info: {
         user_id: user.id,
         phone: user.phone,
+        full_name: user.full_name,
       },
     };
   },
@@ -115,26 +110,16 @@ const authService = {
       err.statusCode = 401;
       throw err;
     }
+    const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
 
-    const newAccessToken = jwt.sign(
-      { id: user.id, phone: user.phone },
-      ACCESS_SECRET,
-      { expiresIn: "15m" },
-    );
-    const newRefreshToken = jwt.sign(
-      { id: user.id, phone: user.phone },
-      REFRESH_SECRET,
-      { expiresIn: "7d" },
-    );
+    await authRepository.updateRefeshToken(newRefreshToken, user.id);
 
-    await authRepository.updateRefeshToken(newRefreshToken);
-    
-    return{
-      token:{
-        access_token: newAccessToken,
-        refresh_token: newRefreshToken,
-      }
-    }
+    return {
+      token: {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      },
+    };
   },
 
   /*Register------------------------------------------------*/

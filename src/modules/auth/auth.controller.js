@@ -31,22 +31,22 @@ const authController = {
 
   async refreshToken(req, res, next) {
     try {
-      const { refressh_token } = req.body;
-      const result = await authService.refreshToken({ refressh_token });
+      const { refresh_token } = req.body;
+      const result = await authService.refreshToken({ refresh_token });
       return successResponse(res, 200, "Làm mới token thành công", result);
     } catch (e) {
       next(e);
     }
   },
 
-  //Lấy thông tin từ accessToken truyền lên
   async getMe(req, res, next) {
     try {
-      const { id, phone } = req.user;
+      const { user_id, phone, full_name } = req.user;
       const data = {
         user_info: {
-          user_id: id,
+          user_id: user_id,
           phone: phone,
+          full_name: full_name,
         },
       };
       return successResponse(res, 200, "Lấy thông tin người dùng thành công", data);

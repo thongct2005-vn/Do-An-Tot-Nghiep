@@ -1,44 +1,45 @@
 const otpRepository = require("./otp.repository");
 const { uuidv7 } = require("uuidv7");
 const bcrypt = require("bcrypt");
-
+const crypto = require("crypto");
+const { sendOtp, verifyOtp } = require("../../services/twilio.service");
 const otpService = {
-  async generateAndSaveOtp({ identifier, purpose }) {
-    const isEmail = identifier.includes("@");
-    const phone = isEmail ? null : identifier;
-    const email = isEmail ? identifier : null;
+  async generateAndSaveOtp({ email }) {
+    if (!email) {
+      const err = new Error("Thiếu email");
+      err.statusCode = 400;
+      throw err;
+    }
     const expiredMinutes = 5;
-    const existing = await otpRepository.findExistingOtp({ phone, email });
-    const otp = "aptx4869";
+    const existing = await otpRepository.findExistingOtp({ email });
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const salt = await bcrypt.genSalt(10);
     const otpHash = await bcrypt.hash(otp, salt);
 
     if (existing) {
       await otpRepository.updateOtp({
-        phone,
         email,
         otpHash,
-        purpose,
         expiredMinutes,
       });
     } else {
       const id = uuidv7();
       await otpRepository.createOtp({
         id,
-        phone,
         email,
         otpHash,
-        purpose,
         expiredMinutes,
       });
     }
   },
 
-  async verifyOtp({ identifier, otp, purpose }) {
-    const isEmail = identifier.includes("@");
-    const phone = isEmail ? null : identifier;
-    const email = isEmail ? identifier : null;
-    const record = await otpRepository.findOtp({ phone, email, purpose });
+  async verifyOtp({ email, otp }) {
+    if (!email) {
+      const err = new Error("Thiếu email");
+      err.statusCode = 400;
+      throw err;
+    }
+    const record = await otpRepository.findOtp({ email });
     if (!record) {
       const err = new Error("Không tìm thấy mã OTP");
       err.statusCode = 404;
@@ -47,7 +48,7 @@ const otpService = {
 
     if (record.expired_at && new Date(record.expired_at) <= new Date()) {
       const err = new Error("Mã OTP đã hết hạn");
-      err.statusCode = 401;
+      err.statusCode = 400;
       throw err;
     }
 
@@ -82,15 +83,44 @@ const otpService = {
         err.statusCode = 403;
         throw err;
       } else {
-        await otpRepository.updateFailedAttempts({ phone, email, attempts });
+        await otpRepository.updateFailedAttempts({ email, attempts });
       }
       const err = new Error(
         `Mã OTP không chính xác. Bạn còn ${5 - attempts} lần thử.`,
       );
-      err.statusCode = 401;
+      err.statusCode = 400;
       throw err;
     }
-    await otpRepository.markAsUsed({ phone, email });
+    await otpRepository.markAsUsed({ email });
+    return {
+      email: email,
+    };
+  },
+
+  async sendOtpByTwilio({ phone }) {
+    if (!phone) {
+      const err = new Error("Thiếu số điện thoại");
+      err.statusCode = 400;
+      throw err;
+    }
+    await sendOtp(phone);
+  },
+
+  async verifyOtpByTwilio({ phone, code }) {
+    if (!phone || !code) {
+      const err = new Error("Thiếu số điện thoại hoặc mã xác thực");
+      err.statusCode = 400;
+      throw err;
+    }
+    const result = await verifyOtp(phone, code);
+    if (result.valid) {
+      return {
+        phone: phone,
+      };
+    }
+    const err = new Error("Mã xác thực không chính xác");
+    err.statusCode = 400;
+    throw err;
   },
 };
 module.exports = otpService;

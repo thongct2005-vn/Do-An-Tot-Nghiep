@@ -4,7 +4,7 @@ const authRepository = {
   async findUserByPhone(phone) {
     const result = await pool.query(
       `
-            SELECT id, phone, email, password_hash, failed_login_attempts, locked_until, (locked_until > NOW()) AS is_locked
+            SELECT id, phone, full_name, email, password_hash, failed_login_attempts, locked_until, (locked_until > NOW()) AS is_locked
             FROM users
             WHERE phone = $1
             `,
@@ -48,7 +48,7 @@ const authRepository = {
 
   async findUserByRefreshToken(refreshToken) {
     const result = await pool.query(
-      `SELECT id, phone FROM users WHERE refresh_token = $1`,
+      `SELECT id, phone, full_name  FROM users WHERE refresh_token = $1`,
       [refreshToken],
     );
     return result.rows[0];

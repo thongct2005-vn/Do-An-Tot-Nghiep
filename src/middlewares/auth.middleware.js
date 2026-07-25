@@ -1,7 +1,5 @@
 const jwt = require("jsonwebtoken");
-require("dotenv").config();
-const ACCESS_SECRET = process.env.ACCESS_SECRET;
-const REFRESH_SECRET = process.env.REFRESH_SECRET;
+const tokenUtil = require('../utils/jwt')
 
 const authMiddleware = {
   verifyAccessToken(req, res, next) {
@@ -16,7 +14,7 @@ const authMiddleware = {
         throw err;
       }
 
-      const decoded = jwt.verify(accessToken, ACCESS_SECRET);
+      const decoded = tokenUtil.verifyAccessToken(accessToken);
       req.user = decoded;
       next();
     } catch (e) {
@@ -43,11 +41,11 @@ const authMiddleware = {
       const { refresh_token } = req.body;
       if (!refresh_token) {
         const err = new Error("Thiếu thông tin xác thực");
-        err.statusCode = 400;
+        err.statusCode = 401;
         throw err;
       }
 
-      const decoded = jwt.verify(refresh_token, REFRESH_SECRET);
+      const decoded = tokenUtil.verifyRefreshToken({refresh_token});
       req.user = decoded;
       next();
     } catch (e) {

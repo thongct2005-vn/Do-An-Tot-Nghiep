@@ -1,9 +1,12 @@
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const authRoutes = require("../modules/auth/auth.routes");
-const otpRoutes = require("../modules/otp/otp.routes");
+const authRoutes = require('../modules/auth/auth.routes');
+const otpRoutes = require('../modules/otp/otp.routes');
 const walletRoutes = require('../modules/wallet/wallet.routes');
-router.use("/auth", authRoutes);
-router.use("/otp", otpRoutes);
-router.use("/wallet", walletRoutes);
+const userRoutes = require('../modules/user/user.routes');
+
+router.use('/auth', authRoutes);
+router.use('/otp', otpRoutes);
+router.use('/wallet', walletRoutes);
+router.use('/user', userRoutes);
 module.exports = router;

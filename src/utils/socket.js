@@ -5,14 +5,14 @@ const initSocket = (server) => {
     io = new Server(server, {
         cors:{
             origin:'*',
-            methods: ["GET", "POST"]
+            methods: ['GET', 'POST']
         }
     });
 
     io.use((socket, next)=>{
         const token = socket.handshake.auth.token;
         if(!token){
-            const err = new Error("Thiếu thông tin xác thực để kết nối");
+            const err = new Error('Thiếu thông tin xác thực để kết nối');
             err.statusCode = 401;
             next(err);
         }
@@ -23,7 +23,7 @@ const initSocket = (server) => {
             next();
         }
         catch(e){
-            const err = new Error("Thông tin xác thực không hợp lệ hoặc đã hết hạn");
+            const err = new Error('Thông tin xác thực không hợp lệ hoặc đã hết hạn');
             err.statusCode = 401;
             next(err);
         }

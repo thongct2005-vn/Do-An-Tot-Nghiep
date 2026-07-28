@@ -45,7 +45,7 @@ const authMiddleware = {
         throw err;
       }
 
-      const decoded = tokenUtil.verifyRefreshToken({refresh_token});
+      const decoded = tokenUtil.verifyRefreshToken(refresh_token);
       req.user = decoded;
       next();
     } catch (e) {

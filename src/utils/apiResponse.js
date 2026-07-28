@@ -1,7 +1,7 @@
 const successResponse = (res, statusCode = 200, message = 'Thành công', data = null ) =>{
     return res.status(statusCode).json(
         {
-            status: "success",
+            status: 'success',
             code: statusCode,
             message: message,
             data: data
@@ -11,7 +11,7 @@ const successResponse = (res, statusCode = 200, message = 'Thành công', data =
 
 const errorResponse = (res, statusCode = 500, message = 'Đã có lỗi xảy ra!', error = null ) =>{
     const result = {
-        status: "error",
+        status: 'error',
         code: statusCode,
         message: message,
     };

@@ -5,7 +5,7 @@ const authController = {
   async isPhoneExist(req, res, next) {
     try {
       const { phone } = req.body;
-      const result = await authService.isPhoneExist({ phone });
+      const result = await authService.isPhoneExist(phone );
       return successResponse(
         res,
         200,
@@ -32,7 +32,7 @@ const authController = {
   async refreshToken(req, res, next) {
     try {
       const { refresh_token } = req.body;
-      const result = await authService.refreshToken({ refresh_token });
+      const result = await authService.refreshToken( refresh_token );
       return successResponse(res, 200, "Làm mới token thành công", result);
     } catch (e) {
       next(e);

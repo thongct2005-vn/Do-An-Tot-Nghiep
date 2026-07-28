@@ -13,7 +13,7 @@ const ACCESS_SECRET = process.env.ACCESS_SECRET;
 const REFRESH_SECRET = process.env.REFRESH_SECRET;
 
 const authService = {
-  async isPhoneExist({ phone }) {
+  async isPhoneExist(phone ) {
     if (!phone) {
       const err = new Error("Thiếu số điện thoại");
       err.statusCode = 400;
@@ -101,7 +101,7 @@ const authService = {
     };
   },
 
-  async refreshToken({ token }) {
+  async refreshToken(token ) {
     const user = await authRepository.findUserByRefreshToken(token);
     if (!user) {
       const err = new Error(
@@ -112,7 +112,7 @@ const authService = {
     }
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
 
-    await authRepository.updateRefeshToken(newRefreshToken, user.id);
+    await authRepository.updateRefeshToken(refreshToken, user.id);
 
     return {
       token: {

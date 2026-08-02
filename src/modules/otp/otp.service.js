@@ -1,12 +1,12 @@
-const otpRepository = require("./otp.repository");
-const { uuidv7 } = require("uuidv7");
-const bcrypt = require("bcrypt");
-const crypto = require("crypto");
-const { sendOtp, verifyOtp } = require("../../services/twilio.service");
+const otpRepository = require('./otp.repository');
+const { uuidv7 } = require('uuidv7');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const { sendOtp, verifyOtp } = require('../../services/twilio.service');
 const otpService = {
   async generateAndSaveOtp({ email }) {
     if (!email) {
-      const err = new Error("Thiếu email");
+      const err = new Error('Thiếu email');
       err.statusCode = 400;
       throw err;
     }
@@ -35,26 +35,26 @@ const otpService = {
 
   async verifyOtp({ email, otp }) {
     if (!email) {
-      const err = new Error("Thiếu email");
+      const err = new Error('Thiếu email');
       err.statusCode = 400;
       throw err;
     }
     const record = await otpRepository.findOtp({ email });
     if (!record) {
-      const err = new Error("Không tìm thấy mã OTP");
+      const err = new Error('Không tìm thấy mã OTP');
       err.statusCode = 404;
       throw err;
     }
 
     if (record.expired_at && new Date(record.expired_at) <= new Date()) {
-      const err = new Error("Mã OTP đã hết hạn");
+      const err = new Error('Mã OTP đã hết hạn');
       err.statusCode = 400;
       throw err;
     }
 
     if (record.locked_until && new Date(record.locked_until) >= new Date()) {
       const err = new Error(
-        "Tài khoản bị tạm khóa. Vui lòng thử lại sau 5 phút",
+        'Tài khoản bị tạm khóa. Vui lòng thử lại sau 5 phút',
       );
       err.statusCode = 403;
       throw err;
@@ -78,7 +78,7 @@ const otpService = {
           lockMinutes,
         });
         const err = new Error(
-          "Bạn đã nhập sai 5 lần. Tài khoản bị tạm khóa 5 phút",
+          'Bạn đã nhập sai 5 lần. Tài khoản bị tạm khóa 5 phút',
         );
         err.statusCode = 403;
         throw err;
@@ -99,7 +99,7 @@ const otpService = {
 
   async sendOtpByTwilio({ phone }) {
     if (!phone) {
-      const err = new Error("Thiếu số điện thoại");
+      const err = new Error('Thiếu số điện thoại');
       err.statusCode = 400;
       throw err;
     }
@@ -108,7 +108,7 @@ const otpService = {
 
   async verifyOtpByTwilio({ phone, code }) {
     if (!phone || !code) {
-      const err = new Error("Thiếu số điện thoại hoặc mã xác thực");
+      const err = new Error('Thiếu số điện thoại hoặc mã xác thực');
       err.statusCode = 400;
       throw err;
     }
@@ -118,7 +118,7 @@ const otpService = {
         phone: phone,
       };
     }
-    const err = new Error("Mã xác thực không chính xác");
+    const err = new Error('Mã xác thực không chính xác');
     err.statusCode = 400;
     throw err;
   },

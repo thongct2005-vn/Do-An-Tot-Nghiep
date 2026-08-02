@@ -16,5 +16,14 @@ const userRepository = {
     );
     return result.rows;
   },
+
+  async checkPinStatus(userId){
+    const result = await pool.query(`SELECT pin_hash FROM users WHERE id = $1 `, [userId]);
+    return result.rows[0];
+  },
+
+  async createPin(userId, pinHash){
+    await pool.query(`UPDATE users SET pin_hash = $1 WHERE id = $2`,[pinHash, userId]);
+  }
 };
 module.exports = userRepository;

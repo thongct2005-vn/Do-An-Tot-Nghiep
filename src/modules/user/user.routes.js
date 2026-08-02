@@ -13,4 +13,16 @@ router.post(
   authMiddleware.verifyAccessToken,
   userController.findUserByPhoneList,
 );
+
+router.get(
+  "/pin-status",
+  authMiddleware.verifyAccessToken,
+  userController.checkPinStatus,
+);
+
+router.post(
+  "/create-pin",
+  authMiddleware.verifyAccessToken,
+  userController.createPin,
+);
 module.exports = router;

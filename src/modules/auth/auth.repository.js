@@ -1,4 +1,4 @@
-const pool = require("../../config/database");
+const pool = require('../../config/database');
 const authRepository = {
   /*Login -----------------------------------------------------------*/
   async findUserByPhone(phone) {
@@ -59,7 +59,7 @@ const authRepository = {
   async addUser(userId, walletId, phone, passwordHash) {
     const client = await pool.connect();
     try {
-      await client.query("BEGIN");
+      await client.query('BEGIN');
 
       await client.query(
         `
@@ -85,9 +85,9 @@ const authRepository = {
         [walletId],
       );
 
-      await client.query("COMMIT");
+      await client.query('COMMIT');
     } catch (e) {
-      await client.query("ROLLBACK");
+      await client.query('ROLLBACK');
       throw e;
     } finally {
       client.release();

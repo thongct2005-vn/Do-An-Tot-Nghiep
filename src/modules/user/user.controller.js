@@ -1,4 +1,5 @@
 const { successResponse } = require("../../utils/apiResponse");
+const { checkPinStatus } = require("./user.repository");
 const userService = require("./user.service");
 
 const userController = {
@@ -22,6 +23,32 @@ const userController = {
         "Tìm danh sách người dùng thành công",
         result,
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async checkPinStatus(req, res, next) {
+    try {
+      const { user_id } = req.user;
+      const result = await userService.checkPinStatus(user_id);
+      console.log(result)
+      return successResponse(
+        res,
+        200,
+        "Kiểm tra trạng thái pin thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async createPin(req, res, next) {
+    try {
+      const { user_id } = req.user;
+      const { pin } = req.body;
+      await userService.createPin(user_id, pin);
+      return successResponse(res, 201, "Tạo mã pin thành công");
     } catch (e) {
       next(e);
     }

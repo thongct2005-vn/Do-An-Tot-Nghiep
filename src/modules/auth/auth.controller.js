@@ -1,5 +1,5 @@
-const { successResponse } = require("../../utils/apiResponse");
-const authService = require("./auth.service");
+const { successResponse } = require('../../utils/apiResponse');
+const authService = require('./auth.service');
 
 const authController = {
   async isPhoneExist(req, res, next) {
@@ -9,7 +9,7 @@ const authController = {
       return successResponse(
         res,
         200,
-        "Kiểm tra số điện thoại thành công",
+        'Kiểm tra số điện thoại thành công',
         result,
       );
     } catch (e) {
@@ -23,7 +23,7 @@ const authController = {
     try {
       const { phone, password } = req.body;
       const result = await authService.login({ phone, password });
-      return successResponse(res, 200, "Đăng nhập thành công", result);
+      return successResponse(res, 200, 'Đăng nhập thành công', result);
     } catch (e) {
       next(e);
     }
@@ -33,7 +33,7 @@ const authController = {
     try {
       const { refresh_token } = req.body;
       const result = await authService.refreshToken( refresh_token );
-      return successResponse(res, 200, "Làm mới token thành công", result);
+      return successResponse(res, 200, 'Làm mới token thành công', result);
     } catch (e) {
       next(e);
     }
@@ -49,7 +49,7 @@ const authController = {
           full_name: full_name,
         },
       };
-      return successResponse(res, 200, "Lấy thông tin người dùng thành công", data);
+      return successResponse(res, 200, 'Lấy thông tin người dùng thành công', data);
     } catch (e) {
       next(e);
     }
@@ -61,7 +61,7 @@ const authController = {
     try {
       const { phone, password } = req.body;
       const result = await authService.register({ phone, password });
-      return successResponse(res, 200, "Tạo tài khoản thành công", result);
+      return successResponse(res, 200, 'Tạo tài khoản thành công', result);
     } catch (e) {
       next(e);
     }

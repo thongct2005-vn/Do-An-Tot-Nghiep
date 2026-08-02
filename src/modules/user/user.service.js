@@ -57,12 +57,11 @@ const userService = {
     }
 
     const result = await userRepository.checkPinStatus(userId);
-    console.log(result)
     return {
       has_pin: !!result?.pin_hash,
     };
   },
-  async createPin(userId, pin) {
+  async createPin({userId, pin}) {
     if (!userId || !pin) {
       const err = new Error("Thiếu thông tin để tạo pin");
       err.statusCode = 400;
@@ -70,7 +69,7 @@ const userService = {
     }
     const salt = await bcrypt.genSalt(10);
     const pinHash = await bcrypt.hash(pin, salt);
-    await userRepository.createPin(userId, pinHash);
+    await userRepository.createPin({userId, pinHash});
     return;
   },
 };

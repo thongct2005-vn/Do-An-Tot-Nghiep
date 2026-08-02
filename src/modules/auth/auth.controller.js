@@ -5,7 +5,7 @@ const authController = {
   async isPhoneExist(req, res, next) {
     try {
       const { phone } = req.body;
-      const result = await authService.isPhoneExist(phone );
+      const result = await authService.isPhoneExist(phone);
       return successResponse(
         res,
         200,
@@ -31,8 +31,8 @@ const authController = {
 
   async refreshToken(req, res, next) {
     try {
-      const { refresh_token } = req.body;
-      const result = await authService.refreshToken( refresh_token );
+      const { refresh_token: refreshToken } = req.body;
+      const result = await authService.refreshToken( refreshToken );
       return successResponse(res, 200, 'Làm mới token thành công', result);
     } catch (e) {
       next(e);
@@ -41,15 +41,15 @@ const authController = {
 
   async getMe(req, res, next) {
     try {
-      const { user_id, phone, full_name } = req.user;
-      const data = {
+      const { user_id: userId, phone, full_name: fullName } = req.user;
+      const result = {
         user_info: {
-          user_id: user_id,
+          user_id: userId,
           phone: phone,
-          full_name: full_name,
+          full_name: fullName,
         },
       };
-      return successResponse(res, 200, 'Lấy thông tin người dùng thành công', data);
+      return successResponse(res, 200, 'Lấy thông tin người dùng thành công', result);
     } catch (e) {
       next(e);
     }

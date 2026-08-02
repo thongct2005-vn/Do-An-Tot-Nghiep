@@ -30,9 +30,8 @@ const userController = {
 
   async checkPinStatus(req, res, next) {
     try {
-      const { user_id } = req.user;
-      const result = await userService.checkPinStatus(user_id);
-      console.log(result)
+      const { user_id: userId } = req.user;
+      const result = await userService.checkPinStatus(userId);
       return successResponse(
         res,
         200,
@@ -45,9 +44,9 @@ const userController = {
   },
   async createPin(req, res, next) {
     try {
-      const { user_id } = req.user;
+      const { user_id: userId } = req.user;
       const { pin } = req.body;
-      await userService.createPin(user_id, pin);
+      await userService.createPin({userId, pin});
       return successResponse(res, 201, "Tạo mã pin thành công");
     } catch (e) {
       next(e);

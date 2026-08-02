@@ -24,7 +24,7 @@ const authRepository = {
     );
   },
 
-  async updateFailedLogin(phone, attempts, lockMinutes = 0) {
+  async updateFailedLogin({phone, attempts, lockMinutes = 0}) {
     await pool.query(
       `
             UPDATE users
@@ -39,7 +39,7 @@ const authRepository = {
     );
   },
 
-  async updateRefeshToken(refreshToken, userId) {
+  async updateRefeshToken({refreshToken, userId}) {
     await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
       refreshToken,
       userId,

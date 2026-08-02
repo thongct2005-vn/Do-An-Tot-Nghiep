@@ -22,7 +22,7 @@ const userRepository = {
     return result.rows[0];
   },
 
-  async createPin(userId, pinHash){
+  async createPin({userId, pinHash}){
     await pool.query(`UPDATE users SET pin_hash = $1 WHERE id = $2`,[pinHash, userId]);
   }
 };

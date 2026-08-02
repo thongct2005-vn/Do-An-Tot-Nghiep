@@ -1,28 +1,39 @@
-const { successResponse } = require('../../utils/apiResponse');
-const { getWalletBalanceByUserId } = require('./wallet.repository');
-const walletService = require('./wallet.service');
+const { successResponse } = require("../../utils/apiResponse");
+const { getWalletBalanceByUserId } = require("./wallet.repository");
+const walletService = require("./wallet.service");
 
 const walletController = {
   async getWalletBalanceByUserId(req, res, next) {
     try {
-      const { user_id } = req.user;
-      const data = await walletService.getWalletBalanceByUserId(user_id);
-      return successResponse(res, 200, 'Lấy số dư ví thành công', data);
+      const { user_id: userId } = req.user;
+      const result = await walletService.getWalletBalanceByUserId(userId);
+      return successResponse(res, 200, "Lấy số dư ví thành công", result);
     } catch (e) {
       next(e);
     }
   },
-  async checkTransferEligibility (req, res, next){
-    try{
-      const {user_id} = req.user;
-      const {amount} = req.body;
-      const data = await walletService.checkTransferEligibility({user_id,amount});
-      console.log(data);
-      return successResponse(res, 200, 'Kiểm tra số dư thành công', data);
-    }
-    catch(e){
+  async checkTransferEligibility(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { amount } = req.body;
+      const result = await walletService.checkTransferEligibility({
+        userId,
+        amount,
+      });
+      return successResponse(res, 200, "Kiểm tra số dư thành công", result);
+    } catch (e) {
       next(e);
     }
-  }
+  },
+  async checkPin(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { pin } = req.body;
+      const result = await walletService.checkPin({userId, pin});
+      return successResponse(res, 200, "Kiểm tra mã PIN thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 module.exports = walletController;

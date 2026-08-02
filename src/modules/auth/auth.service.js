@@ -1,27 +1,27 @@
-const pool = require('../../config/database');
-const authRepository = require('./auth.repository');
-const bcrypt = require('bcrypt');
-require('dotenv').config();
+const pool = require("../../config/database");
+const authRepository = require("./auth.repository");
+const bcrypt = require("bcrypt");
+require("dotenv").config();
 const {
   isValidPhone,
   isValidPasswordOrPin,
-} = require('../../utils/validators');
-const { uuidv7 } = require('uuidv7');
-const jwt = require('jsonwebtoken');
-const tokenUtil = require('../../utils/jwt');
+} = require("../../utils/validators");
+const { uuidv7 } = require("uuidv7");
+const jwt = require("jsonwebtoken");
+const tokenUtil = require("../../utils/jwt");
 const ACCESS_SECRET = process.env.ACCESS_SECRET;
 const REFRESH_SECRET = process.env.REFRESH_SECRET;
 
 const authService = {
-  async isPhoneExist(phone ) {
+  async isPhoneExist(phone) {
     if (!phone) {
-      const err = new Error('Thiếu số điện thoại');
+      const err = new Error("Thiếu số điện thoại");
       err.statusCode = 400;
       throw err;
     }
 
     if (!isValidPhone(phone)) {
-      const err = new Error('Số điện thoại không hợp lệ');
+      const err = new Error("Số điện thoại không hợp lệ");
       err.statusCode = 400;
       throw err;
     }
@@ -31,35 +31,38 @@ const authService = {
       is_phone_exists: user != null,
     };
   },
-  /*Login------------------------------------------------*/
+
+  
   async login({ phone, password }) {
     if (!phone || !password) {
-      const err = new Error('Thiếu số điện thoại hoặc mật khẩu');
+      const err = new Error("Thiếu số điện thoại hoặc mật khẩu");
       err.statusCode = 400;
       throw err;
     }
 
     if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
-      const err = new Error('Số điện thoại hoặc mật khẩu không hợp lệ');
+      const err = new Error("Số điện thoại hoặc mật khẩu không hợp lệ");
       err.statusCode = 400;
       throw err;
     }
 
     const user = await authRepository.findUserByPhone(phone);
     if (!user) {
-      const err = new Error('Số điện thoại chưa đăng ký tài khoản');
+      const err = new Error("Số điện thoại chưa đăng ký tài khoản");
       err.statusCode = 404;
       throw err;
     }
 
+    const { id: userId, full_name: fullName } = user;
+
     if (user.locked_until) {
       if (user.is_locked) {
-        const err = new Error('Tài khoản bị tạm khóa');
+        const err = new Error("Tài khoản bị tạm khóa");
         err.statusCode = 403;
         throw err;
       }
 
-      await authRepository.resetFailedLogin(user.phone);
+      await authRepository.resetFailedLogin(phone);
       user.failed_login_attempts = 0;
       user.locked_until = null;
     }
@@ -70,13 +73,10 @@ const authService = {
     );
     if (!isCorrectPassword) {
       const attempts = Number(user.failed_login_attempts || 0) + 1;
-      await authRepository.updateFailedLogin(
-        user.phone,
-        attempts,
-        attempts >= 5 ? 30 : 0,
-      );
+      const lockMinutes = attempts >= 5 ? 30 : 0;
+      await authRepository.updateFailedLogin({ phone, attempts, lockMinutes });
       const err = new Error(
-        attempts >= 5 ? 'Tài khoản bị tạm khóa' : 'Mật khẩu không chính xác',
+        attempts >= 5 ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
       );
       err.remainingAttempts = Math.max(5 - attempts, 0);
       err.statusCode = attempts >= 5 ? 403 : 400;
@@ -87,32 +87,32 @@ const authService = {
 
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
 
-    await authRepository.updateRefeshToken(refreshToken, user.id);
+    await authRepository.updateRefeshToken({ refreshToken, userId });
     return {
       token: {
         access_token: accessToken,
         refresh_token: refreshToken,
       },
       user_info: {
-        user_id: user.id,
-        phone: user.phone,
-        full_name: user.full_name,
+        user_id: userId,
+        phone: phone,
+        full_name: fullName,
       },
     };
   },
 
-  async refreshToken(token ) {
+  async refreshToken(token) {
     const user = await authRepository.findUserByRefreshToken(token);
     if (!user) {
       const err = new Error(
-        'Tài khoản của bạn đã được đăng nhập trên thiết bị khác. Vui lòng đăng nhập lại',
+        "Tài khoản của bạn đã được đăng nhập trên thiết bị khác. Vui lòng đăng nhập lại",
       );
       err.statusCode = 401;
       throw err;
     }
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
-
-    await authRepository.updateRefeshToken(refreshToken, user.id);
+    const userId = user.id;
+    await authRepository.updateRefeshToken({ refreshToken, userId });
 
     return {
       token: {
@@ -126,20 +126,20 @@ const authService = {
 
   async register({ phone, password }) {
     if (!phone || !password) {
-      const err = new Error('Thiếu số điện thoại hoặc mật khẩu!');
+      const err = new Error("Thiếu số điện thoại hoặc mật khẩu!");
       err.statusCode = 400;
       throw err;
     }
 
     if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
-      const err = new Error('Số điện thoại hoặc mật khẩu không hợp lệ');
+      const err = new Error("Số điện thoại hoặc mật khẩu không hợp lệ");
       err.statusCode = 400;
       throw err;
     }
 
     const user = await authRepository.findUserByPhone(phone);
     if (user) {
-      const err = new Error('Tài khoản đã tồn tại');
+      const err = new Error("Tài khoản đã tồn tại");
       err.statusCode = 409;
       throw err;
     }

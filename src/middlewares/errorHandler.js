@@ -7,7 +7,7 @@ const errorHandler = (err, req, res, next)=>{
     let message = err.message || "Lỗi không xác định"
     let errorDetail = null;
 
-    if(err.code === 23505){
+    if(err.code === '23505'){
         statusCode = 400;
         message = "Dữ liệu đã tồn tại"
     }

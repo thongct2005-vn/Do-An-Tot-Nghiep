@@ -1,6 +1,7 @@
 const pool = require("../../config/database");
 const authRepository = require("./auth.repository");
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 require("dotenv").config();
 const {
   isValidPhone,
@@ -32,7 +33,6 @@ const authService = {
     };
   },
 
-  
   async login({ phone, password }) {
     if (!phone || !password) {
       const err = new Error("Thiếu số điện thoại hoặc mật khẩu");
@@ -53,7 +53,7 @@ const authService = {
       throw err;
     }
 
-    const { id: userId, full_name: fullName } = user;
+    const { id: userId, full_name: fullName, wallet_id: walletId } = user;
 
     if (user.locked_until) {
       if (user.is_locked) {
@@ -97,6 +97,7 @@ const authService = {
         user_id: userId,
         phone: phone,
         full_name: fullName,
+        wallet_id: walletId,
       },
     };
   },
@@ -122,8 +123,6 @@ const authService = {
     };
   },
 
-  /*Register------------------------------------------------*/
-
   async register({ phone, password }) {
     if (!phone || !password) {
       const err = new Error("Thiếu số điện thoại hoặc mật khẩu!");
@@ -148,8 +147,8 @@ const authService = {
     const walletId = uuidv7();
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
-
-    await authRepository.addUser(userId, walletId, phone, passwordHash);
+    const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
+    await authRepository.addUser({userId, walletId, phone, phoneHash, passwordHash});
     return {
       user_info: {
         user_id: userId,

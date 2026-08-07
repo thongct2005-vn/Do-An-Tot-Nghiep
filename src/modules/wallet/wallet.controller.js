@@ -1,12 +1,12 @@
 const { successResponse } = require("../../utils/apiResponse");
-const { getWalletBalanceByUserId } = require("./wallet.repository");
+const { getWalletByUserId } = require("./wallet.repository");
 const walletService = require("./wallet.service");
 
 const walletController = {
-  async getWalletBalanceByUserId(req, res, next) {
+  async getWalletByUserId(req, res, next) {
     try {
       const { user_id: userId } = req.user;
-      const result = await walletService.getWalletBalanceByUserId(userId);
+      const result = await walletService.getWalletByUserId(userId);
       return successResponse(res, 200, "Lấy số dư ví thành công", result);
     } catch (e) {
       next(e);

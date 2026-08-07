@@ -11,7 +11,7 @@ router.get(
 router.post(
   "/check-contact",
   authMiddleware.verifyAccessToken,
-  userController.findUserByPhoneList,
+  userController.findUserByPhoneHashList,
 );
 
 router.get(
@@ -24,5 +24,17 @@ router.post(
   "/create-pin",
   authMiddleware.verifyAccessToken,
   userController.createPin,
+);
+
+router.patch(
+  "/fcm-token",
+  authMiddleware.verifyAccessToken,
+  userController.updateFcmToken,
+);
+
+router.get(
+  "/fcm-token",
+  authMiddleware.verifyAccessToken,
+  userController.getFcmToken,
 );
 module.exports = router;

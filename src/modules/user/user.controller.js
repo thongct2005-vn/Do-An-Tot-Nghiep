@@ -1,5 +1,4 @@
 const { successResponse } = require("../../utils/apiResponse");
-const { checkPinStatus } = require("./user.repository");
 const userService = require("./user.service");
 
 const userController = {
@@ -13,10 +12,12 @@ const userController = {
     }
   },
 
-  async findUserByPhoneList(req, res, next) {
+  async findUserByPhoneHashList(req, res, next) {
     try {
       const { phones } = req.body;
-      const result = await userService.findUserByPhoneList(phones);
+      const {user_id: userId} = req.user;
+      const result = await userService.findUserByPhoneHashList(phones);
+      const foundUsers = result.filter(u => u.id !== userId);
       return successResponse(
         res,
         200,
@@ -46,8 +47,29 @@ const userController = {
     try {
       const { user_id: userId } = req.user;
       const { pin } = req.body;
-      await userService.createPin({userId, pin});
+      await userService.createPin({ userId, pin });
       return successResponse(res, 201, "Tạo mã pin thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
+  async updateFcmToken(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { fcm_token: fcmToken } = req.body;
+      await userService.updateFmcToken({ userId, fcmToken });
+      return successResponse(res, 200, "Cập nhật fcm token thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
+  async getFcmToken(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await userService.getFcmToken(userId);
+      return successResponse(res, 200, "Lấy fcm token thành công", {
+        fcm_token: result,
+      });
     } catch (e) {
       next(e);
     }

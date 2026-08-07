@@ -1,11 +1,12 @@
-const pool = require('../../config/database');
+const pool = require("../../config/database");
 const authRepository = {
-  /*Login -----------------------------------------------------------*/
   async findUserByPhone(phone) {
     const result = await pool.query(
       `
-            SELECT id, phone, full_name, email, password_hash, failed_login_attempts, locked_until, (locked_until > NOW()) AS is_locked
-            FROM users
+            SELECT u.id , u.phone, u.full_name, u.email, u.password_hash, u.failed_login_attempts, u.locked_until, (u.locked_until > NOW()) AS is_locked, w.id AS wallet_id
+            FROM users u
+            LEFT JOIN wallets w 
+            ON u.id = w.user_id
             WHERE phone = $1
             `,
       [phone],
@@ -24,7 +25,7 @@ const authRepository = {
     );
   },
 
-  async updateFailedLogin({phone, attempts, lockMinutes = 0}) {
+  async updateFailedLogin({ phone, attempts, lockMinutes = 0 }) {
     await pool.query(
       `
             UPDATE users
@@ -39,7 +40,7 @@ const authRepository = {
     );
   },
 
-  async updateRefeshToken({refreshToken, userId}) {
+  async updateRefeshToken({ refreshToken, userId }) {
     await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
       refreshToken,
       userId,
@@ -54,19 +55,17 @@ const authRepository = {
     return result.rows[0];
   },
 
-  /*Register -----------------------------------------------------------*/
-
-  async addUser(userId, walletId, phone, passwordHash) {
+  async addUser({ userId, walletId, phone, phoneHash, passwordHash }) {
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       await client.query(
         `
-            INSERT INTO users(id, phone, password_hash)
-            VALUES ($1, $2, $3)
+            INSERT INTO users(id, phone, phone_hash, password_hash,)
+            VALUES ($1, $2, $3, $4)
             `,
-        [userId, phone, passwordHash],
+        [userId, phone, phoneHash, passwordHash],
       );
 
       await client.query(
@@ -85,9 +84,9 @@ const authRepository = {
         [walletId],
       );
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
     } catch (e) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw e;
     } finally {
       client.release();

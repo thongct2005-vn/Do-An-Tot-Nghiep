@@ -3,13 +3,13 @@ const walletRepository = require("./wallet.repository");
 const bcrypt = require("bcrypt");
 
 const walletService = {
-  async getWalletBalanceByUserId(userId) {
+  async getWalletByUserId(userId) {
     if (!userId) {
       const err = new Error("Thiếu thông tin người dùng để lấy số dư");
       err.statusCode = 400;
       throw err;
     }
-    const wallet = await walletRepository.getWalletBalanceByUserId(userId);
+    const wallet = await walletRepository.getWalletByUserId(userId);
     if (!wallet) {
       const err = new Error("Không tìm thấy ví của người dùng");
       err.statusCode = 404;
@@ -26,7 +26,7 @@ const walletService = {
       err.statusCode = 400;
       throw err;
     }
-    const wallet = await this.getWalletBalanceByUserId(userId);
+    const wallet = await this.getWalletByUserId(userId);
     const currentBalance = wallet.balance;
     return {
       is_eligible: currentBalance >= amount,

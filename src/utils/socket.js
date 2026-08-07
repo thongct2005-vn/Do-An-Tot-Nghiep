@@ -14,7 +14,7 @@ const initSocket = (server) => {
         if(!token){
             const err = new Error('Thiếu thông tin xác thực để kết nối');
             err.statusCode = 401;
-            next(err);
+            return next(err);
         }
 
         try{
@@ -25,12 +25,12 @@ const initSocket = (server) => {
         catch(e){
             const err = new Error('Thông tin xác thực không hợp lệ hoặc đã hết hạn');
             err.statusCode = 401;
-            next(err);
+            return next(err);
         }
     });
 
     io.on('connection', (socket)=>{
-        const userId = socket.user.id;
+        const userId = socket.user.user_id;
         console.log(`${userId} đã kết nối socket thành công - Socket ID: ${socket.id}`);
         socket.join(`user_${userId}`);
         socket.on('disconnect', ()=>{

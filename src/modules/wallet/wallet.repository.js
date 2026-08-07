@@ -1,8 +1,8 @@
 const pool = require('../../config/database');
 
 const walletRepository = {
-    async getWalletBalanceByUserId(userId){
-        const result = await pool.query(`SELECT w.user_id, wb.balance
+    async getWalletByUserId(userId){
+        const result = await pool.query(`SELECT w.user_id, wb.balance, w.id
             FROM wallets w
             LEFT JOIN wallet_balances wb
             ON w.id = wb.wallet_id

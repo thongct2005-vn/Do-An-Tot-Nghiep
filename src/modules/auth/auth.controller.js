@@ -17,7 +17,6 @@ const authController = {
     }
   },
 
-  /*Login----------------------------------------- */
 
   async login(req, res, next) {
     try {
@@ -41,12 +40,13 @@ const authController = {
 
   async getMe(req, res, next) {
     try {
-      const { user_id: userId, phone, full_name: fullName } = req.user;
+      const { user_id: userId, phone, full_name: fullName, wallet_id: walletId } = req.user;
       const result = {
         user_info: {
           user_id: userId,
           phone: phone,
           full_name: fullName,
+          wallet_id: walletId
         },
       };
       return successResponse(res, 200, 'Lấy thông tin người dùng thành công', result);
@@ -55,7 +55,6 @@ const authController = {
     }
   },
 
-  /*Register----------------------------------------- */
 
   async register(req, res, next) {
     try {

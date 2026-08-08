@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const { logout } = require("./auth.service");
 const authRepository = {
   async findUserByPhone(phone) {
     const result = await pool.query(
@@ -91,6 +92,14 @@ const authRepository = {
     } finally {
       client.release();
     }
+  },
+
+  async logout(userId) {
+    await pool.query("UPDATE users SET refresh_token = $1, fcm_token = $2 WHERE id = $3", [
+      null,
+      null,
+      userId
+    ]);
   },
 };
 

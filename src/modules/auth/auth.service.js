@@ -102,6 +102,15 @@ const authService = {
     };
   },
 
+  async logout(userId) {
+    if (!userId) {
+      const err = new Error("Thiếu thông tin để đăng xuất");
+      err.statusCode = 400;
+      throw err;
+    }
+    await authRepository.logout(userId);
+  },
+
   async refreshToken(token) {
     const user = await authRepository.findUserByRefreshToken(token);
     if (!user) {
@@ -148,7 +157,13 @@ const authService = {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
-    await authRepository.addUser({userId, walletId, phone, phoneHash, passwordHash});
+    await authRepository.addUser({
+      userId,
+      walletId,
+      phone,
+      phoneHash,
+      passwordHash,
+    });
     return {
       user_info: {
         user_id: userId,

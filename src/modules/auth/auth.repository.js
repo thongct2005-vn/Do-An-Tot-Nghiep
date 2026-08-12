@@ -1,10 +1,9 @@
 const pool = require("../../config/database");
-const { logout } = require("./auth.service");
 const authRepository = {
   async findUserByPhone(phone) {
     const result = await pool.query(
       `
-            SELECT u.id , u.phone, u.full_name, u.email, u.password_hash, u.failed_login_attempts, u.locked_until, (u.locked_until > NOW()) AS is_locked, w.id AS wallet_id
+            SELECT u.id , u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts, u.locked_until, (u.locked_until > NOW()) AS is_locked, w.id AS wallet_id
             FROM users u
             LEFT JOIN wallets w 
             ON u.id = w.user_id

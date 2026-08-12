@@ -22,7 +22,7 @@ const TransactionService = {
 
     const numAmount = Number(amount);
     if (
-      !Number.isFinite(numAmount) ||
+      !Number.isInteger(numAmount) ||
       numAmount < 1000 ||
       numAmount > 50000000
     ) {
@@ -33,19 +33,37 @@ const TransactionService = {
       throw err;
     }
 
-    const fee = 0,
-      transactionType = "TRANSFER",
-      status = "SUCCESS";
-
     return await transactionRepository.transferMoney({
       sourceUserId,
       destinationUserId,
       amount: numAmount,
-      fee,
+      fee: 0,
       description,
       idempotencyKey,
-      transactionType,
-      status,
+      transactionType: "TRANSFER",
+      status: "SUCCESS",
+    });
+  },
+
+  async processQRPayment({ sourceUserId, idempotencyKey, referenceCode }) {
+    if (!sourceUserId) {
+      const err = new Error("Thiếu thông tin người gửi");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!referenceCode) {
+      const err = new Error("Thiếu thông tin của mã QR");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return await transactionRepository.processQRPayment({
+      sourceUserId,
+      idempotencyKey,
+      referenceCode,
+      transactionType: "PAYMENT",
+      status: "SUCCESS",
     });
   },
 };

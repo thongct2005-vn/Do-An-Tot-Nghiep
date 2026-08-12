@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 
 const TransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
@@ -42,108 +43,100 @@ const TransactionRepository = {
     );
   },
 
-  async transferMoney({
-    sourceUserId,
-    destinationUserId,
-    amount,
-    fee = 0,
-    description,
-    idempotencyKey,
-    transactionType = "TRANSFER",
-    status = "SUCCESS",
-  }) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+  async executeTransfer(
+    client,
+    {
+      sourceUserId,
+      destinationUserId,
+      amount,
+      fee = 0,
+      description,
+      idempotencyKey,
+      transactionType = "TRANSFER",
+      status = "SUCCESS",
+    },
+  ) {
+    const sourceWalletResult = await client.query(
+      `SELECT id FROM wallets WHERE user_id = $1`,
+      [sourceUserId],
+    );
+    const destinationWalletResult = await client.query(
+      `SELECT id FROM wallets WHERE user_id = $1`,
+      [destinationUserId],
+    );
 
-      const sourceWalletResult = await client.query(
-        `SELECT id FROM wallets WHERE user_id = $1`,
-        [sourceUserId],
-      );
-      const destinationWalletResult = await client.query(
-        `SELECT id FROM wallets WHERE user_id = $1`,
-        [destinationUserId],
-      );
+    if (!sourceWalletResult.rows[0] || !destinationWalletResult.rows[0]) {
+      const err = new Error("Không tìm thấy ví người dùng");
+      err.statusCode = 404;
+      throw err;
+    }
 
-      if (!sourceWalletResult.rows[0] || !destinationWalletResult.rows[0]) {
-        const err = new Error("Không tìm thấy ví người dùng");
-        err.statusCode = 404;
-        throw err;
-      }
+    const sourceWalletId = sourceWalletResult.rows[0].id;
+    const destinationWalletId = destinationWalletResult.rows[0].id;
 
-      const sourceWalletId = sourceWalletResult.rows[0].id;
-      const destinationWalletId = destinationWalletResult.rows[0].id;
+    const [firstId, secondId] = [sourceWalletId, destinationWalletId].sort();
 
-      const [firstId, secondId] = [sourceWalletId, destinationWalletId].sort();
+    const firstWalletResult = await client.query(
+      `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
+      [firstId],
+    );
+    const secondWalletResult = await client.query(
+      `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
+      [secondId],
+    );
 
-      const firstWalletResult = await client.query(
-        `SELECT wallet_id, balance FROM wallet_balances
-        WHERE wallet_id = $1 FOR UPDATE`,
-        [firstId],
-      );
-      const secondWalletResult = await client.query(
-        `SELECT wallet_id, balance FROM wallet_balances
-        WHERE wallet_id = $1 FOR UPDATE`,
-        [secondId],
-      );
+    const firstWallet = firstWalletResult.rows[0];
+    const secondWallet = secondWalletResult.rows[0];
 
-      const firstWallet = firstWalletResult.rows[0];
-      const secondWallet = secondWalletResult.rows[0];
+    if (!firstWallet || !secondWallet) {
+      const err = new Error("Không tìm thấy số dư của ví người dùng");
+      err.statusCode = 404;
+      throw err;
+    }
 
-      if (!firstWallet || !secondWallet) {
-        const err = new Error("Không tìm thấy số dư của ví người dùng");
-        err.statusCode = 404;
-        throw err;
-      }
+    const sourceWallet =
+      firstId === sourceWalletId ? firstWallet : secondWallet;
+    const destWallet = firstId === sourceWalletId ? secondWallet : firstWallet;
 
-      const sourceWallet =
-        firstId === sourceWalletId ? firstWallet : secondWallet;
-      const destWallet =
-        firstId === sourceWalletId ? secondWallet : firstWallet;
+    const totalDeduct = Number(amount) + Number(fee);
+    const sourceBalanceBefore = Number(sourceWallet.balance);
 
-      const totalDeduct = Number(amount) + Number(fee);
-      const sourceBalanceBefore = Number(sourceWallet.balance);
+    if (sourceBalanceBefore < totalDeduct) {
+      const err = new Error("Số dư không đủ để thực hiện giao dịch");
+      err.statusCode = 422;
+      throw err;
+    }
 
-      if (sourceBalanceBefore < totalDeduct) {
-        const err = new Error("Số dư không đủ để thực hiện giao dịch");
-        err.statusCode = 422;
-        throw err;
-      }
+    const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
+    const destBalanceBefore = Number(destWallet.balance);
+    const destBalanceAfter = destBalanceBefore + Number(amount);
 
-      const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
-      const destBalanceBefore = Number(destWallet.balance);
-      const destBalanceAfter = destBalanceBefore + Number(amount);
+    await client.query(
+      `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
+      [sourceBalanceAfter, sourceWalletId],
+    );
 
-      await client.query(
-        `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
-        [sourceBalanceAfter, sourceWalletId],
-      );
+    await client.query(
+      `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
+      [destBalanceAfter, destinationWalletId],
+    );
 
-      await client.query(
-        `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
-        [destBalanceAfter, destinationWalletId],
-      );
+    const usersResult = await client.query(
+      `SELECT id, full_name, phone FROM users WHERE id = ANY($1)`,
+      [[sourceUserId, destinationUserId]],
+    );
 
-      const usersResult = await client.query(
-        `SELECT id, full_name, phone FROM users WHERE id = ANY($1)`,
-        [[sourceUserId, destinationUserId]],
-      );
+    const sourceUser = usersResult.rows.find((u) => u.id === sourceUserId);
+    const destUser = usersResult.rows.find((u) => u.id === destinationUserId);
 
-      const sourceUser = usersResult.rows.find((u) => u.id === sourceUserId);
-      const destUser = usersResult.rows.find((u) => u.id === destinationUserId);
+    if (!sourceUser || !destUser) {
+      const err = new Error("Không tìm thấy người gửi hoặc người nhận");
+      err.statusCode = 404;
+      throw err;
+    }
 
-      if (!sourceUser || !destUser) {
-        const err = new Error("Không tìm thấy người gửi hoặc người nhận");
-        err.statusCode = 404;
-        throw err;
-      }
-
-      const { full_name: sourceFullName, phone: sourcePhone } = sourceUser;
-      const { full_name: destinationFullName, phone: destinationPhone } =
-        destUser;
-
-      const insertResult = await client.query(
-        `INSERT INTO transactions (
+    const insertResult = await client.query(
+      `INSERT INTO transactions (
         transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
         destination_user_id, destination_wallet_id, dest_balance_before, dest_balance_after,
         amount, fee, description, idempotency_key, status,
@@ -151,47 +144,115 @@ const TransactionRepository = {
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING id, status, created_at`,
-        [
-          transactionType,
-          sourceUserId,
-          sourceWalletId,
-          sourceBalanceBefore,
-          sourceBalanceAfter,
-          destinationUserId,
-          destinationWalletId,
-          destBalanceBefore,
-          destBalanceAfter,
-          amount,
-          fee,
-          description,
-          idempotencyKey,
-          status,
-          sourceFullName,
-          sourcePhone,
-          destinationFullName,
-          destinationPhone,
-        ],
-      );
-
-      await client.query("COMMIT");
-
-      return {
-        transactionId: insertResult.rows[0].id,
-        status: insertResult.rows[0].status,
-        createdAt: insertResult.rows[0].created_at,
+      [
+        transactionType,
+        sourceUserId,
+        sourceWalletId,
+        sourceBalanceBefore,
+        sourceBalanceAfter,
+        destinationUserId,
+        destinationWalletId,
+        destBalanceBefore,
+        destBalanceAfter,
         amount,
         fee,
         description,
-        sourceUserName: sourceUser?.full_name,
-        destinationId: destUser?.id,
-        destinationUserName: destUser?.full_name,
-        destinationPhone: destUser?.phone,
-        sourceBalanceAfter,
-        destBalanceAfter,
-      };
+        idempotencyKey,
+        status,
+        sourceUser.full_name,
+        sourceUser.phone,
+        destUser.full_name,
+        destUser.phone,
+      ],
+    );
+
+    return {
+      transactionId: insertResult.rows[0].id,
+      status: insertResult.rows[0].status,
+      createdAt: insertResult.rows[0].created_at,
+      amount,
+      fee,
+      description,
+      sourceUserName: sourceUser?.full_name,
+      destinationId: destUser?.id,
+      destinationUserName: destUser?.full_name,
+      destinationPhone: destUser?.phone,
+      sourceBalanceAfter,
+      destBalanceAfter,
+    };
+  },
+
+  async transferMoney(params) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const result = await this.executeTransfer(client, params);
+
+      await client.query("COMMIT");
+      return result;
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async processQRPayment({
+  sourceUserId,
+  referenceCode,
+  idempotencyKey,
+  transactionType,
+}) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const paymentRequest =
+        await paymentRequestRepository.findByReferenceCodeForUpdate(
+          client,
+          referenceCode,
+        );
+      if (!paymentRequest) {
+        const err = new Error("Không tìm thấy mã QR");
+        err.statusCode = 404;
+        throw err;
+      }
+      if (paymentRequest.paid_at != null || paymentRequest.is_expires) {
+        const err = new Error("Mã QR này đã được thanh toán hoặc hết hạn");
+        err.statusCode = 400;
+        throw err;
+      }
+      if (sourceUserId === paymentRequest.destination_user_id) {
+        const err = new Error("Không thể chuyển tiền cho chính mình");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const transferResult = await this.executeTransfer(client, {
+        sourceUserId: sourceUserId,
+        destinationUserId: paymentRequest.destination_user_id,
+        amount: paymentRequest.amount,
+        description:
+          paymentRequest.description || `Thanh toán QR ${referenceCode}`,
+        transactionType: transactionType,
+        idempotencyKey: idempotencyKey,
+      });
+
+      await paymentRequestRepository.markAsPaid(client, {
+        referenceCode: referenceCode,
+        sourceUserId: sourceUserId,
+        transactionId: transferResult.transactionId,
+      });
+
+      await client.query("COMMIT");
+      return transferResult;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      const err = new Error(e);
+      err.statusCode = e?.statusCode ?? 500;
+      throw err;
     } finally {
       client.release();
     }

@@ -54,7 +54,11 @@ const authService = {
     }
 
     const { id: userId, full_name: fullName, wallet_id: walletId } = user;
-
+    if (user.status != "ACTIVE") {
+      const err = new Error("Tài khoản bị khóa");
+      err.statusCode = 403;
+      throw err;
+    }
     if (user.locked_until) {
       if (user.is_locked) {
         const err = new Error("Tài khoản bị tạm khóa");

@@ -10,4 +10,12 @@ router.post(
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
 );
+
+router.post(
+  "/qr-payment",
+  authMiddleware.verifyAccessToken,
+  idempotencyMiddleware.checkIdempotencyKey,
+  transactionController.processQRPayment,
+);
+
 module.exports = router;

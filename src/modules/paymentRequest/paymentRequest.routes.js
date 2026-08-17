@@ -8,7 +8,7 @@ router.get(
   authMiddleware.verifyAccessToken,
   paymentRequestController.createStaticQRToken,
 );
-router.post(
+router.get(
   "/qr/static/resolve",
   authMiddleware.verifyAccessToken,
   paymentRequestController.getUserAndWalletByStaticQRToken,
@@ -20,7 +20,7 @@ router.post(
   paymentRequestController.createDynamicQRToken,
 );
 
-router.post(
+router.get(
   "/qr/dynamic/resolve",
   authMiddleware.verifyAccessToken,
   paymentRequestController.getUserAndWalletByDynamicQRToken,

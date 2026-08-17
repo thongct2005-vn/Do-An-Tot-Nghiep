@@ -2,7 +2,10 @@ const { successResponse } = require("../../utils/apiResponse");
 const transactionService = require("./transaction.service");
 const { emitToUser } = require("../../utils/socket");
 const { sendPushNotification } = require("../../utils/fireBaseNotification");
-const { processQRPayment } = require("./transaction.repository");
+const {
+  processQRPayment,
+  getTransferHistory,
+} = require("./transaction.repository");
 const transactionController = {
   async transferMoney(req, res, next) {
     try {
@@ -103,6 +106,25 @@ const transactionController = {
       });
 
       return successResponse(res, 200, "Thanh toán QR thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getTransferHistory(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { cursor_id: cursorId, limit } = req.query;
+      const result = await transactionService.getTransferHistory(userId, {
+        cursorId,
+        limit,
+      });
+      return successResponse(
+        res,
+        200,
+        "Lấy danh sách lịch sử thành công",
+        result,
+      );
     } catch (e) {
       next(e);
     }

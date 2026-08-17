@@ -66,6 +66,20 @@ const TransactionService = {
       status: "SUCCESS",
     });
   },
+
+  async getTransferHistory(userId, { cursorId, limit }) {
+    if (!userId) {
+      const err = new Error("Thiếu thông tin để lấy lịch sử giao dịch");
+      err.statusCode = 400;
+      throw err;
+    }
+    const maxLimit = Math.min(Number(limit) || 20, 20);
+    const result = await transactionRepository.getTransferHistory(userId, {
+      cursorId,
+      maxLimit,
+    });
+    return result;
+  },
 };
 
 module.exports = TransactionService;

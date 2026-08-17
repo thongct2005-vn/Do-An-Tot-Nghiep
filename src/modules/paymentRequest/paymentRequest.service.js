@@ -142,7 +142,7 @@ const paymentRequestService = {
       err.statusCode = 400;
       throw err;
     }
-    if (result.user_id === requestingUserId) {
+    if (result.destination_user_id === requestingUserId) {
       const err = new Error("Không thể chuyển tiền cho chính mình");
       err.statusCode = 400;
       throw err;

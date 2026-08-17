@@ -200,11 +200,11 @@ const TransactionRepository = {
   },
 
   async processQRPayment({
-  sourceUserId,
-  referenceCode,
-  idempotencyKey,
-  transactionType,
-}) {
+    sourceUserId,
+    referenceCode,
+    idempotencyKey,
+    transactionType,
+  }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -256,6 +256,46 @@ const TransactionRepository = {
     } finally {
       client.release();
     }
+  },
+
+  async getTransferHistory(userId, { cursorId = null, limit = 20 } = {}) {
+    const hasCursor = Boolean(cursorId);
+
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        transaction_type,
+        source_user_id,
+        source_display_name,
+        source_display_phone,
+        destination_user_id,
+        destination_display_name,
+        destination_display_phone,
+        amount,
+        fee,
+        description,
+        status,
+        created_at,
+        CASE WHEN source_user_id = $1 THEN 'OUT' ELSE 'IN' END AS direction,
+        CASE WHEN source_user_id = $1 THEN source_balance_before ELSE dest_balance_before END AS balance_before,
+        CASE WHEN source_user_id = $1 THEN source_balance_after ELSE dest_balance_after END AS balance_after
+      FROM transactions
+      WHERE (source_user_id = $1 OR destination_user_id = $1)
+        AND ($2::boolean = false OR id < $3)
+      ORDER BY id DESC
+      LIMIT $4
+      `,
+      [userId, hasCursor, cursorId, limit],
+    );
+
+    const rows = result.rows;
+    const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;
+
+    return {
+      transaction_list: rows,
+      next_cursor: nextCursor,
+    };
   },
 };
 

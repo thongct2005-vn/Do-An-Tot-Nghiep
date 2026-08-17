@@ -14,8 +14,7 @@ const paymentRequestController = {
   async getUserAndWalletByStaticQRToken(req, res, next) {
     try {
       const { user_id: requestingUserId } = req.user;
-      const { static_qr_token: token } = req.body;
-      console.log(req.body);
+      const { static_qr_token: token } = req.query;
       const result =
         await paymentRequestService.getUserAndWalletByStaticQRToken({
           token,
@@ -50,7 +49,7 @@ const paymentRequestController = {
   async getUserAndWalletByDynamicQRToken(req, res, next) {
     try {
       const { user_id: requestingUserId } = req.user;
-      const { reference_code: referenceCode } = req.body;
+      const { reference_code: referenceCode } = req.query;
       const result =
         await paymentRequestService.getUserAndWalletByDynamicQRToken({
           referenceCode,

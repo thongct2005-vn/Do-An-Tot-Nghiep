@@ -18,4 +18,10 @@ router.post(
   transactionController.processQRPayment,
 );
 
+router.get(
+  "/history",
+  authMiddleware.verifyAccessToken,
+  transactionController.getTransferHistory,
+);
+
 module.exports = router;

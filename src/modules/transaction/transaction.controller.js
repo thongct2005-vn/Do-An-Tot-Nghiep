@@ -59,6 +59,41 @@ const transactionController = {
       next(e);
     }
   },
+  async topupMoney(req, res, next) {
+    try {
+      const { user_id: sourceUserId } = req.user;
+      const idempotencyKey = req.idempotencyKey;
+      const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
+      const result = await transactionService.topupMoney({
+        sourceUserId,
+        amount,
+        idempotencyKey,
+        linkedBankAccountId,
+      });
+
+
+
+      emitToUser(sourceUserId, "wallet_balance_updated", {
+        balance: result.sourceBalanceAfter,
+        transactionId: result.transactionId,
+        type: "TOPUP",
+      });
+
+      sendPushNotification(sourceUserId, {
+        title: `Nạp tiền thành công từ ${result.bankName}`,
+        body: `Bạn đã nạp +${Number(result.amount).toLocaleString("vi-VN")}đ vào tài khoản`,
+        data: {
+          type: "TOPUP_MONEY",
+          transactionId: result.transactionId,
+          balance: result.sourceBalanceAfter,
+        },
+      });
+
+      return successResponse(res, 200, "Nạp tiền thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
 
   async processQRPayment(req, res, next) {
     try {

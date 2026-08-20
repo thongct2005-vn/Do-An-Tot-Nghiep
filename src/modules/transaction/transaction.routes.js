@@ -11,6 +11,14 @@ router.post(
   transactionController.transferMoney,
 );
 
+
+router.post(
+  "/topup",
+  authMiddleware.verifyAccessToken,
+  idempotencyMiddleware.checkIdempotencyKey,
+  transactionController.topupMoney,
+);
+
 router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,

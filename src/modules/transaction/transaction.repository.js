@@ -134,13 +134,13 @@ const TransactionRepository = {
       err.statusCode = 404;
       throw err;
     }
-
     const insertResult = await client.query(
       `INSERT INTO transactions (
         transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
         destination_user_id, destination_wallet_id, dest_balance_before, dest_balance_after,
         amount, fee, description, idempotency_key, status,
-        source_display_name, source_display_phone, destination_display_name, destination_display_phone
+        source_display_name, source_display_phone,
+        destination_display_name, destination_display_phone
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING id, status, created_at`,
@@ -180,6 +180,146 @@ const TransactionRepository = {
       sourceBalanceAfter,
       destBalanceAfter,
     };
+  },
+
+  async executeTopup({
+    sourceUserId,
+    amount,
+    fee = 0,
+    idempotencyKey,
+    transactionType = "TOPUP",
+    status = "SUCCESS",
+    linkedBankAccountId = null,
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const sourceWalletUser = await client.query(
+        `SELECT id FROM wallets WHERE user_id = $1`,
+        [sourceUserId],
+      );
+
+      if (!sourceWalletUser.rows[0]) {
+        const err = new Error("Không tìm thấy ví người dùng");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const bank = await client.query(
+        `SELECT lba.bank_id, b.name
+      FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
+      WHERE lba.id = $1
+      `,
+        [linkedBankAccountId],
+      );
+      if (!bank) {
+        const err = new Error("Không tìm thấy ngân hàng liên kết");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const bankName = bank.rows[0].name;
+
+      const sourceWalletId = sourceWalletUser.rows[0].id;
+
+      const sourceWalletResult = await client.query(
+        `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
+        [sourceWalletId],
+      );
+      const linkedBank = await client.query(
+        `SELECT balance FROM linked_bank_accounts WHERE id = $1 FOR UPDATE`,
+        [linkedBankAccountId],
+      );
+      const sourceWallet = sourceWalletResult.rows[0];
+      const linkedBankBalance =  linkedBank.rows[0].balance;
+      if (!sourceWallet) {
+        const err = new Error("Không tìm thấy số dư của ví người dùng");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const totalDeduct = Number(amount) + Number(fee);
+      const sourceBalanceBefore = Number(sourceWallet.balance);
+      const linkedBankBalanceBefore = Number(linkedBankBalance);
+      if (linkedBankBalanceBefore < totalDeduct) {
+        const err = new Error(
+          "Số dư ngân hàng không đủ để thực hiện giao dịch",
+        );
+        err.statusCode = 422;
+        throw err;
+      }
+
+      const sourceBalanceAfter = sourceBalanceBefore + totalDeduct;
+      const linkedBankBalanceAfter = linkedBankBalanceBefore - totalDeduct;
+      await client.query(
+        `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
+        [sourceBalanceAfter, sourceWalletId],
+      );
+
+      await client.query(
+        `UPDATE linked_bank_accounts SET balance = $1 WHERE id =$2`,
+        [linkedBankBalanceAfter, linkedBankAccountId],
+      );
+
+      const sourceUser = await client.query(
+        `SELECT id, full_name, phone FROM users WHERE id = $1`,
+        [sourceUserId],
+      );
+
+      if (!sourceUser) {
+        const err = new Error(
+          "Không tìm thấy thông tin người thực hiện giao dịch",
+        );
+        err.statusCode = 404;
+        throw err;
+      }
+
+      
+
+      const insertResult = await client.query(
+        `INSERT INTO transactions (
+        transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
+        amount, fee, idempotency_key, status,
+        source_display_name, source_display_phone,
+        linked_bank_account_id, bank_name
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING id, status, created_at`,
+        [
+          transactionType,
+          sourceUserId,
+          sourceWalletId,
+          sourceBalanceBefore,
+          sourceBalanceAfter,
+          amount,
+          fee,
+          idempotencyKey,
+          status,
+          sourceUser.full_name,
+          sourceUser.phone,
+          linkedBankAccountId,
+          bankName,
+        ],
+      );
+
+      await client.query("COMMIT");
+
+      return {
+        transactionId: insertResult.rows[0].id,
+        status: insertResult.rows[0].status,
+        createdAt: insertResult.rows[0].created_at,
+        amount,
+        fee,
+        sourceUserName: sourceUser?.full_name,
+        sourceBalanceAfter,
+        bankName,
+      };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   },
 
   async transferMoney(params) {

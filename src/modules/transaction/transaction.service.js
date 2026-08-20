@@ -44,6 +44,47 @@ const TransactionService = {
       status: "SUCCESS",
     });
   },
+  async topupMoney({
+    sourceUserId,
+    amount,
+    idempotencyKey,
+    linkedBankAccountId,
+  }) {
+    if (!sourceUserId) {
+      const err = new Error("Thiếu thông tin người thực hiện giao dịch");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if(!linkedBankAccountId){
+       const err = new Error("Thiếu thông tin ngân hàng liên kết");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const numAmount = Number(amount);
+    if (
+      !Number.isInteger(numAmount) ||
+      numAmount < 1000 ||
+      numAmount > 50000000
+    ) {
+      const err = new Error(
+        "Số tiền nạp phải từ 1 nghìn và tối đa là 50 triệu",
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return await transactionRepository.executeTopup({
+      sourceUserId,
+      amount: numAmount,
+      fee: 0,
+      idempotencyKey,
+      transactionType: "TOPUP",
+      status: "SUCCESS",
+      linkedBankAccountId: linkedBankAccountId
+    });
+  },
 
   async processQRPayment({ sourceUserId, idempotencyKey, referenceCode }) {
     if (!sourceUserId) {

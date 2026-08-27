@@ -62,7 +62,8 @@ const authRepository = {
 
       await client.query(
         `
-            INSERT INTO users(id, phone, phone_hash, password_hash,)
+            INSERT INTO users(id, phone, phone_hash, password_hash)
+            
             VALUES ($1, $2, $3, $4)
             `,
         [userId, phone, phoneHash, passwordHash],
@@ -94,11 +95,10 @@ const authRepository = {
   },
 
   async logout(userId) {
-    await pool.query("UPDATE users SET refresh_token = $1, fcm_token = $2 WHERE id = $3", [
-      null,
-      null,
-      userId
-    ]);
+    await pool.query(
+      "UPDATE users SET refresh_token = $1, fcm_token = $2 WHERE id = $3",
+      [null, null, userId],
+    );
   },
 };
 

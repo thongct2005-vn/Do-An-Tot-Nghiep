@@ -182,7 +182,7 @@ const TransactionRepository = {
     };
   },
 
-  async executeTopup({
+  async topupMoney({
     sourceUserId,
     amount,
     fee = 0,
@@ -231,7 +231,7 @@ const TransactionRepository = {
         [linkedBankAccountId],
       );
       const sourceWallet = sourceWalletResult.rows[0];
-      const linkedBankBalance =  linkedBank.rows[0].balance;
+      const linkedBankBalance = linkedBank.rows[0].balance;
       if (!sourceWallet) {
         const err = new Error("Không tìm thấy số dư của ví người dùng");
         err.statusCode = 404;
@@ -274,7 +274,141 @@ const TransactionRepository = {
         throw err;
       }
 
-      
+      const insertResult = await client.query(
+        `INSERT INTO transactions (
+        transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
+        amount, fee, idempotency_key, status,
+        source_display_name, source_display_phone,
+        linked_bank_account_id, bank_name
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING id, status, created_at`,
+        [
+          transactionType,
+          sourceUserId,
+          sourceWalletId,
+          sourceBalanceBefore,
+          sourceBalanceAfter,
+          amount,
+          fee,
+          idempotencyKey,
+          status,
+          sourceUser.full_name,
+          sourceUser.phone,
+          linkedBankAccountId,
+          bankName,
+        ],
+      );
+
+      await client.query("COMMIT");
+
+      return {
+        transactionId: insertResult.rows[0].id,
+        status: insertResult.rows[0].status,
+        createdAt: insertResult.rows[0].created_at,
+        amount,
+        fee,
+        sourceUserName: sourceUser?.full_name,
+        sourceBalanceAfter,
+        bankName,
+      };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async withdrawnMoney({
+    sourceUserId,
+    amount,
+    fee = 0,
+    idempotencyKey,
+    transactionType = "WITHDRAW",
+    status = "SUCCESS",
+    linkedBankAccountId = null,
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const sourceWalletUser = await client.query(
+        `SELECT id FROM wallets WHERE user_id = $1`,
+        [sourceUserId],
+      );
+
+      if (!sourceWalletUser.rows[0]) {
+        const err = new Error("Không tìm thấy ví người dùng");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const bank = await client.query(
+        `SELECT lba.bank_id, b.name
+      FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
+      WHERE lba.id = $1
+      `,
+        [linkedBankAccountId],
+      );
+      if (!bank) {
+        const err = new Error("Không tìm thấy ngân hàng liên kết");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const bankName = bank.rows[0].name;
+
+      const sourceWalletId = sourceWalletUser.rows[0].id;
+
+      const sourceWalletResult = await client.query(
+        `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
+        [sourceWalletId],
+      );
+      const linkedBank = await client.query(
+        `SELECT balance FROM linked_bank_accounts WHERE id = $1 FOR UPDATE`,
+        [linkedBankAccountId],
+      );
+      const sourceWallet = sourceWalletResult.rows[0];
+      const linkedBankBalance = linkedBank.rows[0].balance;
+      if (!sourceWallet) {
+        const err = new Error("Không tìm thấy số dư của ví người dùng");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const totalDeduct = Number(amount) + Number(fee);
+      const sourceBalanceBefore = Number(sourceWallet.balance);
+      const linkedBankBalanceBefore = Number(linkedBankBalance);
+      if (sourceBalanceBefore < totalDeduct) {
+        const err = new Error("Số dư ví không đủ để thực hiện giao dịch");
+        err.statusCode = 422;
+        throw err;
+      }
+
+      const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
+      const linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
+      await client.query(
+        `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
+        [sourceBalanceAfter, sourceWalletId],
+      );
+
+      await client.query(
+        `UPDATE linked_bank_accounts SET balance = $1 WHERE id =$2`,
+        [linkedBankBalanceAfter, linkedBankAccountId],
+      );
+
+      const sourceUser = await client.query(
+        `SELECT id, full_name, phone FROM users WHERE id = $1`,
+        [sourceUserId],
+      );
+
+      if (!sourceUser) {
+        const err = new Error(
+          "Không tìm thấy thông tin người thực hiện giao dịch",
+        );
+        err.statusCode = 404;
+        throw err;
+      }
 
       const insertResult = await client.query(
         `INSERT INTO transactions (
@@ -398,35 +532,70 @@ const TransactionRepository = {
     }
   },
 
-  async getTransferHistory(userId, { cursorId = null, limit = 20 } = {}) {
+  async getTransferHistory(
+    userId,
+    {
+      cursorId = null,
+      limit = 20,
+      keyword = null,
+      startDate = null,
+      endDate = null,
+    } = {},
+  ) {
     const hasCursor = Boolean(cursorId);
+    const hasKeyword = Boolean(keyword && keyword.trim());
+    const hasStartDate = Boolean(startDate);
+    const hasEndDate = Boolean(endDate);
 
     const result = await pool.query(
       `
-      SELECT
-        id,
-        transaction_type,
-        source_user_id,
-        source_display_name,
-        source_display_phone,
-        destination_user_id,
-        destination_display_name,
-        destination_display_phone,
-        amount,
-        fee,
-        description,
-        status,
-        created_at,
-        CASE WHEN source_user_id = $1 THEN 'OUT' ELSE 'IN' END AS direction,
-        CASE WHEN source_user_id = $1 THEN source_balance_before ELSE dest_balance_before END AS balance_before,
-        CASE WHEN source_user_id = $1 THEN source_balance_after ELSE dest_balance_after END AS balance_after
-      FROM transactions
-      WHERE (source_user_id = $1 OR destination_user_id = $1)
-        AND ($2::boolean = false OR id < $3)
-      ORDER BY id DESC
-      LIMIT $4
-      `,
-      [userId, hasCursor, cursorId, limit],
+    SELECT
+      id,
+      transaction_type,
+      source_user_id,
+      source_display_name,
+      source_display_phone,
+      destination_user_id,
+      destination_display_name,
+      destination_display_phone,
+      amount,
+      fee,
+      description,
+      status,
+      created_at,
+      bank_name,
+      CASE WHEN source_user_id = $1 THEN 'OUT' ELSE 'IN' END AS direction,
+      CASE WHEN source_user_id = $1 THEN source_balance_before ELSE dest_balance_before END AS balance_before,
+      CASE WHEN source_user_id = $1 THEN source_balance_after ELSE dest_balance_after END AS balance_after
+    FROM transactions
+    WHERE (source_user_id = $1 OR destination_user_id = $1)
+      AND ($2::boolean = false OR id < $3)
+      AND (
+        $5::boolean = false
+        OR (
+          (source_user_id = $1 AND destination_display_name ILIKE '%' || $6 || '%')
+          OR (destination_user_id = $1 AND source_display_name ILIKE '%' || $6 || '%')
+          OR description ILIKE '%' || $6 || '%'
+          OR bank_name ILIKE '%' || $6 || '%'
+        )
+      )
+      AND ($7::boolean = false OR created_at >= $8)
+      AND ($9::boolean = false OR created_at <= $10)
+    ORDER BY id DESC
+    LIMIT $4
+    `,
+      [
+        userId,
+        hasCursor,
+        cursorId,
+        limit,
+        hasKeyword,
+        keyword,
+        hasStartDate,
+        startDate,
+        hasEndDate,
+        endDate,
+      ],
     );
 
     const rows = result.rows;
@@ -435,6 +604,35 @@ const TransactionRepository = {
     return {
       transaction_list: rows,
       next_cursor: nextCursor,
+    };
+  },
+
+  async getCurrentMonthSummary(userId) {
+    const result = await pool.query(
+      `
+    SELECT
+      COALESCE(SUM(CASE
+        WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
+        WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
+        ELSE 0
+      END), 0) AS total_expense,
+      COALESCE(SUM(CASE
+        WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
+        WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
+        ELSE 0
+      END), 0) AS total_income
+    FROM transactions
+    WHERE (source_user_id = $1 OR destination_user_id = $1)
+      AND status = 'SUCCESS'
+      AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
+    `,
+      [userId],
+    );
+
+    const row = result.rows[0];
+    return {
+      total_expense: Number(row.total_expense),
+      total_income: Number(row.total_income),
     };
   },
 };

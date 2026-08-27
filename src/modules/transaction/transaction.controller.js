@@ -71,8 +71,6 @@ const transactionController = {
         linkedBankAccountId,
       });
 
-
-
       emitToUser(sourceUserId, "wallet_balance_updated", {
         balance: result.sourceBalanceAfter,
         transactionId: result.transactionId,
@@ -90,6 +88,40 @@ const transactionController = {
       });
 
       return successResponse(res, 200, "Nạp tiền thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async withdrawnMoney(req, res, next) {
+    try {
+      const { user_id: sourceUserId } = req.user;
+      const idempotencyKey = req.idempotencyKey;
+      const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
+      const result = await transactionService.withdrawnMoney({
+        sourceUserId,
+        amount,
+        idempotencyKey,
+        linkedBankAccountId,
+      });
+
+      emitToUser(sourceUserId, "wallet_balance_updated", {
+        balance: result.sourceBalanceAfter,
+        transactionId: result.transactionId,
+        type: "WITHDRAW",
+      });
+
+      sendPushNotification(sourceUserId, {
+        title: `Rút tiền thành công`,
+        body: `Bạn đã rút -${Number(result.amount).toLocaleString("vi-VN")}đ về ngân hàng ${result.bankName}`,
+        data: {
+          type: "WITHDRAW_MONEY",
+          transactionId: result.transactionId,
+          balance: result.sourceBalanceAfter,
+        },
+      });
+
+      return successResponse(res, 200, "Rút tiền thành công", result);
     } catch (e) {
       next(e);
     }
@@ -149,15 +181,43 @@ const transactionController = {
   async getTransferHistory(req, res, next) {
     try {
       const { user_id: userId } = req.user;
-      const { cursor_id: cursorId, limit } = req.query;
+      const {
+        cursor_id: cursorId,
+        limit,
+        keyword,
+        start_date: startDate,
+        end_date: endDate,
+      } = req.query;
+
       const result = await transactionService.getTransferHistory(userId, {
         cursorId,
         limit,
+        keyword,
+        startDate,
+        endDate,
       });
+
       return successResponse(
         res,
         200,
         "Lấy danh sách lịch sử thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getCurrentMonthSummary(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+
+      const result = await transactionService.getCurrentMonthSummary(userId);
+
+      return successResponse(
+        res,
+        200,
+        "Lấy tổng quan giao dịch thành công",
         result,
       );
     } catch (e) {

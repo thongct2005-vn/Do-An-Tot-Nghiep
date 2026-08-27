@@ -14,7 +14,7 @@ app.use(express.json());
 app.use("/api/v2", router);
 
 app.use(errorHandler);
-app.use("/bank-logo", express.static(path.join(__dirname, "bank_logo")));
+app.use("/images", express.static(path.join(__dirname, "images")));
 server.listen(PORT, () => {
   console.log(`Server running ${PORT}`);
 });

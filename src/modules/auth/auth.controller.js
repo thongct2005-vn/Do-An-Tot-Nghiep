@@ -21,6 +21,7 @@ const authController = {
     try {
       const { phone, password } = req.body;
       const result = await authService.login({ phone, password });
+      console.log(result);
       return successResponse(res, 200, "Đăng nhập thành công", result);
     } catch (e) {
       next(e);

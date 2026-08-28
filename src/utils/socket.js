@@ -1,52 +1,69 @@
-const { Server } = require('socket.io');
-const tokenUtil = require('./jwt');
+const { Server } = require("socket.io");
+const tokenUtil = require("./jwt");
+
 let io;
+const activeSockets = new Map();
+
 const initSocket = (server) => {
-    io = new Server(server, {
-        cors:{
-            origin:'*',
-            methods: ['GET', 'POST']
-        }
+  io = new Server(server, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"],
+    },
+  });
+
+  io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      const err = new Error("Thiếu thông tin xác thực để kết nối");
+      err.statusCode = 401;
+      return next(err);
+    }
+
+    try {
+      const decode = tokenUtil.verifyAccessToken(token);
+      socket.user = decode;
+      next();
+    } catch (e) {
+      const err = new Error("Thông tin xác thực không hợp lệ hoặc đã hết hạn");
+      err.statusCode = 401;
+      return next(err);
+    }
+  });
+
+  io.on("connection", (socket) => {
+    const userId = socket.user.user_id;
+    const oldSocketId = activeSockets.get(userId);
+    if (oldSocketId && oldSocketId !== socket.id) {
+      const oldSocket = io.sockets.sockets.get(oldSocketId);
+      if (oldSocket) {
+        oldSocket.emit("force_logout", {
+          reason: "Tài khoản của bạn vừa được đăng nhập ở một thiết bị khác",
+        });
+        oldSocket.disconnect(true);
+      }
+    }
+
+    activeSockets.set(userId, socket.id);
+    socket.join(`user_${userId}`);
+
+    socket.on("disconnect", (reason) => {
+      if (activeSockets.get(userId) === socket.id) {
+        activeSockets.delete(userId);
+      }
     });
+  });
 
-    io.use((socket, next)=>{
-        const token = socket.handshake.auth.token;
-        if(!token){
-            const err = new Error('Thiếu thông tin xác thực để kết nối');
-            err.statusCode = 401;
-            return next(err);
-        }
-
-        try{
-            const decode = tokenUtil.verifyAccessToken(token);
-            socket.user = decode;
-            next();
-        }
-        catch(e){
-            const err = new Error('Thông tin xác thực không hợp lệ hoặc đã hết hạn');
-            err.statusCode = 401;
-            return next(err);
-        }
-    });
-
-    io.on('connection', (socket)=>{
-        const userId = socket.user.user_id;
-        console.log(`${userId} đã kết nối socket thành công - Socket ID: ${socket.id}`);
-        socket.join(`user_${userId}`);
-        socket.on('disconnect', ()=>{
-            console.log(`${userId} đã ngắt kết nối`);
-        })
-    })
-    return io;
+  return io;
 };
 
-const emitToUser = (userId, eventName, data)=>{
-    if(io){
-        io.to(`user_${userId}`).emit(eventName, data);
-    }
+const emitToUser = (userId, eventName, data) => {
+  if (io) {
+    io.to(`user_${userId}`).emit(eventName, data);
+  }
 };
 
 module.exports = {
-    initSocket,
-    emitToUser
-}
+  initSocket,
+  emitToUser,
+};

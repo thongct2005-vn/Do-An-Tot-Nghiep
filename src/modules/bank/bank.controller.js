@@ -1,6 +1,5 @@
 const bankService = require("./bank.service");
-const { successResponse, errorResponse } = require("../../utils/apiResponse");
-const { linkBankAccount } = require("./bank.repository");
+const { successResponse} = require("../../utils/apiResponse");
 
 const bankController = {
   async getBankLinkStatus(req, res, next) {

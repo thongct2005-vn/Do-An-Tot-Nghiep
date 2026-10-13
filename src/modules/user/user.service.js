@@ -1,20 +1,18 @@
 const userRepository = require("./user.repository");
 const bcrypt = require("bcrypt");
 const { isValidPasswordOrPin } = require("../../utils/validators");
+const { httpError } = require("../../utils/httpError");
+
 const userService = {
   async findUserByPhone(phone) {
     if (!phone) {
-      const err = new Error("Thiếu số điện thoại");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu số điện thoại");
     }
 
     const user = await userRepository.findUserByPhone(phone);
 
     if (!user) {
-      const err = new Error("Không tìm thấy người dùng này");
-      err.statusCode = 404;
-      throw err;
+      throw httpError(404, "Không tìm thấy người dùng này");
     }
 
     return {
@@ -28,15 +26,11 @@ const userService = {
 
   async findUserByPhoneHashList(phones) {
     if (!phones || !Array.isArray(phones)) {
-      const err = new Error("Danh sách số điện thoại không hợp lệ");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
     if (phones.length > 500) {
-      const err = new Error("Danh bạ quá lớn, vui lòng đồng bộ từng phần");
-      err.statusCode = 413;
-      throw err;
+      throw httpError(413, "Danh bạ quá lớn, vui lòng đồng bộ từng phần");
     }
 
     if (phones.length === 0) {
@@ -50,11 +44,10 @@ const userService = {
 
   async checkPinStatus(userId) {
     if (!userId) {
-      const err = new Error(
+      throw httpError(
+        400,
         "Thiếu thông tin người dùng để kiểm tra trạng thái pin",
       );
-      err.statusCode = 400;
-      throw err;
     }
 
     const result = await userRepository.checkPinStatus(userId);
@@ -65,15 +58,11 @@ const userService = {
 
   async createPin({ userId, pin }) {
     if (!userId || !pin) {
-      const err = new Error("Thiếu thông tin để tạo pin");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin để tạo pin");
     }
 
     if (!isValidPasswordOrPin(pin)) {
-      const err = new Error("Mã PIN phải gồm đúng 6 chữ số");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Mã PIN phải gồm đúng 6 chữ số");
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -81,36 +70,25 @@ const userService = {
 
     const updated = await userRepository.createPin({ userId, pinHash });
     if (!updated) {
-      const err = new Error(
-        "Bạn đã có mã PIN, vui lòng dùng chức năng đổi PIN",
-      );
-      err.statusCode = 409;
-      throw err;
+      throw httpError(409, "Bạn đã có mã PIN, vui lòng dùng chức năng đổi PIN");
     }
   },
-  async updateFmcToken({userId, fcmToken}){
-    if(!userId || !fcmToken){
-      const err = new Error(
-        "Thiếu thông tin để cập nhật fcm token",
-      );
-      err.statusCode = 400;
-      throw err;
+
+  async updateFmcToken({ userId, fcmToken }) {
+    if (!userId || !fcmToken) {
+      throw httpError(400, "Thiếu thông tin để cập nhật fcm token");
     }
 
-    await userRepository.updateFmcToken({userId, fcmToken});
+    await userRepository.updateFmcToken({ userId, fcmToken });
   },
 
-  async getFcmToken(userId){
-    if(!userId){
-      const err = new Error(
-        "Thiếu thông tin để lấy dữ fcm token",
-      );
-      err.statusCode = 400;
-      throw err;
+  async getFcmToken(userId) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin để lấy dữ fcm token");
     }
     const result = await userRepository.getFcmToken(userId);
     return result;
-  }
+  },
 };
 
 module.exports = userService;

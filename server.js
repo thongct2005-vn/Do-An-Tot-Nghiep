@@ -12,7 +12,7 @@ const PORT = process.env.PORT;
 initSocket(server);
 app.use(express.json());
 app.use("/api/v2", router);
-
+app.set("trust proxy", 1);
 app.use(errorHandler);
 app.use("/images", express.static(path.join(__dirname, "images")));
 server.listen(PORT, () => {

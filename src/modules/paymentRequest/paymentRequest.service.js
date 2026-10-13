@@ -3,12 +3,11 @@ const walletRepository = require("../wallet/wallet.repository");
 const { generateReferenceCode } = require("../../utils/generateReferenceCode");
 const { uuidv7 } = require("uuidv7");
 const userRepository = require("../user/user.repository");
+const { httpError } = require("../../utils/httpError");
 const paymentRequestService = {
   async createStaticQRToken(userId) {
     if (!userId) {
-      const err = new Error("Thiếu thông tin để tạo mã QR");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin để tạo mã QR");
     }
     const token =
       await paymentRequestRepository.getStaticQRTokenByUserId(userId);
@@ -28,42 +27,30 @@ const paymentRequestService = {
         throw err;
       }
     }
-    const err = new Error("Không thể tạo mã QR, vui lòng thử lại");
-    err.statusCode = 500;
-    throw err;
+    throw httpError(500, "Không thể tạo mã QR, vui lòng thử lại");
   },
 
   async getUserAndWalletByStaticQRToken({ token, requestingUserId }) {
     if (!token) {
-      const err = new Error("Thiếu token để lấy thông tin");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu token để lấy thông tin");
     }
     const result =
       await paymentRequestRepository.getUserAndWalletByStaticQRToken(token);
     if (!result) {
-      const err = new Error("Mã QR không hợp lệ");
-      err.statusCode = 404;
-      throw err;
+      throw httpError(404, "Mã QR không hợp lệ");
     }
     if (result.user_status !== "ACTIVE" || result.wallet_status !== "ACTIVE") {
-      const err = new Error("Tài khoản không khả dụng");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Tài khoản không khả dụng");
     }
     if (result.user_id === requestingUserId) {
-      const err = new Error("Không thể chuyển tiền cho chính mình");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
     return result;
   },
 
   async createDynamicQRToken({ userId, amount, description }) {
     if (!userId || !amount) {
-      const err = new Error("Thiếu thông tin để tạo mã QR");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin để tạo mã QR");
     }
     const numAmount = Number(amount);
     if (
@@ -71,27 +58,20 @@ const paymentRequestService = {
       numAmount < 1000 ||
       numAmount > 50000000
     ) {
-      const err = new Error(
-        "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu",
-      );
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa 50 triệu");
     }
     if (description !== undefined && description !== null) {
       if (typeof description !== "string" || description.length > 50) {
-        const err = new Error("Mô tả tối đa 50 ký tự");
-        err.statusCode = 400;
-        throw err;
+        throw httpError(400, "Mô tả tối đa 50 ký tự");
       }
     }
-    const { id: destinationWalletId, user_id: destinationUserId } =
-      await walletRepository.getWalletByUserId(userId);
-    if (!destinationWalletId || !destinationUserId) {
-      const err = new Error(
-        "Không tìm thấy người dùng hoặc ví của người dùng này",
+    const { id: destinationUserId } =
+      await walletRepository.getWalletBalanceByUserId(userId);
+    if (!destinationUserId) {
+      throw httpError(
+        404,
+        "Không tìm thấy người dùng này",
       );
-      err.statusCode = 404;
-      throw err;
     }
     const id = uuidv7();
     const referenceCode = generateReferenceCode(16);
@@ -99,7 +79,6 @@ const paymentRequestService = {
       id,
       referenceCode,
       destinationUserId,
-      destinationWalletId,
       amount: numAmount,
       description,
     });
@@ -108,44 +87,32 @@ const paymentRequestService = {
 
   async getUserAndWalletByDynamicQRToken({ referenceCode, requestingUserId }) {
     if (!referenceCode) {
-      const err = new Error("Thiếu token để lấy thông tin");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu token để lấy thông tin");
     }
 
     const result =
       await paymentRequestRepository.findByReferenceCode(referenceCode);
     if (!result) {
-      const err = new Error("Mã QR không hợp lệ");
-      err.statusCode = 404;
-      throw err;
+      throw httpError(404, "Mã QR không hợp lệ");
     }
 
     if (result.is_expires) {
-      const err = new Error("Mã QR đã hết hạn");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Mã QR đã hết hạn");
     }
 
     if (result.paid_at != null) {
-      const err = new Error("Mã QR đã được sử dụng");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Mã QR đã được sử dụng");
     }
 
-    const user = await userRepository.getUserAndWalletByUserId(
+    const user = await userRepository.getUserByUserId(
       result.destination_user_id,
     );
 
     if (user.user_status !== "ACTIVE" || user.wallet_status !== "ACTIVE") {
-      const err = new Error("Tài khoản không khả dụng");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Tài khoản không khả dụng");
     }
     if (result.destination_user_id === requestingUserId) {
-      const err = new Error("Không thể chuyển tiền cho chính mình");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
     return result;

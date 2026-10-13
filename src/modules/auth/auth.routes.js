@@ -2,15 +2,34 @@ const express = require("express");
 const router = express.Router();
 const authController = require("./auth.controller");
 const authMiddleware = require("../../middlewares/auth.middleware");
+const {
+  loginLimiter,
+  otpLimiter,
+} = require("../../middlewares/ratelimit.middleware");
 
-router.post("/login", authController.login);
+router.post("/login", loginLimiter, authController.login);
 router.post(
-  "/logout",
-  authMiddleware.verifyAccessToken,
-  authController.logout,
+  "/resend-login-otp",
+  otpLimiter,
+  authMiddleware.verifyLoginOtpToken,
+  authController.resendLoginOtp,
 );
-router.post("/register", authController.register);
-router.post("/checkPhoneExists", authController.isPhoneExist);
+router.post(
+  "/verify-login-otp",
+  otpLimiter,
+  authMiddleware.verifyLoginOtpToken,
+  authController.verifyLoginOtp,
+);
+router.post("/logout", authMiddleware.verifyAccessToken, authController.logout);
+router.post("/register", loginLimiter, authController.register);
+router.post(
+  "/verify-register",
+  otpLimiter,
+  authMiddleware.verifyRegisterOtpToken,
+  authController.verifyRegister,
+);
+router.post("/checkPhoneExists", loginLimiter, authController.isPhoneExist);
+router.post("/checkEmailExists", loginLimiter, authController.isEmailExist);
 router.get("/me", authMiddleware.verifyAccessToken, authController.getMe);
 router.post(
   "/refresh-token",

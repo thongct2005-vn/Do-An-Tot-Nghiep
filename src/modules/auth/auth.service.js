@@ -1,30 +1,87 @@
-const pool = require("../../config/database");
 const authRepository = require("./auth.repository");
+const otpService = require("../otp/otp.service");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
-require("dotenv").config();
 const {
   isValidPhone,
   isValidPasswordOrPin,
+  isValidEmail,
 } = require("../../utils/validators");
 const { uuidv7 } = require("uuidv7");
-const jwt = require("jsonwebtoken");
 const tokenUtil = require("../../utils/jwt");
-const ACCESS_SECRET = process.env.ACCESS_SECRET;
-const REFRESH_SECRET = process.env.REFRESH_SECRET;
+const { emitToUser } = require("../../utils/socket");
+const { httpError } = require("../../utils/httpError");
+const e = require("express");
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCK_MINUTES = 30;
+
+function maskEmail(email) {
+  const [name, domain] = email.split("@");
+  const visible = name.slice(0, Math.min(5, name.length));
+  return `${visible}***@${domain}`;
+}
+
+async function checkCredentials(phone, password) {
+  if (!phone || !password) {
+    throw httpError(400, "Thiếu số điện thoại hoặc mật khẩu");
+  }
+
+  if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
+    throw httpError(400, "Số điện thoại hoặc mật khẩu không hợp lệ");
+  }
+
+  const user = await authRepository.findUserByPhone(phone);
+
+  if (!user) {
+    throw httpError(404, "Số điện thoại chưa đăng ký tài khoản");
+  }
+
+  if (!user.email) {
+    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
+  }
+
+  if (user.status != "ACTIVE") {
+    throw httpError(403, "Tài khoản bị khóa");
+  }
+
+  if (user.locked_until) {
+    if (user.is_locked) {
+      throw httpError(403, "Tài khoản bị tạm khóa");
+    }
+    await authRepository.resetFailedLogin(phone);
+    user.failed_login_attempts = 0;
+    user.locked_until = null;
+  }
+
+  const isCorrectPassword = await bcrypt.compare(password, user.password_hash);
+  if (!isCorrectPassword) {
+    const row = await authRepository.registerFailedLogin({
+      phone,
+      maxAttempts: MAX_LOGIN_ATTEMPTS,
+      lockMinutes: LOGIN_LOCK_MINUTES,
+    });
+    const attempts = Number(row?.failed_login_attempts ?? MAX_LOGIN_ATTEMPTS);
+    const isLocked = attempts >= MAX_LOGIN_ATTEMPTS;
+    const err = httpError(
+      isLocked ? 403 : 400,
+      isLocked ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
+    );
+    err.remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
+    throw err;
+  }
+
+  await authRepository.resetFailedLogin(phone);
+  return user;
+}
 
 const authService = {
   async isPhoneExist(phone) {
     if (!phone) {
-      const err = new Error("Thiếu số điện thoại");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu số điện thoại");
     }
 
     if (!isValidPhone(phone)) {
-      const err = new Error("Số điện thoại không hợp lệ");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Số điện thoại không hợp lệ");
     }
 
     const user = await authRepository.findUserByPhone(phone);
@@ -33,84 +90,89 @@ const authService = {
     };
   },
 
+  async isEmailExist(email) {
+    if (!email) {
+      throw httpError(400, "Thiếu email");
+    }
+
+    if (!isValidEmail(email)) {
+      throw httpError(400, "Email không hợp lệ");
+    }
+
+    const user = await authRepository.findUserByEmail(email);
+    return {
+      is_email_exists: user != null,
+    };
+  },
+
   async login({ phone, password }) {
-    if (!phone || !password) {
-      const err = new Error("Thiếu số điện thoại hoặc mật khẩu");
-      err.statusCode = 400;
-      throw err;
+    const user = await checkCredentials(phone, password);
+    try {
+    
+      await otpService.generateAndSaveOtp({ email: user.email });
+    } catch (e) {
+      if (e.statusCode !== 429) throw e;
     }
 
-    if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
-      const err = new Error("Số điện thoại hoặc mật khẩu không hợp lệ");
-      err.statusCode = 400;
-      throw err;
-    }
+    return {
+      otp_token: tokenUtil.generateOtpToken(user),
+      masked_email: maskEmail(user.email),
+    };
+  },
 
+  async resendLoginOtp({ userId, phone }) {
     const user = await authRepository.findUserByPhone(phone);
-    if (!user) {
-      const err = new Error("Số điện thoại chưa đăng ký tài khoản");
-      err.statusCode = 404;
-      throw err;
+    if (!user || user.id !== userId || user.status != "ACTIVE") {
+      throw httpError(401, "Phiên xác thực không hợp lệ");
     }
 
-    const { id: userId, full_name: fullName, wallet_id: walletId } = user;
-    if (user.status != "ACTIVE") {
-      const err = new Error("Tài khoản bị khóa");
-      err.statusCode = 403;
-      throw err;
-    }
-    if (user.locked_until) {
-      if (user.is_locked) {
-        const err = new Error("Tài khoản bị tạm khóa");
-        err.statusCode = 403;
-        throw err;
-      }
-
-      await authRepository.resetFailedLogin(phone);
-      user.failed_login_attempts = 0;
-      user.locked_until = null;
+    if (!user.email) {
+      throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
     }
 
-    const isCorrectPassword = await bcrypt.compare(
-      password,
-      user.password_hash,
-    );
-    if (!isCorrectPassword) {
-      const attempts = Number(user.failed_login_attempts || 0) + 1;
-      const lockMinutes = attempts >= 5 ? 30 : 0;
-      await authRepository.updateFailedLogin({ phone, attempts, lockMinutes });
-      const err = new Error(
-        attempts >= 5 ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
-      );
-      err.remainingAttempts = Math.max(5 - attempts, 0);
-      err.statusCode = attempts >= 5 ? 403 : 400;
-      throw err;
+
+    await otpService.generateAndSaveOtp({ email: user.email });
+
+    return {
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  async verifyLoginOtp({ userId, phone, otp }) {
+    const user = await authRepository.findUserByPhone(phone);
+    if (!user || user.id !== userId || user.status != "ACTIVE") {
+      throw httpError(401, "Phiên xác thực không hợp lệ");
     }
 
-    await authRepository.resetFailedLogin(user.phone);
+    if (!user.email) {
+      throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
+    }
+
+    await otpService.verifyOtp({ email: user.email, otp });
 
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
+    await authRepository.updateRefeshToken({ refreshToken, userId: user.id });
 
-    await authRepository.updateRefeshToken({ refreshToken, userId });
+    emitToUser(user.id, "force_logout", {
+      reason: "Tài khoản của bạn vừa được đăng nhập ở một thiết bị khác",
+    });
+
     return {
       token: {
         access_token: accessToken,
         refresh_token: refreshToken,
       },
       user_info: {
-        user_id: userId,
-        phone: phone,
-        full_name: fullName,
-        wallet_id: walletId,
+        user_id: user.id,
+        phone: user.phone,
+        full_name: user.full_name,
       },
     };
   },
 
   async logout(userId) {
     if (!userId) {
-      const err = new Error("Thiếu thông tin để đăng xuất");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin để đăng xuất");
     }
     await authRepository.logout(userId);
   },
@@ -118,15 +180,16 @@ const authService = {
   async refreshToken(token) {
     const user = await authRepository.findUserByRefreshToken(token);
     if (!user) {
-      const err = new Error(
+      throw httpError(
+        401,
         "Tài khoản của bạn đã được đăng nhập trên thiết bị khác. Vui lòng đăng nhập lại",
       );
-      err.statusCode = 401;
-      throw err;
     }
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
-    const userId = user.id;
-    await authRepository.updateRefeshToken({ refreshToken, userId });
+    await authRepository.updateRefeshToken({
+      refreshToken,
+      userId: user.id,
+    });
 
     return {
       token: {
@@ -136,42 +199,86 @@ const authService = {
     };
   },
 
-  async register({ phone, password }) {
-    if (!phone || !password) {
-      const err = new Error("Thiếu số điện thoại hoặc mật khẩu!");
-      err.statusCode = 400;
-      throw err;
+  async register({ phone, email }) {
+    if (!phone || !email) {
+      throw httpError(400, "Thiếu số điện thoại hoặc email!");
     }
 
-    if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
-      const err = new Error("Số điện thoại hoặc mật khẩu không hợp lệ");
-      err.statusCode = 400;
-      throw err;
+    if (!isValidPhone(phone)) {
+      throw httpError(400, "Số điện thoại không hợp lệ");
     }
 
-    const user = await authRepository.findUserByPhone(phone);
-    if (user) {
-      const err = new Error("Tài khoản đã tồn tại");
-      err.statusCode = 409;
-      throw err;
+    if (!isValidEmail(email)) {
+      throw httpError(400, "Email không hợp lệ");
     }
 
-    const userId = uuidv7();
-    const walletId = uuidv7();
+    const existingPhone = await authRepository.findUserByPhone(phone);
+    const existingEmail = await authRepository.findUserByEmail(email);
+    if (existingPhone) {
+      throw httpError(409, "Số điện thoại đã tồn tại");
+    }
+
+    if (existingEmail) {
+      throw httpError(409, "Email đã tồn tại");
+    }
+
+    try {
+      await otpService.generateAndSaveOtp({ email });
+    } catch (e) {
+      if (e.statusCode !== 429) throw e;
+    }
+
+    const tempUser = { id: uuidv7(), phone, email };
+
+    return {
+      otp_token: tokenUtil.generateOtpToken(tempUser, "register_otp"),
+    };
+  },
+
+  async verifyAndCompleteRegister({ userId, phone, email, otp, password }) {
+    if (!password) {
+      throw httpError(400, "Thiếu mật khẩu");
+    }
+
+    if (!isValidPasswordOrPin(password)) {
+      throw httpError(400, "Mật khẩu không hợp lệ");
+    }
+
+    await otpService.verifyOtp({ email, phone, otp });
+
+    const existingUser = await authRepository.findUserByPhone(phone);
+    if (existingUser) {
+      throw httpError(409, "Tài khoản đã tồn tại");
+    }
+
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
+
     await authRepository.addUser({
       userId,
-      walletId,
       phone,
       phoneHash,
+      email,
       passwordHash,
     });
+
+    const newUser = await authRepository.findUserByPhone(phone);
+    const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(newUser);
+    await authRepository.updateRefeshToken({
+      refreshToken,
+      userId: newUser.id,
+    });
+
     return {
+      token: {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      },
       user_info: {
-        user_id: userId,
-        wallet_id: walletId,
+        user_id: newUser.id,
+        phone: newUser.phone,
+        email: newUser.email,
       },
     };
   },

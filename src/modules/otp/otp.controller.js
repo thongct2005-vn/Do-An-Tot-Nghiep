@@ -14,8 +14,8 @@ const otpController = {
 
   async verifyOtp(req, res, next) {
     try {
-      const { email, phone, otp } = req.body;
-      const result = await otpService.verifyOtp({ email, phone, otp });
+      const { email, otp } = req.body;
+      const result = await otpService.verifyOtp({ email, otp });
       return successResponse(res, 200, "Xác thực OTP thành công", result);
     } catch (e) {
       next(e);

@@ -1,12 +1,11 @@
 const bankRepository = require("./bank.repository");
 const userRepository = require("../user/user.repository");
 const { uuidv7 } = require("uuidv7");
+const { httpError } = require("../../utils/httpError");
 const bankService = {
   async getBankLinkStatus(userId) {
     if (!userId) {
-      const err = new Error("Thiếu thông tin người dùng");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin người dùng");
     }
 
     const [allBanks, linkedAccounts] = await Promise.all([
@@ -30,14 +29,13 @@ const bankService = {
 
   async linkBankAccount({ userId, bankId }) {
     if (!userId || !bankId) {
-      const err = new Error(
+      throw httpError(
+        400,
         "Thiếu thông tin người dùng hoặc ngân hàng muốn liên kết",
       );
-      err.statusCode = 400;
-      throw err;
     }
     const { full_name: accountHolderName, phone: accountNumber } =
-      await userRepository.getUserAndWalletByUserId(userId);
+      await userRepository.getUserByUserId(userId);
     const id = uuidv7();
     await bankRepository.linkBankAccount({
       id,

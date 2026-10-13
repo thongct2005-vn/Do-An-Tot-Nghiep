@@ -1,13 +1,14 @@
 const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
+const { httpError } = require("../../utils/httpError");
 
 const TransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
     const result = await pool.query(
       `
-            SELECT status, response_body, request_hash, response_status_code
-            FROM idempotency_keys WHERE idempotency_key = $1
-            `,
+      SELECT status, response_body, request_hash, response_status_code
+      FROM idempotency_keys WHERE idempotency_key = $1
+      `,
       [idempotencyKey],
     );
     return result.rows[0];
@@ -56,102 +57,65 @@ const TransactionRepository = {
       status = "SUCCESS",
     },
   ) {
-    const sourceWalletResult = await client.query(
-      `SELECT id FROM wallets WHERE user_id = $1`,
-      [sourceUserId],
-    );
-    const destinationWalletResult = await client.query(
-      `SELECT id FROM wallets WHERE user_id = $1`,
-      [destinationUserId],
-    );
+    const [firstId, secondId] = [sourceUserId, destinationUserId].sort();
 
-    if (!sourceWalletResult.rows[0] || !destinationWalletResult.rows[0]) {
-      const err = new Error("Không tìm thấy ví người dùng");
-      err.statusCode = 404;
-      throw err;
-    }
-
-    const sourceWalletId = sourceWalletResult.rows[0].id;
-    const destinationWalletId = destinationWalletResult.rows[0].id;
-
-    const [firstId, secondId] = [sourceWalletId, destinationWalletId].sort();
-
-    const firstWalletResult = await client.query(
-      `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
+    const firstUserResult = await client.query(
+      `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
       [firstId],
     );
-    const secondWalletResult = await client.query(
-      `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
+    const secondUserResult = await client.query(
+      `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
       [secondId],
     );
 
-    const firstWallet = firstWalletResult.rows[0];
-    const secondWallet = secondWalletResult.rows[0];
+    const firstUser = firstUserResult.rows[0];
+    const secondUser = secondUserResult.rows[0];
 
-    if (!firstWallet || !secondWallet) {
-      const err = new Error("Không tìm thấy số dư của ví người dùng");
-      err.statusCode = 404;
-      throw err;
+    if (!firstUser || !secondUser) {
+      throw httpError(
+        404,
+        "Không tìm thấy thông tin người gửi hoặc người nhận",
+      );
     }
 
-    const sourceWallet =
-      firstId === sourceWalletId ? firstWallet : secondWallet;
-    const destWallet = firstId === sourceWalletId ? secondWallet : firstWallet;
+    const sourceUser = firstId === sourceUserId ? firstUser : secondUser;
+    const destUser = firstId === sourceUserId ? secondUser : firstUser;
 
     const totalDeduct = Number(amount) + Number(fee);
-    const sourceBalanceBefore = Number(sourceWallet.balance);
+    const sourceBalanceBefore = Number(sourceUser.balance);
 
     if (sourceBalanceBefore < totalDeduct) {
-      const err = new Error("Số dư không đủ để thực hiện giao dịch");
-      err.statusCode = 422;
-      throw err;
+      throw httpError(422, "Số dư không đủ để thực hiện giao dịch");
     }
 
     const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
-    const destBalanceBefore = Number(destWallet.balance);
+    const destBalanceBefore = Number(destUser.balance);
     const destBalanceAfter = destBalanceBefore + Number(amount);
 
-    await client.query(
-      `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
-      [sourceBalanceAfter, sourceWalletId],
-    );
+    await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
+      sourceBalanceAfter,
+      sourceUserId,
+    ]);
 
-    await client.query(
-      `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
-      [destBalanceAfter, destinationWalletId],
-    );
+    await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
+      destBalanceAfter,
+      destinationUserId,
+    ]);
 
-    const usersResult = await client.query(
-      `SELECT id, full_name, phone FROM users WHERE id = ANY($1)`,
-      [[sourceUserId, destinationUserId]],
-    );
-
-    const sourceUser = usersResult.rows.find((u) => u.id === sourceUserId);
-    const destUser = usersResult.rows.find((u) => u.id === destinationUserId);
-
-    if (!sourceUser || !destUser) {
-      const err = new Error("Không tìm thấy người gửi hoặc người nhận");
-      err.statusCode = 404;
-      throw err;
-    }
     const insertResult = await client.query(
       `INSERT INTO transactions (
-        transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
-        destination_user_id, destination_wallet_id, dest_balance_before, dest_balance_after,
-        amount, fee, description, idempotency_key, status,
-        source_display_name, source_display_phone,
-        destination_display_name, destination_display_phone
+        transaction_type, source_user_id, source_balance_before, source_balance_after,
+        destination_user_id, dest_balance_before, dest_balance_after,
+        amount, fee, description, idempotency_key, status
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, status, created_at`,
       [
         transactionType,
         sourceUserId,
-        sourceWalletId,
         sourceBalanceBefore,
         sourceBalanceAfter,
         destinationUserId,
-        destinationWalletId,
         destBalanceBefore,
         destBalanceAfter,
         amount,
@@ -159,10 +123,6 @@ const TransactionRepository = {
         description,
         idempotencyKey,
         status,
-        sourceUser.full_name,
-        sourceUser.phone,
-        destUser.full_name,
-        destUser.phone,
       ],
     );
 
@@ -194,109 +154,77 @@ const TransactionRepository = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const sourceWalletUser = await client.query(
-        `SELECT id FROM wallets WHERE user_id = $1`,
-        [sourceUserId],
-      );
-
-      if (!sourceWalletUser.rows[0]) {
-        const err = new Error("Không tìm thấy ví người dùng");
-        err.statusCode = 404;
-        throw err;
-      }
 
       const bank = await client.query(
         `SELECT lba.bank_id, b.name
-      FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
-      WHERE lba.id = $1
-      `,
+         FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
+         WHERE lba.id = $1`,
         [linkedBankAccountId],
       );
-      if (!bank) {
-        const err = new Error("Không tìm thấy ngân hàng liên kết");
-        err.statusCode = 404;
-        throw err;
+      if (!bank.rows[0]) {
+        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
       }
 
       const bankName = bank.rows[0].name;
 
-      const sourceWalletId = sourceWalletUser.rows[0].id;
-
-      const sourceWalletResult = await client.query(
-        `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
-        [sourceWalletId],
+      const userResult = await client.query(
+        `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
+        [sourceUserId],
       );
       const linkedBank = await client.query(
         `SELECT balance FROM linked_bank_accounts WHERE id = $1 FOR UPDATE`,
         [linkedBankAccountId],
       );
-      const sourceWallet = sourceWalletResult.rows[0];
-      const linkedBankBalance = linkedBank.rows[0].balance;
-      if (!sourceWallet) {
-        const err = new Error("Không tìm thấy số dư của ví người dùng");
-        err.statusCode = 404;
-        throw err;
+
+      const sourceUser = userResult.rows[0];
+      const linkedBankBalance = linkedBank.rows[0]?.balance;
+
+      if (!sourceUser || linkedBankBalance === undefined) {
+        throw httpError(
+          404,
+          "Không tìm thấy số dư của người dùng hoặc tài khoản ngân hàng",
+        );
       }
 
       const totalDeduct = Number(amount) + Number(fee);
-      const sourceBalanceBefore = Number(sourceWallet.balance);
+      const sourceBalanceBefore = Number(sourceUser.balance);
       const linkedBankBalanceBefore = Number(linkedBankBalance);
+
       if (linkedBankBalanceBefore < totalDeduct) {
-        const err = new Error(
-          "Số dư ngân hàng không đủ để thực hiện giao dịch",
-        );
-        err.statusCode = 422;
-        throw err;
+        throw httpError(422, "Số dư ngân hàng không đủ để thực hiện giao dịch");
       }
 
       const sourceBalanceAfter = sourceBalanceBefore + totalDeduct;
       const linkedBankBalanceAfter = linkedBankBalanceBefore - totalDeduct;
-      await client.query(
-        `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
-        [sourceBalanceAfter, sourceWalletId],
-      );
+
+      await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
+        sourceBalanceAfter,
+        sourceUserId,
+      ]);
 
       await client.query(
-        `UPDATE linked_bank_accounts SET balance = $1 WHERE id =$2`,
+        `UPDATE linked_bank_accounts SET balance = $1 WHERE id = $2`,
         [linkedBankBalanceAfter, linkedBankAccountId],
       );
 
-      const sourceUser = await client.query(
-        `SELECT id, full_name, phone FROM users WHERE id = $1`,
-        [sourceUserId],
-      );
-
-      if (!sourceUser) {
-        const err = new Error(
-          "Không tìm thấy thông tin người thực hiện giao dịch",
-        );
-        err.statusCode = 404;
-        throw err;
-      }
-
       const insertResult = await client.query(
         `INSERT INTO transactions (
-        transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
-        amount, fee, idempotency_key, status,
-        source_display_name, source_display_phone,
-        linked_bank_account_id, bank_name
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      RETURNING id, status, created_at`,
+          transaction_type, source_user_id, source_balance_before, source_balance_after,
+          amount, fee, idempotency_key, status,
+          linked_bank_account_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, status, created_at`,
         [
           transactionType,
           sourceUserId,
-          sourceWalletId,
           sourceBalanceBefore,
           sourceBalanceAfter,
           amount,
           fee,
           idempotencyKey,
           status,
-          sourceUser.full_name,
-          sourceUser.phone,
           linkedBankAccountId,
-          bankName,
         ],
       );
 
@@ -332,107 +260,77 @@ const TransactionRepository = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const sourceWalletUser = await client.query(
-        `SELECT id FROM wallets WHERE user_id = $1`,
-        [sourceUserId],
-      );
-
-      if (!sourceWalletUser.rows[0]) {
-        const err = new Error("Không tìm thấy ví người dùng");
-        err.statusCode = 404;
-        throw err;
-      }
 
       const bank = await client.query(
         `SELECT lba.bank_id, b.name
-      FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
-      WHERE lba.id = $1
-      `,
+         FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
+         WHERE lba.id = $1`,
         [linkedBankAccountId],
       );
-      if (!bank) {
-        const err = new Error("Không tìm thấy ngân hàng liên kết");
-        err.statusCode = 404;
-        throw err;
+      if (!bank.rows[0]) {
+        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
       }
 
       const bankName = bank.rows[0].name;
 
-      const sourceWalletId = sourceWalletUser.rows[0].id;
-
-      const sourceWalletResult = await client.query(
-        `SELECT wallet_id, balance FROM wallet_balances WHERE wallet_id = $1 FOR UPDATE`,
-        [sourceWalletId],
+      const userResult = await client.query(
+        `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
+        [sourceUserId],
       );
       const linkedBank = await client.query(
         `SELECT balance FROM linked_bank_accounts WHERE id = $1 FOR UPDATE`,
         [linkedBankAccountId],
       );
-      const sourceWallet = sourceWalletResult.rows[0];
-      const linkedBankBalance = linkedBank.rows[0].balance;
-      if (!sourceWallet) {
-        const err = new Error("Không tìm thấy số dư của ví người dùng");
-        err.statusCode = 404;
-        throw err;
+
+      const sourceUser = userResult.rows[0];
+      const linkedBankBalance = linkedBank.rows[0]?.balance;
+
+      if (!sourceUser || linkedBankBalance === undefined) {
+        throw httpError(
+          404,
+          "Không tìm thấy số dư của người dùng hoặc tài khoản ngân hàng",
+        );
       }
 
       const totalDeduct = Number(amount) + Number(fee);
-      const sourceBalanceBefore = Number(sourceWallet.balance);
+      const sourceBalanceBefore = Number(sourceUser.balance);
       const linkedBankBalanceBefore = Number(linkedBankBalance);
+
       if (sourceBalanceBefore < totalDeduct) {
-        const err = new Error("Số dư ví không đủ để thực hiện giao dịch");
-        err.statusCode = 422;
-        throw err;
+        throw httpError(422, "Số dư tài khoản không đủ để thực hiện giao dịch");
       }
 
       const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
       const linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
-      await client.query(
-        `UPDATE wallet_balances SET balance = $1 WHERE wallet_id = $2`,
-        [sourceBalanceAfter, sourceWalletId],
-      );
+
+      await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
+        sourceBalanceAfter,
+        sourceUserId,
+      ]);
 
       await client.query(
-        `UPDATE linked_bank_accounts SET balance = $1 WHERE id =$2`,
+        `UPDATE linked_bank_accounts SET balance = $1 WHERE id = $2`,
         [linkedBankBalanceAfter, linkedBankAccountId],
       );
 
-      const sourceUser = await client.query(
-        `SELECT id, full_name, phone FROM users WHERE id = $1`,
-        [sourceUserId],
-      );
-
-      if (!sourceUser) {
-        const err = new Error(
-          "Không tìm thấy thông tin người thực hiện giao dịch",
-        );
-        err.statusCode = 404;
-        throw err;
-      }
-
       const insertResult = await client.query(
         `INSERT INTO transactions (
-        transaction_type, source_user_id, source_wallet_id, source_balance_before, source_balance_after,
-        amount, fee, idempotency_key, status,
-        source_display_name, source_display_phone,
-        linked_bank_account_id, bank_name
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      RETURNING id, status, created_at`,
+          transaction_type, source_user_id, source_balance_before, source_balance_after,
+          amount, fee, idempotency_key, status,
+          linked_bank_account_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, status, created_at`,
         [
           transactionType,
           sourceUserId,
-          sourceWalletId,
           sourceBalanceBefore,
           sourceBalanceAfter,
           amount,
           fee,
           idempotencyKey,
           status,
-          sourceUser.full_name,
-          sourceUser.phone,
           linkedBankAccountId,
-          bankName,
         ],
       );
 
@@ -460,9 +358,7 @@ const TransactionRepository = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-
       const result = await this.executeTransfer(client, params);
-
       await client.query("COMMIT");
       return result;
     } catch (e) {
@@ -489,19 +385,13 @@ const TransactionRepository = {
           referenceCode,
         );
       if (!paymentRequest) {
-        const err = new Error("Không tìm thấy mã QR");
-        err.statusCode = 404;
-        throw err;
+        throw httpError(404, "Không tìm thấy mã QR");
       }
       if (paymentRequest.paid_at != null || paymentRequest.is_expires) {
-        const err = new Error("Mã QR này đã được thanh toán hoặc hết hạn");
-        err.statusCode = 400;
-        throw err;
+        throw httpError(400, "Mã QR này đã được thanh toán hoặc hết hạn");
       }
       if (sourceUserId === paymentRequest.destination_user_id) {
-        const err = new Error("Không thể chuyển tiền cho chính mình");
-        err.statusCode = 400;
-        throw err;
+        throw httpError(400, "Không thể chuyển tiền cho chính mình");
       }
 
       const transferResult = await this.executeTransfer(client, {
@@ -524,9 +414,7 @@ const TransactionRepository = {
       return transferResult;
     } catch (e) {
       await client.query("ROLLBACK");
-      const err = new Error(e);
-      err.statusCode = e?.statusCode ?? 500;
-      throw err;
+      throw httpError(e?.statusCode ?? 500, e?.message);
     } finally {
       client.release();
     }
@@ -549,41 +437,45 @@ const TransactionRepository = {
 
     const result = await pool.query(
       `
-    SELECT
-      id,
-      transaction_type,
-      source_user_id,
-      source_display_name,
-      source_display_phone,
-      destination_user_id,
-      destination_display_name,
-      destination_display_phone,
-      amount,
-      fee,
-      description,
-      status,
-      created_at,
-      bank_name,
-      CASE WHEN source_user_id = $1 THEN 'OUT' ELSE 'IN' END AS direction,
-      CASE WHEN source_user_id = $1 THEN source_balance_before ELSE dest_balance_before END AS balance_before,
-      CASE WHEN source_user_id = $1 THEN source_balance_after ELSE dest_balance_after END AS balance_after
-    FROM transactions
-    WHERE (source_user_id = $1 OR destination_user_id = $1)
-      AND ($2::boolean = false OR id < $3)
-      AND (
-        $5::boolean = false
-        OR (
-          (source_user_id = $1 AND destination_display_name ILIKE '%' || $6 || '%')
-          OR (destination_user_id = $1 AND source_display_name ILIKE '%' || $6 || '%')
-          OR description ILIKE '%' || $6 || '%'
-          OR bank_name ILIKE '%' || $6 || '%'
+      SELECT
+        t.id,
+        t.transaction_type,
+        t.source_user_id,
+        su.full_name AS source_display_name,
+        su.phone AS source_display_phone,
+        t.destination_user_id,
+        du.full_name AS destination_display_name,
+        du.phone AS destination_display_phone,
+        t.amount,
+        t.fee,
+        t.description,
+        t.status,
+        t.created_at,
+        b.name AS bank_name,
+        CASE WHEN t.source_user_id = $1 THEN 'OUT' ELSE 'IN' END AS direction,
+        CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
+        CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
+      FROM transactions t
+      LEFT JOIN users su ON t.source_user_id = su.id
+      LEFT JOIN users du ON t.destination_user_id = du.id
+      LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
+      LEFT JOIN banks b ON lba.bank_id = b.id
+      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+        AND ($2::boolean = false OR t.id < $3)
+        AND (
+          $5::boolean = false
+          OR (
+            (t.source_user_id = $1 AND du.full_name ILIKE '%' || $6 || '%')
+            OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $6 || '%')
+            OR t.description ILIKE '%' || $6 || '%'
+            OR b.name ILIKE '%' || $6 || '%'
+          )
         )
-      )
-      AND ($7::boolean = false OR created_at >= $8)
-      AND ($9::boolean = false OR created_at <= $10)
-    ORDER BY id DESC
-    LIMIT $4
-    `,
+        AND ($7::boolean = false OR t.created_at >= $8)
+        AND ($9::boolean = false OR t.created_at <= $10)
+      ORDER BY t.id DESC
+      LIMIT $4
+      `,
       [
         userId,
         hasCursor,
@@ -610,29 +502,29 @@ const TransactionRepository = {
   async getCurrentMonthSummary(userId) {
     const result = await pool.query(
       `
-    SELECT
-      COALESCE(SUM(CASE
-        WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
-        WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
-        ELSE 0
-      END), 0) AS total_expense,
-      COALESCE(SUM(CASE
-        WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-        WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
-        ELSE 0
-      END), 0) AS total_income
-    FROM transactions
-    WHERE (source_user_id = $1 OR destination_user_id = $1)
-      AND status = 'SUCCESS'
-      AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
-    `,
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
+          WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
+          ELSE 0
+        END), 0) AS total_expense,
+        COALESCE(SUM(CASE
+          WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
+          WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
+          ELSE 0
+        END), 0) AS total_income
+      FROM transactions
+      WHERE (source_user_id = $1 OR destination_user_id = $1)
+        AND status = 'SUCCESS'
+        AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
+      `,
       [userId],
     );
 
     const row = result.rows[0];
     return {
-      total_expense: Number(row.total_expense),
       total_income: Number(row.total_income),
+      total_expense: Number(row.total_expense),
     };
   },
 };

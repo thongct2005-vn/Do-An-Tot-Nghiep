@@ -23,9 +23,7 @@ const paymentRequestRepository = {
     const result = await pool.query(
       `
         SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status,
-        w.id AS wallet_id, w.status AS wallet_status
         FROM users u
-        JOIN wallets w ON w.user_id = u.id
         WHERE u.static_qr_token = $1
         `,
       [token],
@@ -38,20 +36,18 @@ const paymentRequestRepository = {
     id,
     referenceCode,
     destinationUserId,
-    destinationWalletId,
     amount,
     description,
   }) {
     const result = await pool.query(
       `INSERT INTO payment_requests
-         (id, reference_code, destination_user_id, destination_wallet_id, amount, description)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (id, reference_code, destination_user_id, amount, description)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id, reference_code, amount, description, status, expires_at, created_at`,
       [
         id,
         referenceCode,
         destinationUserId,
-        destinationWalletId,
         amount,
         description,
       ],

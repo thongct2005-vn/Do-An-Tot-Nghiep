@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const tokenUtil = require('../utils/jwt')
+const tokenUtil = require("../utils/jwt");
 
 const authMiddleware = {
   verifyAccessToken(req, res, next) {
@@ -18,25 +18,7 @@ const authMiddleware = {
       req.user = decoded;
       next();
     } catch (e) {
-      if (e.statusCode) {
-        return next(e);
-      }
-
-      if (e.name === "TokenExpiredError") {
-        const err = new Error("Phiên đăng nhập đã hết hạn");
-        err.statusCode = 401;
-        return next(err);
-      }
-
-      if (e.name === "JsonWebTokenError") {
-        const err = new Error("Phiên đăng nhập không hợp lệ");
-        err.statusCode = 401;
-        return next(err);
-      }
-
-      const err = new Error(e.message || "Lỗi xác thực");
-      err.statusCode = 500;
-      next(err);
+      handleTokenError(e, next);
     }
   },
 
@@ -53,27 +35,57 @@ const authMiddleware = {
       req.user = decoded;
       next();
     } catch (e) {
-      if (e.statusCode) {
-        return next(e);
-      }
+      handleTokenError(e, next);
+    }
+  },
 
-      if (e.name === "TokenExpiredError") {
-        const err = new Error("Phiên đăng nhập đã hết hạn");
+  verifyLoginOtpToken(req, res, next) {
+    try {
+      const { otp_token: otpToken } = req.body;
+      if (!otpToken) {
+        const err = new Error("Thiếu thông tin xác thực");
         err.statusCode = 401;
-        return next(err);
+        throw err;
       }
+      req.otpUser = tokenUtil.verifyOtpToken(otpToken, "login_otp");
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
 
-      if (e.name === "JsonWebTokenError") {
-        const err = new Error("Phiên đăng nhập không hợp lệ");
+  verifyRegisterOtpToken(req, res, next) {
+    try {
+      const { otp_token: otpToken } = req.body;
+      console.log(req.body);
+      if (!otpToken) {
+        const err = new Error("Thiếu thông tin xác thực");
         err.statusCode = 401;
-        return next(err);
+        throw err;
       }
-
-      const err = new Error(e.message || "Lỗi xác thực");
-      err.statusCode = 500;
-      next(err);
+      req.otpUser = tokenUtil.verifyOtpToken(otpToken, "register_otp");
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
     }
   },
 };
+
+function handleTokenError(e, next) {
+  if (e.statusCode) return next(e);
+  if (e.name === "TokenExpiredError") {
+    const err = new Error("Token đã hết hạn");
+    err.statusCode = 401;
+    return next(err);
+  }
+  if (e.name === "JsonWebTokenError") {
+    const err = new Error("Token không hợp lệ");
+    err.statusCode = 401;
+    return next(err);
+  }
+  const err = new Error(e.message || "Lỗi xác thực");
+  err.statusCode = 500;
+  next(err);
+}
 
 module.exports = authMiddleware;

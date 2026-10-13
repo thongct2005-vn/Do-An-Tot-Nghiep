@@ -9,13 +9,11 @@ const userRepository = {
     return result.rows[0];
   },
 
-  async getUserAndWalletByUserId(userId) {
+  async getUserByUserId(userId) {
     const result = await pool.query(
       `
-        SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status,
-        w.id AS wallet_id, w.status AS wallet_status
+        SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status
         FROM users u
-        JOIN wallets w ON w.user_id = u.id
         WHERE u.id = $1
         `,
       [userId],

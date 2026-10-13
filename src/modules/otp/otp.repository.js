@@ -1,13 +1,13 @@
-const pool = require('../../config/database');
+const pool = require("../../config/database");
 const ALLOWED_CHANNELS = {
-  email: 'email',
-  phone: 'phone',
+  email: "email",
+  phone: "phone",
 };
 
 function resolveColumn(channel) {
   const column = ALLOWED_CHANNELS[channel];
   if (!column) {
-    const err = new Error('Kênh xác thực không hợp lệ');
+    const err = new Error("Kênh xác thực không hợp lệ");
     err.statusCode = 400;
     throw err;
   }
@@ -27,7 +27,7 @@ const otpRepository = {
   async findExistingOtp({ channel, identifier }) {
     const column = resolveColumn(channel);
     const result = await pool.query(
-      `SELECT id FROM otp_tracking WHERE ${column} = $1`,
+      `SELECT id, created_at, locked_until, used_at FROM otp_tracking WHERE ${column} = $1`,
       [identifier],
     );
     return result.rows[0];
@@ -52,28 +52,37 @@ const otpRepository = {
     );
   },
 
-  async updateFailedAttempts({ channel, identifier, attempts }) {
+  async registerFailedAttempt({
+    channel,
+    identifier,
+    maxAttempts,
+    lockMinutes,
+  }) {
     const column = resolveColumn(channel);
-    await pool.query(
-      `UPDATE otp_tracking SET failed_attempts = $1 WHERE ${column} = $2`,
-      [attempts, identifier],
+    const result = await pool.query(
+      `UPDATE otp_tracking
+       SET failed_attempts = failed_attempts + 1,
+           locked_until = CASE WHEN failed_attempts + 1 >= $2
+                          THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
+                          ELSE locked_until END
+       WHERE ${column} = $1 AND used_at IS NULL
+       RETURNING failed_attempts`,
+      [identifier, maxAttempts, lockMinutes],
     );
+    return result.rows[0];
   },
 
-  async lockAccount({ channel, identifier, attempts, lockMinutes }) {
+  async consumeOtp({ channel, identifier }) {
     const column = resolveColumn(channel);
-    await pool.query(
-      `UPDATE otp_tracking SET failed_attempts = $1, locked_until = NOW() + ($2::TEXT || ' minutes')::INTERVAL WHERE ${column} = $3`,
-      [attempts, lockMinutes, identifier],
-    );
-  },
-
-  async markAsUsed({ channel, identifier }) {
-    const column = resolveColumn(channel);
-    await pool.query(
-      `UPDATE otp_tracking SET used_at = NOW() WHERE ${column} = $1`,
+    const result = await pool.query(
+      `UPDATE otp_tracking SET used_at = NOW()
+       WHERE ${column} = $1 AND used_at IS NULL
+         AND expired_at > NOW()
+         AND (locked_until IS NULL OR locked_until <= NOW())
+       RETURNING id`,
       [identifier],
     );
+    return result.rowCount === 1;
   },
 };
 

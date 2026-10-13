@@ -1,4 +1,5 @@
 const transactionRepository = require("./transaction.repository");
+const { httpError } = require("../../utils/httpError");
 
 const TransactionService = {
   async transferMoney({
@@ -9,15 +10,11 @@ const TransactionService = {
     idempotencyKey,
   }) {
     if (!sourceUserId || !destinationUserId) {
-      const err = new Error("Thiếu thông tin người gửi hoặc người nhận");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin người gửi hoặc người nhận");
     }
 
     if (sourceUserId === destinationUserId) {
-      const err = new Error("Không thể chuyển tiền cho chính mình");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
     const numAmount = Number(amount);
@@ -26,11 +23,7 @@ const TransactionService = {
       numAmount < 1000 ||
       numAmount > 50000000
     ) {
-      const err = new Error(
-        "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu",
-      );
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu");
     }
 
     return await transactionRepository.transferMoney({
@@ -52,9 +45,7 @@ const TransactionService = {
     linkedBankAccountId,
   }) {
     if (!sourceUserId) {
-      const err = new Error("Thiếu thông tin người thực hiện giao dịch");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
     const numAmount = Number(amount);
@@ -63,16 +54,10 @@ const TransactionService = {
       numAmount < 1000 ||
       numAmount > 50000000
     ) {
-      const err = new Error(
-        "Số tiền nạp phải từ 1 nghìn và tối đa là 50 triệu",
-      );
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Số tiền nạp phải từ 1 nghìn và tối đa là 50 triệu");
     }
     if (!linkedBankAccountId) {
-      const err = new Error("Thiếu thông tin ngân hàng liên kết");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
     return await transactionRepository.topupMoney({
@@ -93,9 +78,7 @@ const TransactionService = {
     linkedBankAccountId,
   }) {
     if (!sourceUserId) {
-      const err = new Error("Thiếu thông tin người thực hiện giao dịch");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
     const numAmount = Number(amount);
@@ -104,16 +87,10 @@ const TransactionService = {
       numAmount < 10000 ||
       numAmount > 50000000
     ) {
-      const err = new Error(
-        "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu",
-      );
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu");
     }
     if (!linkedBankAccountId) {
-      const err = new Error("Thiếu thông tin ngân hàng liên kết");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
     return await transactionRepository.withdrawnMoney({
@@ -129,15 +106,11 @@ const TransactionService = {
 
   async processQRPayment({ sourceUserId, idempotencyKey, referenceCode }) {
     if (!sourceUserId) {
-      const err = new Error("Thiếu thông tin người gửi");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin người gửi");
     }
 
     if (!referenceCode) {
-      const err = new Error("Thiếu thông tin của mã QR");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin của mã QR");
     }
 
     return await transactionRepository.processQRPayment({
@@ -154,9 +127,7 @@ const TransactionService = {
     { cursorId, limit, keyword, startDate, endDate },
   ) {
     if (!userId) {
-      const err = new Error("Thiếu thông tin để lấy lịch sử giao dịch");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
     const maxLimit = Math.min(Number(limit) || 20, 20);
@@ -169,38 +140,29 @@ const TransactionService = {
     if (startDate) {
       parsedStartDate = new Date(startDate);
       if (isNaN(parsedStartDate.getTime())) {
-        const err = new Error("Ngày bắt đầu không hợp lệ");
-        err.statusCode = 400;
-        throw err;
+        throw httpError(400, "Ngày bắt đầu không hợp lệ");
       }
     }
 
     if (endDate) {
       parsedEndDate = new Date(endDate);
       if (isNaN(parsedEndDate.getTime())) {
-        const err = new Error("Ngày kết thúc không hợp lệ");
-        err.statusCode = 400;
-        throw err;
+        throw httpError(400, "Ngày kết thúc không hợp lệ");
       }
       parsedEndDate.setHours(23, 59, 59, 999);
     }
 
     if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
-      const err = new Error(
-        "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc",
-      );
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
     }
     if (parsedStartDate) {
       const oneYearAgo = new Date();
       oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
       if (parsedStartDate < oneYearAgo) {
-        const err = new Error(
+        throw httpError(
+          400,
           "Chỉ có thể xem lịch sử giao dịch trong vòng 1 năm gần nhất",
         );
-        err.statusCode = 400;
-        throw err;
       }
     }
 
@@ -217,9 +179,7 @@ const TransactionService = {
 
   async getCurrentMonthSummary(userId) {
     if (!userId) {
-      const err = new Error("Thiếu thông tin để lấy tổng quan giao dịch");
-      err.statusCode = 400;
-      throw err;
+      throw httpError(400, "Thiếu thông tin để lấy tổng quan giao dịch");
     }
 
     const result = await transactionRepository.getCurrentMonthSummary(userId);

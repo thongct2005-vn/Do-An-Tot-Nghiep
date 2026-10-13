@@ -4,7 +4,7 @@ const authRepository = {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
       FROM users u
       WHERE u.phone = $1
       `,
@@ -17,7 +17,7 @@ const authRepository = {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
       FROM users u
       WHERE u.email = $1
       `,

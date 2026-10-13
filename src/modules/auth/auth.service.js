@@ -11,7 +11,6 @@ const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../utils/jwt");
 const { emitToUser } = require("../../utils/socket");
 const { httpError } = require("../../utils/httpError");
-const e = require("express");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
@@ -40,8 +39,12 @@ async function checkCredentials(phone, password) {
     throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
   }
 
-  if (user.status != "ACTIVE") {
+  if (user.status !== "ACTIVE") {
     throw httpError(403, "Tài khoản bị khóa");
+  }
+
+  if (user.role !== "USER") {
+    throw httpError(403, "Tài khoản không hợp lệ");
   }
 
   if (user.locked_until) {
@@ -71,6 +74,25 @@ async function checkCredentials(phone, password) {
   }
 
   await authRepository.resetFailedLogin(phone);
+  return user;
+}
+
+// Dùng chung cho resend/verify OTP đăng nhập: xác nhận phiên OTP thuộc về một tài khoản khách hợp lệ
+async function getOtpUser({ userId, phone }) {
+  const user = await authRepository.findUserByPhone(phone);
+  if (
+    !user ||
+    user.id !== userId ||
+    user.status !== "ACTIVE" ||
+    user.role === "merchant"
+  ) {
+    throw httpError(401, "Phiên xác thực không hợp lệ");
+  }
+
+  if (!user.email) {
+    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
+  }
+
   return user;
 }
 
@@ -108,7 +130,6 @@ const authService = {
   async login({ phone, password }) {
     const user = await checkCredentials(phone, password);
     try {
-    
       await otpService.generateAndSaveOtp({ email: user.email });
     } catch (e) {
       if (e.statusCode !== 429) throw e;
@@ -121,15 +142,7 @@ const authService = {
   },
 
   async resendLoginOtp({ userId, phone }) {
-    const user = await authRepository.findUserByPhone(phone);
-    if (!user || user.id !== userId || user.status != "ACTIVE") {
-      throw httpError(401, "Phiên xác thực không hợp lệ");
-    }
-
-    if (!user.email) {
-      throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
-    }
-
+    const user = await getOtpUser({ userId, phone });
 
     await otpService.generateAndSaveOtp({ email: user.email });
 
@@ -139,14 +152,7 @@ const authService = {
   },
 
   async verifyLoginOtp({ userId, phone, otp }) {
-    const user = await authRepository.findUserByPhone(phone);
-    if (!user || user.id !== userId || user.status != "ACTIVE") {
-      throw httpError(401, "Phiên xác thực không hợp lệ");
-    }
-
-    if (!user.email) {
-      throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
-    }
+    const user = await getOtpUser({ userId, phone });
 
     await otpService.verifyOtp({ email: user.email, otp });
 

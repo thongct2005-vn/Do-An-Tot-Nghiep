@@ -12,7 +12,6 @@ const tokenUtil = {
       user_id: user.id,
       phone: user.phone,
       full_name: user.full_name,
-      wallet_id: user.wallet_id,
       type: user.role,
     };
 

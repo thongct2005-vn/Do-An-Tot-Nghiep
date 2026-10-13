@@ -1,6 +1,5 @@
-const jwt = require("jsonwebtoken");
 const tokenUtil = require("../utils/jwt");
-
+const { httpError } = require("../utils/httpError");
 const authMiddleware = {
   verifyAccessToken(req, res, next) {
     try {
@@ -57,7 +56,6 @@ const authMiddleware = {
   verifyRegisterOtpToken(req, res, next) {
     try {
       const { otp_token: otpToken } = req.body;
-      console.log(req.body);
       if (!otpToken) {
         const err = new Error("Thiếu thông tin xác thực");
         err.statusCode = 401;
@@ -68,6 +66,17 @@ const authMiddleware = {
     } catch (e) {
       handleTokenError(e, next);
     }
+  },
+
+  requireRole(role) {
+    return (req, res, next) => {
+      if (!req.user || req.user.type !== role) {
+        return next(
+          httpError(403, "Bạn không có quyền truy cập chức năng này"),
+        );
+      }
+      next();
+    };
   },
 };
 

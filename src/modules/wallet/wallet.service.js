@@ -8,7 +8,7 @@ const walletService = {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin người dùng để lấy số dư");
     }
-    const wallet = await walletRepository.getWalletByUserId(userId);
+    const wallet = await walletRepository.getWalletBalanceByUserId(userId);
     if (!wallet) {
       throw httpError(404, "Không tìm thấy ví của người dùng");
     }
@@ -21,7 +21,7 @@ const walletService = {
     if (!amount) {
       throw httpError(400, "Thiếu dữ liệu để kiểm tra");
     }
-    const wallet = await this.getWalletByUserId(userId);
+    const wallet = await this.getWalletBalanceByUserId(userId);
     const currentBalance = wallet.balance;
     return {
       is_eligible: currentBalance >= amount,

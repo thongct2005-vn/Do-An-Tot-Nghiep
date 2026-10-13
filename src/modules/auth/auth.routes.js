@@ -7,7 +7,11 @@ const {
   otpLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 
-router.post("/login", loginLimiter, authController.login);
+router.post(
+  "/login",
+  loginLimiter,
+  authController.login,
+);
 router.post(
   "/resend-login-otp",
   otpLimiter,
@@ -20,7 +24,11 @@ router.post(
   authMiddleware.verifyLoginOtpToken,
   authController.verifyLoginOtp,
 );
-router.post("/logout", authMiddleware.verifyAccessToken, authController.logout);
+router.post(
+  "/logout",
+  authMiddleware.verifyAccessToken,
+  authController.logout,
+);
 router.post("/register", loginLimiter, authController.register);
 router.post(
   "/verify-register",
@@ -30,7 +38,12 @@ router.post(
 );
 router.post("/checkPhoneExists", loginLimiter, authController.isPhoneExist);
 router.post("/checkEmailExists", loginLimiter, authController.isEmailExist);
-router.get("/me", authMiddleware.verifyAccessToken, authController.getMe);
+router.get(
+  "/me",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("USER"),
+  authController.getMe,
+);
 router.post(
   "/refresh-token",
   authMiddleware.verifyRefreshToken,

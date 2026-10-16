@@ -14,11 +14,7 @@ const { httpError } = require("../../utils/httpError");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
-function maskEmail(email) {
-  const [name, domain] = email.split("@");
-  const visible = name.slice(0, Math.min(5, name.length));
-  return `${visible}***@${domain}`;
-}
+const { maskEmail } = require("../../utils/maskEmail");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -76,7 +72,6 @@ async function checkCredentials(phone, password) {
   await authRepository.resetFailedLogin(phone);
   return user;
 }
-
 
 async function getOtpUser({ userId, phone }) {
   const user = await authRepository.findUserByPhone(phone);

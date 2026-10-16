@@ -9,6 +9,7 @@ const paymentRequestRoutes = require("../modules/paymentRequest/paymentRequest.r
 const bankRoutes = require("../modules/bank/bank.routes");
 const kycRoutes = require("../modules/kyc/kyc.routes");
 const merchantAuthRoutes = require("../admin/merchant/auth/auth.routes");
+const merchantDashBoardRoutes = require("../admin/merchant/dashboard/dashboard.routes");
 router.use("/auth", authRoutes);
 router.use("/otp", otpRoutes);
 router.use("/wallet", walletRoutes);
@@ -18,4 +19,5 @@ router.use("/payment", paymentRequestRoutes);
 router.use("/bank", bankRoutes);
 router.use("/kyc", kycRoutes);
 router.use("/merchant/auth", merchantAuthRoutes);
+router.use("/merchant/dashboard", merchantDashBoardRoutes);
 module.exports = router;

@@ -15,7 +15,6 @@ const formatPhoneNumber = (phone) =>{
 const sendOtp = async(phoneNumber) =>{
     try{
         const formattedPhone = formatPhoneNumber(phoneNumber);
-        console.log(formattedPhone);
         const verification = await client.verify.v2
         .services(verifyServiceSid)
         .verifications.create({
@@ -52,7 +51,6 @@ const verifyOtp = async(phoneNumber, code)=>{
         }
     }
     catch(e){
-        console.log(e);
         const err = new Error(e);
         err.statusCode = 500;
         throw err;

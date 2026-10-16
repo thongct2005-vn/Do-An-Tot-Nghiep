@@ -19,7 +19,6 @@ const authController = {
 
   async isEmailExist(req, res, next) {
     try {
-      console.log(req.body);
       const { email } = req.body;
       const result = await authService.isEmailExist(email);
       return successResponse(
@@ -112,7 +111,6 @@ const authController = {
 
   async register(req, res, next) {
     try {
-      console.log(req.body);
       const { phone, email } = req.body;
       const result = await authService.register({ phone, email });
       return successResponse(

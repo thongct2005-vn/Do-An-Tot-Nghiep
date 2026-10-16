@@ -15,11 +15,7 @@ const { generateUniqueMerchantKeys } = require("../../../utils/generateApikey");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
-function maskEmail(email) {
-  const [name, domain] = email.split("@");
-  const visible = name.slice(0, Math.min(5, name.length));
-  return `${visible}***@${domain}`;
-}
+const { maskEmail } = require("../../../utils/maskEmail");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -285,7 +281,7 @@ const merchantAuthService = {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
-    const apiKey = generateUniqueMerchantKeys();
+    const apiKey = await generateUniqueMerchantKeys();
     await merchantAuthRepository.addMerchant({
       userId,
       phone,
@@ -295,7 +291,7 @@ const merchantAuthService = {
       storeName,
       taxCode,
       callbackUrl,
-      apiKey
+      apiKey,
     });
 
     const newUser = await merchantAuthRepository.findMerchantByPhone(phone);

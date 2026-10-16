@@ -56,7 +56,6 @@ const authMiddleware = {
   verifyRegisterOtpToken(req, res, next) {
     try {
       const { otp_token: otpToken } = req.body;
-      console.log(req.body);
       if (!otpToken) {
         const err = new Error("Thiếu thông tin xác thực");
         err.statusCode = 401;

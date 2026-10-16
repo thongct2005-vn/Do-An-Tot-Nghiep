@@ -7,7 +7,8 @@ require("dotenv").config();
 const router = require("./src/routes/index");
 const { initSocket } = require("./src/utils/socket");
 const server = http.createServer(app);
-
+const cors = require('cors');
+app.use(cors());
 const PORT = process.env.PORT;
 initSocket(server);
 app.use(express.json());

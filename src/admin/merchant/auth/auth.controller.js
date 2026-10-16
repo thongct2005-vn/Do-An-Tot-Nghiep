@@ -21,12 +21,7 @@ const merchantAuthController = {
     try {
       const { email } = req.body;
       const result = await merchantAuthService.isEmailExist(email);
-      return successResponse(
-        res,
-        200,
-        "Kiểm tra email thành công",
-        result,
-      );
+      return successResponse(res, 200, "Kiểm tra email thành công", result);
     } catch (e) {
       next(e);
     }
@@ -50,7 +45,10 @@ const merchantAuthController = {
   async resendLoginOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.otpUser;
-      const result = await merchantAuthService.resendLoginOtp({ userId, phone });
+      const result = await merchantAuthService.resendLoginOtp({
+        userId,
+        phone,
+      });
       return successResponse(res, 200, "Đã gửi lại mã OTP", result);
     } catch (e) {
       next(e);
@@ -61,7 +59,11 @@ const merchantAuthController = {
     try {
       const { otp } = req.body;
       const { user_id: userId, phone } = req.otpUser;
-      const result = await merchantAuthService.verifyLoginOtp({ userId, phone, otp });
+      const result = await merchantAuthService.verifyLoginOtp({
+        userId,
+        phone,
+        otp,
+      });
       return successResponse(res, 200, "Đăng nhập thành công", result);
     } catch (e) {
       next(e);
@@ -126,7 +128,13 @@ const merchantAuthController = {
 
   async verifyRegister(req, res, next) {
     try {
-      const { otp, password } = req.body;
+      const {
+        otp,
+        password,
+        tax_code: taxCode,
+        call_back_url: callbackUrl,
+        store_name: storeName,
+      } = req.body;
       const { user_id: userId, phone, email } = req.otpUser;
       const result = await merchantAuthService.verifyAndCompleteRegister({
         userId,
@@ -134,6 +142,9 @@ const merchantAuthController = {
         email,
         otp,
         password,
+        taxCode,
+        callbackUrl,
+        storeName,
       });
       return successResponse(res, 200, "Đăng ký tài khoản thành công", result);
     } catch (e) {

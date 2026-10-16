@@ -77,7 +77,7 @@ async function checkCredentials(phone, password) {
   return user;
 }
 
-// Dùng chung cho resend/verify OTP đăng nhập: xác nhận phiên OTP thuộc về một tài khoản khách hợp lệ
+
 async function getOtpUser({ userId, phone }) {
   const user = await authRepository.findUserByPhone(phone);
   if (

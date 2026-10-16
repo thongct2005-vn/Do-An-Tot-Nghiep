@@ -4,7 +4,7 @@ const merchantAuthRepository = {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.phone = $1
       `,
@@ -17,11 +17,24 @@ const merchantAuthRepository = {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.email = $1
       `,
       [email],
+    );
+    return result.rows[0];
+  },
+
+  async findMerchantApiKey(apiKey) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+      FROM users u
+      WHERE u.api_key = $1
+      `,
+      [apiKey],
     );
     return result.rows[0];
   },
@@ -83,14 +96,49 @@ const merchantAuthRepository = {
     email,
     passwordHash,
     role = "MERCHANT",
+    storeName,
+    taxCode,
+    callbackUrl,
+    apiKey,
   }) {
-    await pool.query(
-      `
-      INSERT INTO users(id, phone, phone_hash, email, password_hash, role)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      `,
-      [userId, phone, phoneHash, email, passwordHash, role],
-    );
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `
+            INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `,
+        [
+          userId,
+          phone,
+          phoneHash,
+          storeName,
+          email,
+          passwordHash,
+          role,
+          callbackUrl,
+          apiKey,
+        ],
+      );
+
+      await client.query(
+        `
+            INSERT INTO user_kyc(id, user_id)
+            VALUES ($1, $2)
+            `,
+        [taxCode, userId],
+      );
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   },
 
   async logout(userId) {

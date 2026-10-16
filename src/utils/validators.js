@@ -10,6 +10,12 @@ const isValidPasswordOrPin = (data) => {
   return passwordRegex.test(data);
 };
 
+const isValidPasswordMerchant = (data) => {
+  if (!data) return false;
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,15}$/;
+  return passwordRegex.test(data);
+};
+
 const isValidEmail = (email) => {
   if (!email) return false;
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -20,4 +26,5 @@ module.exports = {
   isValidPhone,
   isValidPasswordOrPin,
   isValidEmail,
+  isValidPasswordMerchant
 };

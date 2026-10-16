@@ -4,13 +4,14 @@ const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 const {
   isValidPhone,
-  isValidPasswordOrPin,
+  isValidPasswordMerchant,
   isValidEmail,
 } = require("../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../utils/jwt");
 const { emitToUser } = require("../../../utils/socket");
 const { httpError } = require("../../../utils/httpError");
+const { generateUniqueMerchantKeys } = require("../../../utils/generateApikey");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
@@ -25,7 +26,7 @@ async function checkCredentials(phone, password) {
     throw httpError(400, "Thiếu số điện thoại hoặc mật khẩu");
   }
 
-  if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
+  if (!isValidPhone(phone) || !isValidPasswordMerchant(password)) {
     throw httpError(400, "Số điện thoại hoặc mật khẩu không hợp lệ");
   }
 
@@ -156,7 +157,10 @@ const merchantAuthService = {
     await otpService.verifyOtp({ email: user.email, otp });
 
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
-    await merchantAuthRepository.updateRefeshToken({ refreshToken, userId: user.id });
+    await merchantAuthRepository.updateRefeshToken({
+      refreshToken,
+      userId: user.id,
+    });
 
     emitToUser(user.id, "force_logout", {
       reason: "Tài khoản của bạn vừa được đăng nhập ở một thiết bị khác",
@@ -217,8 +221,10 @@ const merchantAuthService = {
       throw httpError(400, "Email không hợp lệ");
     }
 
-    const existingPhone = await merchantAuthRepository.findMerchantByPhone(phone);
-    const existingEmail = await merchantAuthRepository.findMerchantByEmail(email);
+    const existingPhone =
+      await merchantAuthRepository.findMerchantByPhone(phone);
+    const existingEmail =
+      await merchantAuthRepository.findMerchantByEmail(email);
     if (existingPhone) {
       throw httpError(409, "Số điện thoại đã tồn tại");
     }
@@ -240,18 +246,38 @@ const merchantAuthService = {
     };
   },
 
-  async verifyAndCompleteRegister({ userId, phone, email, otp, password }) {
+  async verifyAndCompleteRegister({
+    userId,
+    phone,
+    email,
+    otp,
+    password,
+    taxCode,
+    callbackUrl,
+    storeName,
+  }) {
     if (!password) {
       throw httpError(400, "Thiếu mật khẩu");
     }
 
-    if (!isValidPasswordOrPin(password)) {
+    if (!isValidPasswordMerchant(password)) {
       throw httpError(400, "Mật khẩu không hợp lệ");
+    }
+
+    if (!taxCode) {
+      throw httpError(400, "Thiếu mã số thuế");
+    }
+    if (!callbackUrl) {
+      throw httpError(400, "Thiếu callback");
+    }
+    if (!storeName) {
+      throw httpError(400, "Thiếu tên cửa hàng");
     }
 
     await otpService.verifyOtp({ email, phone, otp });
 
-    const existingUser = await merchantAuthRepository.findMerchantByPhone(phone);
+    const existingUser =
+      await merchantAuthRepository.findMerchantByPhone(phone);
     if (existingUser) {
       throw httpError(409, "Tài khoản đã tồn tại");
     }
@@ -259,13 +285,17 @@ const merchantAuthService = {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
-
+    const apiKey = generateUniqueMerchantKeys();
     await merchantAuthRepository.addMerchant({
       userId,
       phone,
       phoneHash,
       email,
       passwordHash,
+      storeName,
+      taxCode,
+      callbackUrl,
+      apiKey
     });
 
     const newUser = await merchantAuthRepository.findMerchantByPhone(phone);

@@ -11,7 +11,10 @@ const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../utils/jwt");
 const { emitToUser } = require("../../../utils/socket");
 const { httpError } = require("../../../utils/httpError");
-const { generateUniqueMerchantKeys } = require("../../../utils/generateApikey");
+const {
+  generateUniqueMerchantApiKey,
+  generateUniqueMerchantSecretKey,
+} = require("../../../utils/generateApikeySecretkey");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
@@ -281,7 +284,8 @@ const merchantAuthService = {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
-    const apiKey = await generateUniqueMerchantKeys();
+    const apiKey = await generateUniqueMerchantApiKey();
+    const secretKey = await generateUniqueMerchantSecretKey();
     await merchantAuthRepository.addMerchant({
       userId,
       phone,
@@ -292,6 +296,7 @@ const merchantAuthService = {
       taxCode,
       callbackUrl,
       apiKey,
+      secretKey,
     });
 
     const newUser = await merchantAuthRepository.findMerchantByPhone(phone);

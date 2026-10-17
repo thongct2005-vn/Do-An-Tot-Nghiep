@@ -7,7 +7,8 @@ function maskEmail(email) {
   if (len <= 4) return email;
 
   const head = len > 6 ? 3 : 2;
-  return `${name.slice(0, head)}***${name.slice(-1)}@${domain}`;
+  const tail = len > 6 ? 3 :2
+  return `${name.slice(0, head)}***${name.slice(-tail)}@${domain}`;
 }
 
 module.exports = { maskEmail };

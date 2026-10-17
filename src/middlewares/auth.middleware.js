@@ -1,5 +1,9 @@
+const crypto = require("crypto");
 const tokenUtil = require("../utils/jwt");
 const { httpError } = require("../utils/httpError");
+const dashboardRepository = require("../admin/merchant/dashboard/dashboard.repository");
+const MERCHANT_TIMESTAMP_TOLERANCE = 5 * 60;
+
 const authMiddleware = {
   verifyAccessToken(req, res, next) {
     try {
@@ -68,6 +72,56 @@ const authMiddleware = {
     }
   },
 
+  async verifyMerchant(req, res, next) {
+    try {
+      const apiKey = req.headers["x-api-key"];
+      const timestamp = req.headers["x-timestamp"];
+      const signature = req.headers["x-signature"];
+
+      if (!apiKey || !timestamp || !signature) {
+        throw httpError(401, "Thiếu thông tin xác thực merchant");
+      }
+
+      const ts = Number(timestamp);
+      const now = Math.floor(Date.now() / 1000);
+      if (
+        !Number.isInteger(ts) ||
+        Math.abs(now - ts) > MERCHANT_TIMESTAMP_TOLERANCE
+      ) {
+        throw httpError(401, "Request đã hết hạn hoặc thời gian không hợp lệ");
+      }
+
+      const merchant =
+        await dashboardRepository.getMerchantInfoByApiKey(apiKey);
+      if (!merchant) {
+        throw httpError(401, "API Key không hợp lệ");
+      }
+
+      const hasBody = req.body && Object.keys(req.body).length > 0;
+      if (hasBody && req.rawBody === undefined) {
+        throw httpError(
+          500,
+          "Server chưa cấu hình raw body để kiểm tra chữ ký",
+        );
+      }
+
+      const expected = computeSignature(
+        merchant.secret_key,
+        timestamp,
+        req.rawBody,
+      );
+      if (!isSameSignature(signature, expected)) {
+        throw httpError(401, "Chữ ký không hợp lệ");
+      }
+
+      const { secret_key: _secretKey, ...safeMerchant } = merchant;
+      req.merchant = safeMerchant;
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
   requireRole(role) {
     return (req, res, next) => {
       if (!req.user || req.user.type !== role) {
@@ -79,6 +133,19 @@ const authMiddleware = {
     };
   },
 };
+
+function computeSignature(secretKey, timestamp, rawBody) {
+  return crypto
+    .createHmac("sha256", secretKey)
+    .update(timestamp + "." + rawBody)
+    .digest("hex");
+}
+
+function isSameSignature(received, expected) {
+  const a = Buffer.from(String(received), "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 function handleTokenError(e, next) {
   if (e.statusCode) return next(e);

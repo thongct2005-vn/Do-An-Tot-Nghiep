@@ -12,7 +12,7 @@ const userRepository = {
   async getUserByUserId(userId) {
     const result = await pool.query(
       `
-        SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status
+        SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status, u.call_back_url, u.api_key, u.balance, u.secret_key
         FROM users u
         WHERE u.id = $1
         `,

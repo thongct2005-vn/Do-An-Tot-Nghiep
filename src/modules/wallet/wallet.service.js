@@ -21,7 +21,7 @@ const walletService = {
     if (!amount) {
       throw httpError(400, "Thiếu dữ liệu để kiểm tra");
     }
-    const wallet = await this.getWalletBalanceByUserId(userId);
+    const wallet = await this.getWalletByUserId(userId);
     const currentBalance = wallet.balance;
     return {
       is_eligible: currentBalance >= amount,

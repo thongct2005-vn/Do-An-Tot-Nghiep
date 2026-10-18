@@ -1,5 +1,7 @@
 const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
+const userRepository = require("../user/user.repository");
+const { postCallBack } = require("../../utils/axios");
 const { httpError } = require("../../utils/httpError");
 
 const TransactionRepository = {
@@ -57,7 +59,23 @@ const TransactionRepository = {
       status = "SUCCESS",
     },
   ) {
-    const [firstId, secondId] = [sourceUserId, destinationUserId].sort();
+    const amountNum = Number(amount);
+    const feeNum = Number(fee);
+
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      throw httpError(400, "Số tiền không hợp lệ");
+    }
+    if (!Number.isFinite(feeNum) || feeNum < 0) {
+      throw httpError(400, "Phí giao dịch không hợp lệ");
+    }
+    if (String(sourceUserId) === String(destinationUserId)) {
+      throw httpError(400, "Không thể chuyển tiền cho chính mình");
+    }
+
+    const [firstId, secondId] = [
+      String(sourceUserId),
+      String(destinationUserId),
+    ].sort();
 
     const firstUserResult = await client.query(
       `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
@@ -78,10 +96,11 @@ const TransactionRepository = {
       );
     }
 
-    const sourceUser = firstId === sourceUserId ? firstUser : secondUser;
-    const destUser = firstId === sourceUserId ? secondUser : firstUser;
+    const sourceIsFirst = firstId === String(sourceUserId);
+    const sourceUser = sourceIsFirst ? firstUser : secondUser;
+    const destUser = sourceIsFirst ? secondUser : firstUser;
 
-    const totalDeduct = Number(amount) + Number(fee);
+    const totalDeduct = amountNum + feeNum;
     const sourceBalanceBefore = Number(sourceUser.balance);
 
     if (sourceBalanceBefore < totalDeduct) {
@@ -90,7 +109,7 @@ const TransactionRepository = {
 
     const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
     const destBalanceBefore = Number(destUser.balance);
-    const destBalanceAfter = destBalanceBefore + Number(amount);
+    const destBalanceAfter = destBalanceBefore + amountNum;
 
     await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
       sourceBalanceAfter,
@@ -142,60 +161,79 @@ const TransactionRepository = {
     };
   },
 
-  async topupMoney({
+  async _executeBankTransaction({
+    isTopup,
     sourceUserId,
     amount,
     fee = 0,
     idempotencyKey,
-    transactionType = "TOPUP",
+    transactionType,
     status = "SUCCESS",
     linkedBankAccountId = null,
   }) {
+    const amountNum = Number(amount);
+    const feeNum = Number(fee);
+
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      throw httpError(400, "Số tiền không hợp lệ");
+    }
+    if (!Number.isFinite(feeNum) || feeNum < 0) {
+      throw httpError(400, "Phí giao dịch không hợp lệ");
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-
-      const bank = await client.query(
-        `SELECT lba.bank_id, b.name
-         FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
-         WHERE lba.id = $1`,
-        [linkedBankAccountId],
-      );
-      if (!bank.rows[0]) {
-        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
-      }
-
-      const bankName = bank.rows[0].name;
 
       const userResult = await client.query(
         `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
         [sourceUserId],
       );
-      const linkedBank = await client.query(
-        `SELECT balance FROM linked_bank_accounts WHERE id = $1 FOR UPDATE`,
-        [linkedBankAccountId],
-      );
-
       const sourceUser = userResult.rows[0];
-      const linkedBankBalance = linkedBank.rows[0]?.balance;
-
-      if (!sourceUser || linkedBankBalance === undefined) {
-        throw httpError(
-          404,
-          "Không tìm thấy số dư của người dùng hoặc tài khoản ngân hàng",
-        );
+      if (!sourceUser) {
+        throw httpError(404, "Không tìm thấy thông tin người dùng");
       }
 
-      const totalDeduct = Number(amount) + Number(fee);
+      const bankResult = await client.query(
+        `SELECT lba.balance, b.name AS bank_name
+         FROM linked_bank_accounts lba
+         LEFT JOIN banks b ON lba.bank_id = b.id
+         WHERE lba.id = $1 AND lba.user_id = $2
+         FOR UPDATE OF lba`,
+        [linkedBankAccountId, sourceUserId],
+      );
+      const bankRow = bankResult.rows[0];
+      if (!bankRow) {
+        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+      }
+
+      const bankName = bankRow.bank_name;
+      const totalDeduct = amountNum + feeNum;
       const sourceBalanceBefore = Number(sourceUser.balance);
-      const linkedBankBalanceBefore = Number(linkedBankBalance);
+      const linkedBankBalanceBefore = Number(bankRow.balance);
 
-      if (linkedBankBalanceBefore < totalDeduct) {
-        throw httpError(422, "Số dư ngân hàng không đủ để thực hiện giao dịch");
+      let sourceBalanceAfter;
+      let linkedBankBalanceAfter;
+
+      if (isTopup) {
+        if (linkedBankBalanceBefore < totalDeduct) {
+          throw httpError(
+            422,
+            "Số dư ngân hàng không đủ để thực hiện giao dịch",
+          );
+        }
+        sourceBalanceAfter = sourceBalanceBefore + amountNum;
+        linkedBankBalanceAfter = linkedBankBalanceBefore - totalDeduct;
+      } else {
+        if (sourceBalanceBefore < totalDeduct) {
+          throw httpError(
+            422,
+            "Số dư tài khoản không đủ để thực hiện giao dịch",
+          );
+        }
+        sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
+        linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
       }
-
-      const sourceBalanceAfter = sourceBalanceBefore + totalDeduct;
-      const linkedBankBalanceAfter = linkedBankBalanceBefore - totalDeduct;
 
       await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
         sourceBalanceAfter,
@@ -246,6 +284,27 @@ const TransactionRepository = {
     } finally {
       client.release();
     }
+  },
+
+  async topupMoney({
+    sourceUserId,
+    amount,
+    fee = 0,
+    idempotencyKey,
+    transactionType = "TOPUP",
+    status = "SUCCESS",
+    linkedBankAccountId = null,
+  }) {
+    return TransactionRepository._executeBankTransaction({
+      isTopup: true,
+      sourceUserId,
+      amount,
+      fee,
+      idempotencyKey,
+      transactionType,
+      status,
+      linkedBankAccountId,
+    });
   },
 
   async withdrawnMoney({
@@ -257,108 +316,26 @@ const TransactionRepository = {
     status = "SUCCESS",
     linkedBankAccountId = null,
   }) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const bank = await client.query(
-        `SELECT lba.bank_id, b.name
-         FROM linked_bank_accounts lba LEFT JOIN banks b ON lba.bank_id = b.id
-         WHERE lba.id = $1`,
-        [linkedBankAccountId],
-      );
-      if (!bank.rows[0]) {
-        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
-      }
-
-      const bankName = bank.rows[0].name;
-
-      const userResult = await client.query(
-        `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
-        [sourceUserId],
-      );
-      const linkedBank = await client.query(
-        `SELECT balance FROM linked_bank_accounts WHERE id = $1 FOR UPDATE`,
-        [linkedBankAccountId],
-      );
-
-      const sourceUser = userResult.rows[0];
-      const linkedBankBalance = linkedBank.rows[0]?.balance;
-
-      if (!sourceUser || linkedBankBalance === undefined) {
-        throw httpError(
-          404,
-          "Không tìm thấy số dư của người dùng hoặc tài khoản ngân hàng",
-        );
-      }
-
-      const totalDeduct = Number(amount) + Number(fee);
-      const sourceBalanceBefore = Number(sourceUser.balance);
-      const linkedBankBalanceBefore = Number(linkedBankBalance);
-
-      if (sourceBalanceBefore < totalDeduct) {
-        throw httpError(422, "Số dư tài khoản không đủ để thực hiện giao dịch");
-      }
-
-      const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
-      const linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
-
-      await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
-        sourceBalanceAfter,
-        sourceUserId,
-      ]);
-
-      await client.query(
-        `UPDATE linked_bank_accounts SET balance = $1 WHERE id = $2`,
-        [linkedBankBalanceAfter, linkedBankAccountId],
-      );
-
-      const insertResult = await client.query(
-        `INSERT INTO transactions (
-          transaction_type, source_user_id, source_balance_before, source_balance_after,
-          amount, fee, idempotency_key, status,
-          linked_bank_account_id
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, status, created_at`,
-        [
-          transactionType,
-          sourceUserId,
-          sourceBalanceBefore,
-          sourceBalanceAfter,
-          amount,
-          fee,
-          idempotencyKey,
-          status,
-          linkedBankAccountId,
-        ],
-      );
-
-      await client.query("COMMIT");
-
-      return {
-        transactionId: insertResult.rows[0].id,
-        status: insertResult.rows[0].status,
-        createdAt: insertResult.rows[0].created_at,
-        amount,
-        fee,
-        sourceUserName: sourceUser?.full_name,
-        sourceBalanceAfter,
-        bankName,
-      };
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+    return TransactionRepository._executeBankTransaction({
+      isTopup: false,
+      sourceUserId,
+      amount,
+      fee,
+      idempotencyKey,
+      transactionType,
+      status,
+      linkedBankAccountId,
+    });
   },
 
   async transferMoney(params) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const result = await this.executeTransfer(client, params);
+      const result = await TransactionRepository.executeTransfer(
+        client,
+        params,
+      );
       await client.query("COMMIT");
       return result;
     } catch (e) {
@@ -376,6 +353,9 @@ const TransactionRepository = {
     transactionType,
   }) {
     const client = await pool.connect();
+    let transferResult;
+    let paymentResult;
+
     try {
       await client.query("BEGIN");
 
@@ -390,11 +370,11 @@ const TransactionRepository = {
       if (paymentRequest.paid_at != null || paymentRequest.is_expires) {
         throw httpError(400, "Mã QR này đã được thanh toán hoặc hết hạn");
       }
-      if (sourceUserId === paymentRequest.destination_user_id) {
+      if (String(sourceUserId) === String(paymentRequest.destination_user_id)) {
         throw httpError(400, "Không thể chuyển tiền cho chính mình");
       }
 
-      const transferResult = await this.executeTransfer(client, {
+      transferResult = await TransactionRepository.executeTransfer(client, {
         sourceUserId: sourceUserId,
         destinationUserId: paymentRequest.destination_user_id,
         amount: paymentRequest.amount,
@@ -404,20 +384,42 @@ const TransactionRepository = {
         idempotencyKey: idempotencyKey,
       });
 
-      await paymentRequestRepository.markAsPaid(client, {
+      paymentResult = await paymentRequestRepository.markAsPaid(client, {
         referenceCode: referenceCode,
         sourceUserId: sourceUserId,
         transactionId: transferResult.transactionId,
       });
 
       await client.query("COMMIT");
-      return transferResult;
     } catch (e) {
       await client.query("ROLLBACK");
-      throw httpError(e?.statusCode ?? 500, e?.message);
+      throw e;
     } finally {
       client.release();
     }
+
+    try {
+      const destUser = await userRepository.getUserByUserId(
+        transferResult.destinationId,
+      );
+
+      if (destUser && destUser.role === "MERCHANT") {
+        await postCallBack({
+          callbackUrl: destUser.call_back_url,
+          secretKey: destUser.secret_key,
+          time: Math.floor(Date.now() / 1000),
+          paymentId: paymentResult.id,
+          orderId: paymentResult.order_id,
+          amount: paymentResult.amount,
+          status: paymentResult.status,
+          paidAt: paymentResult.paid_at,
+        });
+      }
+    } catch (e) {
+      throw e;
+    }
+
+    return transferResult;
   },
 
   async getTransferHistory(
@@ -435,6 +437,15 @@ const TransactionRepository = {
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
 
+    const safeKeyword = hasKeyword
+      ? keyword.trim().replace(/[\\%_]/g, "\\$&")
+      : null;
+
+    const endDateOnly =
+      hasEndDate &&
+      typeof endDate === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim());
+
     const result = await pool.query(
       `
       SELECT
@@ -442,17 +453,32 @@ const TransactionRepository = {
         t.transaction_type,
         t.source_user_id,
         su.full_name AS source_display_name,
-        su.phone AS source_display_phone,
+        CASE 
+          WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3 
+          THEN '*********' || RIGHT(su.phone, 3)
+          ELSE su.phone 
+        END AS source_display_phone,
+        
         t.destination_user_id,
         du.full_name AS destination_display_name,
-        du.phone AS destination_display_phone,
+        CASE 
+          WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3 
+          THEN '*********' || RIGHT(du.phone, 3)
+          ELSE du.phone 
+        END AS destination_display_phone,
+
         t.amount,
         t.fee,
         t.description,
         t.status,
         t.created_at,
         b.name AS bank_name,
-        CASE WHEN t.source_user_id = $1 THEN 'OUT' ELSE 'IN' END AS direction,
+        pr.order_id AS order_id,
+        CASE
+          WHEN t.transaction_type = 'TOPUP' THEN 'IN'
+          WHEN t.source_user_id = $1 THEN 'OUT'
+          ELSE 'IN'
+        END AS direction,
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
       FROM transactions t
@@ -460,6 +486,7 @@ const TransactionRepository = {
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
+      LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
         AND ($2::boolean = false OR t.id < $3)
         AND (
@@ -469,10 +496,15 @@ const TransactionRepository = {
             OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $6 || '%')
             OR t.description ILIKE '%' || $6 || '%'
             OR b.name ILIKE '%' || $6 || '%'
+            OR pr.order_id ILIKE '%' || $6 || '%'
           )
         )
         AND ($7::boolean = false OR t.created_at >= $8)
-        AND ($9::boolean = false OR t.created_at <= $10)
+        AND (
+          $9::boolean = false
+          OR ($11::boolean AND t.created_at < ($10::text)::date + 1)
+          OR (NOT $11::boolean AND t.created_at <= ($10::text)::timestamptz)
+        )
       ORDER BY t.id DESC
       LIMIT $4
       `,
@@ -482,11 +514,12 @@ const TransactionRepository = {
         cursorId,
         limit,
         hasKeyword,
-        keyword,
+        safeKeyword,
         hasStartDate,
         startDate,
         hasEndDate,
         endDate,
+        endDateOnly,
       ],
     );
 

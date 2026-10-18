@@ -108,13 +108,12 @@ const paymentRequestService = {
       result.destination_user_id,
     );
 
-    if (user.user_status !== "ACTIVE" || user.wallet_status !== "ACTIVE") {
+    if (user.user_status !== "ACTIVE") {
       throw httpError(400, "Tài khoản không khả dụng");
     }
     if (result.destination_user_id === requestingUserId) {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
-
     return result;
   },
 };

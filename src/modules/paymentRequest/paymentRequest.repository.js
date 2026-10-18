@@ -77,7 +77,7 @@ const paymentRequestRepository = {
   async markAsPaid(client, { referenceCode, sourceUserId, transactionId }) {
     const result = await client.query(
       `UPDATE payment_requests
-       SET status = 'PAID', source_user_id = $1, transaction_id = $2, paid_at = now(), updated_at = now()
+       SET status = 'SUCCESS', source_user_id = $1, transaction_id = $2, paid_at = now(), updated_at = now()
        WHERE reference_code = $3
        RETURNING *`,
       [sourceUserId, transactionId, referenceCode],

@@ -1,6 +1,8 @@
 const paymentMerchantRequestRepository = require("./paymentRequest.repository");
 const walletRepository = require("../../../modules/wallet/wallet.repository");
-const { generateReferenceCode } = require("../../../utils/generateReferenceCode");
+const {
+  generateReferenceCode,
+} = require("../../../utils/generateReferenceCode");
 const { uuidv7 } = require("uuidv7");
 const QRCode = require("qrcode");
 const { httpError } = require("../../../utils/httpError");
@@ -44,6 +46,36 @@ const paymentMerchantRequestService = {
         orderId,
       });
     return { ...result, qr_image: qrImage };
+  },
+
+  async findPaymentByOrderId({ orderId, merchantId }) {
+    if (!orderId || !merchantId) {
+      throw httpError(400, "Thiếu mã hóa đơn hoặc thông tin cửa hàng");
+    }
+    const payment = await paymentMerchantRequestRepository.findPaymentByOrderId(
+      { orderId, merchantId },
+    );
+    if (!payment) {
+      throw httpError(404, "Không tìm thấy đơn hàng");
+    }
+
+    const STATUS_MAP = {
+      PENDING: "pending",
+      PAID: "success",
+      FAILED: "failed",
+    };
+
+    return {
+      payment_id: payment.id,
+      order_id: payment.order_id,
+      amount: Number(payment.amount),
+      status:
+        STATUS_MAP[payment.status] ?? String(payment.status).toLowerCase(),
+      transaction_id: payment.transaction_id ?? null,
+      paid_at: payment.paid_at ?? null,
+      created_at: payment.created_at,
+      expires_at: payment.expires_at,
+    };
   },
 };
 module.exports = paymentMerchantRequestService;

@@ -16,6 +16,24 @@ const paymentMerchantRequestController = {
       next(e);
     }
   },
+  async findPaymentByOrderId(req, res, next) {
+    try {
+      const { id: merchantId } = req.merchant;
+      const orderId = req.params.orderId;
+      const result = await paymentMerchantRequestService.findPaymentByOrderId({
+        orderId,
+        merchantId,
+      });
+      return successResponse(
+        res,
+        200,
+        "Lấy thông tin hóa đơn thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = paymentMerchantRequestController;

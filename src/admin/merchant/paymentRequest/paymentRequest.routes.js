@@ -7,4 +7,9 @@ router.post(
   authMiddleware.verifyMerchant,
   paymentMerchantRequestController.createDynamicQRToken,
 );
+router.get(
+  "/payments/:orderId",
+  authMiddleware.verifyMerchant,
+  paymentMerchantRequestController.findPaymentByOrderId,
+);
 module.exports = router;

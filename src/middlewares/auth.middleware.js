@@ -101,7 +101,7 @@ const authMiddleware = {
       const expected = computeSignature(
         merchant.secret_key,
         timestamp,
-        req.rawBody,
+        req.rawBody ?? "",
       );
       if (!isSameSignature(signature, expected)) {
         throw httpError(401, "Chữ ký không hợp lệ");

@@ -44,13 +44,7 @@ const paymentRequestRepository = {
          (id, reference_code, destination_user_id, amount, description)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, reference_code, amount, description, status, expires_at, created_at`,
-      [
-        id,
-        referenceCode,
-        destinationUserId,
-        amount,
-        description,
-      ],
+      [id, referenceCode, destinationUserId, amount, description],
     );
     return result?.rows[0] ?? null;
   },
@@ -66,6 +60,7 @@ const paymentRequestRepository = {
     return result?.rows[0] ?? null;
   },
 
+
   async findByReferenceCodeForUpdate(client, referenceCode) {
     const result = await client.query(
       `SELECT *, (expires_at <= NOW()) AS is_expires FROM payment_requests WHERE reference_code = $1 FOR UPDATE`,
@@ -77,7 +72,7 @@ const paymentRequestRepository = {
   async markAsPaid(client, { referenceCode, sourceUserId, transactionId }) {
     const result = await client.query(
       `UPDATE payment_requests
-       SET status = 'SUCCESS', source_user_id = $1, transaction_id = $2, paid_at = now(), updated_at = now()
+       SET status = 'PAID', source_user_id = $1, transaction_id = $2, paid_at = now(), updated_at = now()
        WHERE reference_code = $3
        RETURNING *`,
       [sourceUserId, transactionId, referenceCode],

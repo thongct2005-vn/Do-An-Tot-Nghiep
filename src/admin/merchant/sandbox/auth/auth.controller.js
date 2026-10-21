@@ -1,4 +1,4 @@
-const { successResponse } = require("../../../utils/apiResponse");
+const { successResponse } = require("../../../../utils/apiResponse");
 const merchantAuthService = require("./auth.service");
 
 const merchantAuthController = {
@@ -34,37 +34,9 @@ const merchantAuthController = {
       return successResponse(
         res,
         200,
-        "Vui lòng nhập mã OTP để hoàn tất đăng nhập",
+        "Đăng nhập thành công",
         result,
       );
-    } catch (e) {
-      next(e);
-    }
-  },
-
-  async resendLoginOtp(req, res, next) {
-    try {
-      const { user_id: userId, phone } = req.otpUser;
-      const result = await merchantAuthService.resendLoginOtp({
-        userId,
-        phone,
-      });
-      return successResponse(res, 200, "Đã gửi lại mã OTP", result);
-    } catch (e) {
-      next(e);
-    }
-  },
-
-  async verifyLoginOtp(req, res, next) {
-    try {
-      const { otp } = req.body;
-      const { user_id: userId, phone } = req.otpUser;
-      const result = await merchantAuthService.verifyLoginOtp({
-        userId,
-        phone,
-        otp,
-      });
-      return successResponse(res, 200, "Đăng nhập thành công", result);
     } catch (e) {
       next(e);
     }
@@ -113,36 +85,17 @@ const merchantAuthController = {
 
   async register(req, res, next) {
     try {
-      const { phone, email } = req.body;
-      const result = await merchantAuthService.register({ phone, email });
-      return successResponse(
-        res,
-        200,
-        "Vui lòng nhập mã OTP để hoàn tất đăng ký",
-        result,
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
-
-  async verifyRegister(req, res, next) {
-    try {
       const {
-        otp,
+        phone,
+        email,
         password,
-        tax_code: taxCode,
         call_back_url: callbackUrl,
         store_name: storeName,
       } = req.body;
-      const { user_id: userId, phone, email } = req.otpUser;
-      const result = await merchantAuthService.verifyAndCompleteRegister({
-        userId,
+      const result = await merchantAuthService.register({
         phone,
         email,
-        otp,
         password,
-        taxCode,
         callbackUrl,
         storeName,
       });

@@ -1,5 +1,5 @@
 const paymentMerchantRequestService = require("./paymentRequest.service");
-const { successResponse } = require("../../../utils/apiResponse");
+const { successResponse } = require("../../../../utils/apiResponse");
 const paymentMerchantRequestController = {
   async createDynamicQRToken(req, res, next) {
     try {

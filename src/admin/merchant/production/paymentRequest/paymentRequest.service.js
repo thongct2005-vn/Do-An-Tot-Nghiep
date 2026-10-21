@@ -1,11 +1,11 @@
 const paymentMerchantRequestRepository = require("./paymentRequest.repository");
-const walletRepository = require("../../../modules/wallet/wallet.repository");
+const walletRepository = require("../../../../modules/wallet/wallet.repository");
 const {
   generateReferenceCode,
-} = require("../../../utils/generateReferenceCode");
+} = require("../../../../utils/generateReferenceCode");
 const { uuidv7 } = require("uuidv7");
 const QRCode = require("qrcode");
-const { httpError } = require("../../../utils/httpError");
+const { httpError } = require("../../../../utils/httpError");
 const paymentMerchantRequestService = {
   async createDynamicQRToken({ userId, amount, description, orderId }) {
     if (!userId || !amount || !orderId) {

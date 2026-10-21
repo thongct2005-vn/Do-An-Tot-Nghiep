@@ -1,24 +1,24 @@
 const merchantAuthRepository = require("./auth.repository");
-const otpService = require("../../../modules/otp/otp.service");
+const otpService = require("../../../../modules/otp/otp.service");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 const {
   isValidPhone,
   isValidPasswordMerchant,
   isValidEmail,
-} = require("../../../utils/validators");
+} = require("../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
-const tokenUtil = require("../../../utils/jwt");
-const { emitToUser } = require("../../../utils/socket");
-const { httpError } = require("../../../utils/httpError");
+const tokenUtil = require("../../../../utils/jwt");
+const { emitToUser } = require("../../../../utils/socket");
+const { httpError } = require("../../../../utils/httpError");
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
-} = require("../../../utils/generateApikeySecretkey");
+} = require("../../../../utils/generateApikeySecretkey");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
-const { maskEmail } = require("../../../utils/maskEmail");
+const { maskEmail } = require("../../../../utils/maskEmail");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {

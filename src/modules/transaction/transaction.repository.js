@@ -416,7 +416,10 @@ const TransactionRepository = {
         });
       }
     } catch (e) {
-      throw e;
+      console.error(
+        `Gửi callback thất bại (order ${paymentResult.order_id}):`,
+        e.response?.status || e.message,
+      );
     }
 
     return transferResult;

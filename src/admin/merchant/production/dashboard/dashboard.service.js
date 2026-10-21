@@ -1,5 +1,5 @@
 const dashboardRepository = require("./dashboard.repository");
-const { httpError } = require("../../../utils/httpError");
+const { httpError } = require("../../../../utils/httpError");
 
 const dashboardService = {
   async getMerchantInfoById(userId) {

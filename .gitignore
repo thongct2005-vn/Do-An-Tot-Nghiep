@@ -1,3 +1,5 @@
 node_modules/
 .env
+.env.sandbox
 firebase-service-account.json
+app_test_apk/

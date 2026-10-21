@@ -18,5 +18,10 @@
   },
   "devDependencies": {
     "socket.io-client": "^4.8.3"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "server": "node --env-file=.env server.js",
+    "server_sb": "node --env-file=.env.sandbox server.js"
   }
 }

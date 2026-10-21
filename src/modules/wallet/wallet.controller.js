@@ -1,5 +1,4 @@
 const { successResponse } = require("../../utils/apiResponse");
-const { getWalletByUserId } = require("./wallet.repository");
 const walletService = require("./wallet.service");
 
 const walletController = {

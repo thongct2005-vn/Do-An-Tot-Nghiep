@@ -44,10 +44,11 @@ const idempotencyMiddleware = {
         }
       } else {
         try {
+          const user = req.user ?? req.merchant;
           await transactionRepository.createIdempotencyKey({
             idempotencyKey,
-            actorId: req.user.user_id,
-            actorType: req.user.type,
+            actorId: user.user_id?? user.id,
+            actorType: user.type?? user.role,
             requestPath: req.originalUrl,
             requestHash,
           });

@@ -1,5 +1,5 @@
 const dashboardService = require("./dashboard.service");
-const { successResponse } = require("../../../utils/apiResponse");
+const { successResponse } = require("../../../../utils/apiResponse");
 
 const dashboardController = {
   async getMerchantInfoById(req, res, next) {

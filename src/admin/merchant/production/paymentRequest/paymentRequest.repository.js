@@ -1,4 +1,4 @@
-const pool = require("../../../config/database");
+const pool = require("../../../../config/database");
 
 const merchantPaymentRequestRepository = {
   async insertMerchantPaymentRequest({
@@ -19,7 +19,7 @@ const merchantPaymentRequestRepository = {
     return result?.rows[0] ?? null;
   },
 
-  async findPaymentByOrderId({orderId, merchantId}) {
+  async findPaymentByOrderId({ orderId, merchantId }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");

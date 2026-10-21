@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { httpError } = require("./httpError");
-const authMerchantRepository = require("../admin/merchant/auth/auth.repository");
+const authMerchantRepository = require("../admin/merchant/production/auth/auth.repository");
 function generateMerchantApiKey() {
   const apiKey = "pk_" + crypto.randomBytes(16).toString("hex");
   return apiKey;

@@ -1,4 +1,4 @@
-const pool = require("../../../config/database");
+const pool = require("../../../../config/database");
 
 const dashboardRepository = {
   async getMerchantInfoById(userId) {
@@ -16,7 +16,7 @@ const dashboardRepository = {
   async getMerchantInfoByApiKey(apiKey) {
     const result = await pool.query(
       `
-            SELECT u.id, u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key
+            SELECT u.id, u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key, u.role
             FROM users u
             WHERE api_key = $1
             `,

@@ -1,4 +1,4 @@
-const pool = require("../../../config/database");
+const pool = require("../../../../config/database");
 const merchantAuthRepository = {
   async findMerchantByPhone(phone) {
     const result = await pool.query(
@@ -95,7 +95,7 @@ const merchantAuthRepository = {
       FROM users u
       WHERE u.refresh_token = $1
         AND u.status = 'ACTIVE'
-        AND u.role = 'merchant'
+        AND u.role = 'MERCHANT'
       `,
       [refreshToken],
     );
@@ -110,10 +110,9 @@ const merchantAuthRepository = {
     passwordHash,
     role = "MERCHANT",
     storeName,
-    taxCode,
     callbackUrl,
     apiKey,
-    secretKey
+    secretKey,
   }) {
     const client = await pool.connect();
 
@@ -122,9 +121,9 @@ const merchantAuthRepository = {
 
       await client.query(
         `
-            INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key, secret_key)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            `,
+        INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key, secret_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `,
         [
           userId,
           phone,
@@ -135,16 +134,16 @@ const merchantAuthRepository = {
           role,
           callbackUrl,
           apiKey,
-          secretKey
+          secretKey,
         ],
       );
 
       await client.query(
         `
-            INSERT INTO user_kyc(id, user_id)
-            VALUES ($1, $2)
-            `,
-        [taxCode, userId],
+        INSERT INTO user_kyc(id, user_id)
+        VALUES ($1, $2)
+        `,
+        [phone, userId],
       );
 
       await client.query("COMMIT");

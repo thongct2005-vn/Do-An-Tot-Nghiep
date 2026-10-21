@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const tokenUtil = require("../utils/jwt");
 const { httpError } = require("../utils/httpError");
 const { computeSignature, isSameSignature } = require("../utils/hashSecretKey");
-const dashboardRepository = require("../admin/merchant/dashboard/dashboard.repository");
+const dashboardRepository = require("../admin/merchant/production/dashboard/dashboard.repository");
 const MERCHANT_TIMESTAMP_TOLERANCE = 5 * 60;
 
 const authMiddleware = {

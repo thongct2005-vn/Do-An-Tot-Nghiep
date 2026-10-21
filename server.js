@@ -22,6 +22,16 @@ app.use("/api/v2", router);
 app.set("trust proxy", 1);
 app.use(errorHandler);
 app.use("/images", express.static(path.join(__dirname, "images")));
+app.get("/api/v2/merchant/sandbox/download-apk", (req, res) => {
+  const filePath = path.join(__dirname, "app_test_apk", "app-release.apk");
+  res.download(filePath, "e-wallet-test.apk", (err) => {
+    if (err) {
+      res
+        .status(404)
+        .json({ message: "Không tìm thấy file APK trên hệ thống" });
+    }
+  });
+});
 server.listen(PORT, () => {
   console.log(`Server running ${PORT}`);
 });

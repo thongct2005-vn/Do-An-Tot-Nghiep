@@ -405,7 +405,7 @@ const TransactionRepository = {
 
       if (destUser && destUser.role === "MERCHANT") {
         await postCallBack({
-          callbackUrl: destUser.call_back_url,
+          callbackUrl: paymentResult.callback_url || destUser.call_back_url,
           secretKey: destUser.secret_key,
           time: Math.floor(Date.now() / 1000),
           paymentId: paymentResult.id,
@@ -538,21 +538,23 @@ const TransactionRepository = {
   async getCurrentMonthSummary(userId) {
     const result = await pool.query(
       `
-      SELECT
-        COALESCE(SUM(CASE
-          WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
-          WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
-          ELSE 0
-        END), 0) AS total_expense,
-        COALESCE(SUM(CASE
-          WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-          WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
-          ELSE 0
-        END), 0) AS total_income
-      FROM transactions
-      WHERE (source_user_id = $1 OR destination_user_id = $1)
-        AND status = 'SUCCESS'
-        AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
+     SELECT
+    COALESCE(SUM(CASE
+      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
+      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
+      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + fee
+      ELSE 0
+    END), 0) AS total_expense,
+    COALESCE(SUM(CASE
+      WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
+      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
+      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN amount
+      ELSE 0
+    END), 0) AS total_income
+  FROM transactions
+  WHERE (source_user_id = $1 OR destination_user_id = $1)
+    AND status = 'SUCCESS'
+    AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
       `,
       [userId],
     );

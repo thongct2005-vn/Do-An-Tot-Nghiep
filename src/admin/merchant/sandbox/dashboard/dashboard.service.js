@@ -1,4 +1,8 @@
 const dashboardRepository = require("./dashboard.repository");
+const {
+  generateUniqueMerchantApiKey,
+  generateUniqueMerchantSecretKey,
+} = require("../../../../utils/generateApikeySecretkey");
 const { httpError } = require("../../../../utils/httpError");
 
 const dashboardService = {
@@ -17,6 +21,22 @@ const dashboardService = {
       throw httpError(400, "Thiếu callback");
     }
     await dashboardRepository.updateCallBackUrl({ userId, callbackUrl });
+  },
+
+  async resetApiKey(userId) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    const apiKey = await generateUniqueMerchantApiKey();
+    return await dashboardRepository.resetApiKey({ userId, apiKey });
+  },
+
+  async resetSecretKey(userId) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    const secretKey = await generateUniqueMerchantSecretKey();
+    return await dashboardRepository.resetSecretKey({ userId, secretKey });
   },
 };
 

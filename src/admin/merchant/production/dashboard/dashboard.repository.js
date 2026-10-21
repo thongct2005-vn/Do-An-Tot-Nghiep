@@ -33,6 +33,24 @@ const dashboardRepository = {
       [callbackUrl, userId],
     );
   },
+
+  async resetApiKey({ userId, apiKey }) {
+    const result = await pool.query(
+      `UPDATE users SET api_key = $1
+       WHERE id = $2 RETURNING api_key`,
+      [apiKey, userId],
+    );
+    return result;
+  },
+
+  async resetSecretKey({ userId, secretKey }) {
+    const result = await pool.query(
+      `UPDATE users SET secret_key = $1
+       WHERE id = $2 RETURNING secret_key`,
+      [secretKey, userId],
+    );
+    return result;
+  },
 };
 
 module.exports = dashboardRepository;

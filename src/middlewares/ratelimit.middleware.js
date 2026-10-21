@@ -17,4 +17,6 @@ module.exports = {
   loginLimiter: createLimiter({ windowMs: 15 * 60 * 1000, limit: 20 }),
   otpLimiter: createLimiter({ windowMs: 5 * 60 * 1000, limit: 20 }),
   sendOtpLimiter: createLimiter({ windowMs: 5 * 60 * 1000, limit: 5 }),
+  resetApiKey: createLimiter({ windowMs: 7 * 24 * 60 * 60 * 1000, limit: 1 }),
+  resetSecretKey: createLimiter({ windowMs: 7 * 24 * 60 * 60 * 1000, limit: 1 }),
 };

@@ -2,10 +2,6 @@ const { successResponse } = require("../../utils/apiResponse");
 const transactionService = require("./transaction.service");
 const { emitToUser } = require("../../utils/socket");
 const { sendPushNotification } = require("../../utils/fireBaseNotification");
-const {
-  processQRPayment,
-  getTransferHistory,
-} = require("./transaction.repository");
 const transactionController = {
   async transferMoney(req, res, next) {
     try {

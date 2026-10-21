@@ -25,6 +25,24 @@ const dashboardController = {
     } catch (e) {
         next(e);
     }
+  },
+  async resetApiKey(req, res, next){
+    try {
+       const { user_id: userId } = req.user;
+       const result = await dashboardService.resetApiKey(userId);
+       return successResponse(res, 200, "Làm mới api key thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+   async resetSecretKey(req, res, next){
+    try {
+       const { user_id: userId } = req.user;
+       const result = await dashboardService.resetSecretKey(userId);
+       return successResponse(res, 200, "Làm mới secret key thành công", result);
+    } catch (e) {
+      next(e);
+    }
   }
 };
 module.exports = dashboardController;

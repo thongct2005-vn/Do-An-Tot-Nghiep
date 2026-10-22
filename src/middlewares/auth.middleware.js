@@ -73,6 +73,27 @@ const authMiddleware = {
     }
   },
 
+  // Xác thực otp_token của giao dịch (nạp/rút/chuyển/liên kết ngân hàng),
+  // lấy từ body như login (Authorization đang chứa access token)
+  verifyTransactionOtpToken(req, res, next) {
+    try {
+      const otpToken = req.body?.otp_token;
+      if (!otpToken) {
+        throw httpError(401, "Thiếu mã xác thực OTP của giao dịch");
+      }
+
+      const otpUser = tokenUtil.verifyOtpToken(otpToken, "transaction_otp");
+      if (!req.user || otpUser.user_id !== req.user.user_id) {
+        throw httpError(401, "Mã xác thực OTP không hợp lệ");
+      }
+
+      req.otpUser = otpUser;
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
   async verifyMerchant(req, res, next) {
     try {
       const apiKey = req.headers["x-api-key"];

@@ -13,6 +13,9 @@ const merchantDashBoardRoutes = require("../admin/merchant/production/dashboard/
 const merchantPaymentRequestRoutes = require("../admin/merchant/production/paymentRequest/paymentRequest.routes");
 const merchantTransactionRoutes = require("../admin/merchant/production/transaction/transaction.routes");
 const merchantProductRoutes = require("../admin/merchant/production/product/product.routes");
+const merchantBankRoutes = require("../admin/merchant/production/bank/bank.routes");
+const merchantOtpRoutes = require("../admin/merchant/production/otp/otp.routes");
+const merchantWalletRoutes = require("../admin/merchant/production/wallet/wallet.routes");
 const merchantSandboxAuthRoutes = require("../admin/merchant/sandbox/auth/auth.routes");
 const merchantSandboxDashBoardRoutes = require("../admin/merchant/sandbox/dashboard/dashboard.routes");
 const merchantSandboxPaymentRoutes = require("../admin/merchant/sandbox/paymentRequest/paymentRequest.routes");
@@ -31,6 +34,9 @@ router.use("/merchant/dashboard", merchantDashBoardRoutes);
 router.use("/merchant", merchantPaymentRequestRoutes);
 router.use("/merchant/transaction", merchantTransactionRoutes);
 router.use("/merchant/product", merchantProductRoutes);
+router.use("/merchant/bank", merchantBankRoutes);
+router.use("/merchant/otp", merchantOtpRoutes);
+router.use("/merchant/wallet", merchantWalletRoutes);
 
 /*------ Api Sandbox ------- */
 router.use("/merchant/sandbox/auth", merchantSandboxAuthRoutes);

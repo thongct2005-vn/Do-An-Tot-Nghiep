@@ -1,5 +1,10 @@
 const merchantTransactionRepository = require("./transaction.repository");
+const merchantAuthRepository = require("../auth/auth.repository");
+const otpService = require("../../../../modules/otp/otp.service");
+const tokenUtil = require("../../../../utils/jwt");
 const { httpError } = require("../../../../utils/httpError");
+const { maskEmail } = require("../../../../utils/maskEmail");
+const { isValidPhone } = require("../../../../utils/validators");
 
 const TRANSACTION_TYPES = [
   "TRANSFER",
@@ -34,6 +39,25 @@ function maskAccountNumber(accountNumber) {
   if (!accountNumber) return null;
   const str = String(accountNumber);
   return str.length > 4 ? `${"*".repeat(str.length - 4)}${str.slice(-4)}` : str;
+}
+
+// Lấy merchant đang đăng nhập (kèm email nhận OTP), giống getOtpMerchant bên auth.service
+async function getOtpMerchant({ userId, phone }) {
+  const user = phone ? await merchantAuthRepository.findMerchantByPhone(phone) : null;
+  if (
+    !user ||
+    user.id !== userId ||
+    user.status !== "ACTIVE" ||
+    user.role !== "MERCHANT"
+  ) {
+    throw httpError(401, "Phiên xác thực không hợp lệ");
+  }
+
+  if (!user.email) {
+    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
+  }
+
+  return user;
 }
 
 const merchantTransactionService = {
@@ -370,6 +394,62 @@ const merchantTransactionService = {
         revenue: Number(row.revenue),
         order_count: Number(row.order_count)
       }))
+    };
+  },
+
+  // Gửi OTP xác thực giao dịch (nếu OTP cũ còn hiệu lực thì dùng tiếp, giống login)
+  async sendTransactionOtp({ userId, phone }) {
+    const user = await getOtpMerchant({ userId, phone });
+
+    try {
+      await otpService.generateAndSaveOtp({ email: user.email });
+    } catch (e) {
+      if (e.statusCode !== 429) throw e;
+    }
+
+    return { masked_email: maskEmail(user.email) };
+  },
+
+  async resendTransactionOtp({ userId, phone }) {
+    const user = await getOtpMerchant({ userId, phone });
+
+    await otpService.generateAndSaveOtp({ email: user.email });
+
+    return { masked_email: maskEmail(user.email) };
+  },
+
+  // OTP đúng thì trả về otp_token (purpose: transaction_otp), giống verifyLoginOtp
+  async verifyTransactionOtp({ userId, phone, otp }) {
+    const user = await getOtpMerchant({ userId, phone });
+
+    await otpService.verifyOtp({ email: user.email, otp });
+
+    return { otp_token: tokenUtil.generateOtpToken(user, "transaction_otp") };
+  },
+
+  // Tra tên người nhận theo số điện thoại trước khi chuyển tiền
+  async getReceiverByPhone(userId, phone) {
+    if (!phone) {
+      throw httpError(400, "Thiếu số điện thoại người nhận");
+    }
+
+    if (!isValidPhone(phone)) {
+      throw httpError(400, "Số điện thoại không hợp lệ");
+    }
+
+    const receiver = await merchantAuthRepository.findMerchantByPhone(phone);
+    if (!receiver || receiver.status !== "ACTIVE" || receiver.role === "MERCHANT") {
+      throw httpError(404, "Không tìm thấy người dùng nhận tiền");
+    }
+
+    if (receiver.id === userId) {
+      throw httpError(400, "Không thể chuyển tiền cho chính mình");
+    }
+
+    return {
+      user_id: receiver.id,
+      full_name: receiver.full_name,
+      phone: maskPhone(receiver.phone),
     };
   },
 };

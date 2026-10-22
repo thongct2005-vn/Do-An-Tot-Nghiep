@@ -3,10 +3,39 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../../../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../../../middlewares/idempotencyKey");
+const { otpLimiter } = require("../../../../middlewares/ratelimit.middleware");
+
+router.post(
+  "/otp/send",
+  otpLimiter,
+  authMiddleware.verifyAccessToken,
+  transactionController.sendTransactionOtp,
+);
+
+router.post(
+  "/otp/resend",
+  otpLimiter,
+  authMiddleware.verifyAccessToken,
+  transactionController.resendTransactionOtp,
+);
+
+router.post(
+  "/otp/verify",
+  otpLimiter,
+  authMiddleware.verifyAccessToken,
+  transactionController.verifyTransactionOtp,
+);
+
+router.get(
+  "/receiver",
+  authMiddleware.verifyAccessToken,
+  transactionController.getReceiver,
+);
 
 router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyTransactionOtpToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
 );
@@ -14,6 +43,7 @@ router.post(
 router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyTransactionOtpToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
 );
@@ -21,6 +51,7 @@ router.post(
 router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyTransactionOtpToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.withdrawnMoney,
 );

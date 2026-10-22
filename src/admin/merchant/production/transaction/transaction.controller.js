@@ -215,7 +215,6 @@ const merchantTransactionController = {
         userId,
         transactionId,
       );
-
       return successResponse(
         res,
         200,
@@ -238,6 +237,61 @@ const merchantTransactionController = {
         "Lấy tổng quan giao dịch thành công",
         result,
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async sendTransactionOtp(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const result = await merchantTransactionService.sendTransactionOtp({
+        userId,
+        phone,
+      });
+      return successResponse(res, 200, "Đã gửi mã OTP xác thực giao dịch", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async resendTransactionOtp(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const result = await merchantTransactionService.resendTransactionOtp({
+        userId,
+        phone,
+      });
+      return successResponse(res, 200, "Đã gửi lại mã OTP", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async verifyTransactionOtp(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const { otp } = req.body;
+      const result = await merchantTransactionService.verifyTransactionOtp({
+        userId,
+        phone,
+        otp,
+      });
+      return successResponse(res, 200, "Xác thực OTP thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getReceiver(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { phone } = req.query;
+      const result = await merchantTransactionService.getReceiverByPhone(
+        userId,
+        phone,
+      );
+      return successResponse(res, 200, "Lấy thông tin người nhận thành công", result);
     } catch (e) {
       next(e);
     }

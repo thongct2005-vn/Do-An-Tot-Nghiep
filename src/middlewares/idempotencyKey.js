@@ -13,7 +13,7 @@ const idempotencyMiddleware = {
     try {
       const idempotencyKey = req.headers["idempotency-key"];
       if (!idempotencyKey) {
-        const err = new Error("Thiếu Idempotency-Key trong header");
+        const err = new Error("Thiếu mã xác thực duy nhất");
         err.statusCode = 400;
         throw err;
       }
@@ -25,7 +25,7 @@ const idempotencyMiddleware = {
       if (existing) {
         if (existing.request_hash !== requestHash) {
           const err = new Error(
-            "Idempotency-Key đã được sử dụng với dữ liệu khác",
+            "Mã đã được sử dụng với dữ liệu khác",
           );
           err.statusCode = 422;
           throw err;

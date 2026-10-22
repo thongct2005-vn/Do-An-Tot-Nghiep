@@ -39,9 +39,20 @@ router.get(
 );
 
 router.get(
+  "/history/:transactionId",
+  authMiddleware.verifyAccessToken,
+  transactionController.getTransactionDetail,
+);
+
+router.get(
   "/summary",
   authMiddleware.verifyAccessToken,
   transactionController.getCurrentMonthSummary,
 );
 
+router.get(
+  "/stats",
+  authMiddleware.verifyAccessToken,
+  transactionController.getMerchantStats,
+);
 module.exports = router;

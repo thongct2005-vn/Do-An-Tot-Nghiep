@@ -434,23 +434,20 @@ const merchantTransactionRepository = {
       cursorId = null,
       limit = 20,
       keyword = null,
+      type = null,
       startDate = null,
       endDate = null,
     } = {},
   ) {
     const hasCursor = Boolean(cursorId);
     const hasKeyword = Boolean(keyword && keyword.trim());
+    const hasType = Boolean(type);
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
 
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
-
-    const endDateOnly =
-      hasEndDate &&
-      typeof endDate === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim());
 
     const result = await pool.query(
       `
@@ -505,11 +502,17 @@ const merchantTransactionRepository = {
             OR pr.order_id ILIKE '%' || $6 || '%'
           )
         )
-        AND ($7::boolean = false OR t.created_at >= $8)
+        AND (
+          $7::boolean = false
+          OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        )
         AND (
           $9::boolean = false
-          OR ($11::boolean AND t.created_at < ($10::text)::date + 1)
-          OR (NOT $11::boolean AND t.created_at <= ($10::text)::timestamptz)
+          OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        )
+        AND (
+          $11::boolean = false
+          OR t.transaction_type = ($12::text)::transaction_type_enum
         )
       ORDER BY t.id DESC
       LIMIT $4
@@ -525,7 +528,8 @@ const merchantTransactionRepository = {
         startDate,
         hasEndDate,
         endDate,
-        endDateOnly,
+        hasType,
+        type,
       ],
     );
 
@@ -536,6 +540,70 @@ const merchantTransactionRepository = {
       transaction_list: rows,
       next_cursor: nextCursor,
     };
+  },
+
+  async getTransactionDetail(userId, transactionId) {
+    const result = await pool.query(
+      `
+      SELECT
+        t.id,
+        t.transaction_type,
+        t.status,
+        t.amount,
+        t.fee,
+        t.description,
+        t.created_at,
+        t.completed_at,
+        t.source_user_id,
+        su.full_name AS source_full_name,
+        su.phone AS source_phone,
+        t.destination_user_id,
+        du.full_name AS destination_full_name,
+        du.phone AS destination_phone,
+        CASE
+          WHEN t.transaction_type = 'TOPUP' THEN 'IN'
+          WHEN t.source_user_id = $1 THEN 'OUT'
+          ELSE 'IN'
+        END AS direction,
+        CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
+        CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after,
+        b.name AS bank_name,
+        b.code AS bank_code,
+        b.logo_url AS bank_logo_url,
+        lba.account_number,
+        lba.account_holder_name,
+        pr.id AS payment_request_id,
+        pr.order_id,
+        pr.reference_code,
+        pr.status AS payment_status,
+        pr.description AS payment_description,
+        pr.paid_at,
+        pr.expires_at
+      FROM transactions t
+      LEFT JOIN users su ON t.source_user_id = su.id
+      LEFT JOIN users du ON t.destination_user_id = du.id
+      LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
+      LEFT JOIN banks b ON lba.bank_id = b.id
+      LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
+      WHERE t.id = $2
+        AND (t.source_user_id = $1 OR t.destination_user_id = $1)
+      `,
+      [userId, transactionId],
+    );
+    return result.rows[0];
+  },
+
+  async getPaymentItems(paymentRequestId) {
+    const result = await pool.query(
+      `
+      SELECT product_id, name, quantity, unit_price, description
+      FROM payment_request_items
+      WHERE payment_request_id = $1
+      ORDER BY product_id, name
+      `,
+      [paymentRequestId],
+    );
+    return result.rows;
   },
 
   async getCurrentMonthSummary(userId) {
@@ -566,6 +634,73 @@ const merchantTransactionRepository = {
     return {
       total_income: Number(row.total_income),
       total_expense: Number(row.total_expense),
+    };
+  },
+
+  async getMerchantStats(userId, { startDate = null, endDate = null } = {}) {
+    const hasStartDate = Boolean(startDate);
+    const hasEndDate = Boolean(endDate);
+
+    const result = await pool.query(
+      `
+      SELECT
+        -- Tổng doanh thu: chỉ tính PAYMENT thành công mà merchant là bên nhận (destination_user_id)
+        COALESCE(SUM(CASE 
+          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
+          THEN t.amount ELSE 0 
+        END), 0) AS total_revenue,
+        
+        -- Tổng số đơn hàng thành công
+        COUNT(CASE 
+          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
+          THEN 1 ELSE NULL 
+        END) AS total_orders,
+
+        -- Tổng tiền khách thanh toán trung bình mỗi đơn
+        COALESCE(AVG(CASE 
+          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
+          THEN t.amount ELSE NULL 
+        END), 0) AS avg_order_value
+      FROM transactions t
+      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+        AND (
+          $2::boolean = false
+          OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        )
+        AND (
+          $4::boolean = false
+          OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        )
+      `,
+      [userId, hasStartDate, startDate, hasEndDate, endDate]
+    );
+    const dailyResult = await pool.query(
+      `
+      SELECT
+        TO_CHAR(t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date_str,
+        COALESCE(SUM(t.amount), 0) AS revenue,
+        COUNT(t.id) AS order_count
+      FROM transactions t
+      WHERE t.destination_user_id = $1
+        AND t.transaction_type = 'PAYMENT'
+        AND t.status = 'SUCCESS'
+        AND (
+          $2::boolean = false
+          OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        )
+        AND (
+          $4::boolean = false
+          OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        )
+      GROUP BY date_str
+      ORDER BY date_str ASC
+      `,
+      [userId, hasStartDate, startDate, hasEndDate, endDate]
+    );
+
+    return {
+      summary: result.rows[0],
+      daily_stats: dailyResult.rows
     };
   },
 };

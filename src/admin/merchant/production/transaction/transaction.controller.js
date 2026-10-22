@@ -181,6 +181,7 @@ const merchantTransactionController = {
         cursor_id: cursorId,
         limit,
         keyword,
+        type,
         start_date: startDate,
         end_date: endDate,
       } = req.query;
@@ -189,6 +190,7 @@ const merchantTransactionController = {
         cursorId,
         limit,
         keyword,
+        type,
         startDate,
         endDate,
       });
@@ -204,16 +206,57 @@ const merchantTransactionController = {
     }
   },
 
+  async getTransactionDetail(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { transactionId } = req.params;
+
+      const result = await merchantTransactionService.getTransactionDetail(
+        userId,
+        transactionId,
+      );
+
+      return successResponse(
+        res,
+        200,
+        "Lấy chi tiết giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
   async getCurrentMonthSummary(req, res, next) {
     try {
       const { user_id: userId } = req.user;
-    
+
       const result = await merchantTransactionService.getCurrentMonthSummary(userId);
-        console.log(result);
       return successResponse(
         res,
         200,
         "Lấy tổng quan giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getMerchantStats(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { start_date: startDate, end_date: endDate } = req.query;
+
+      const result = await merchantTransactionService.getMerchantStats(userId, {
+        startDate,
+        endDate,
+      });
+
+      return successResponse(
+        res,
+        200,
+        "Lấy số liệu thống kê thành công",
         result,
       );
     } catch (e) {

@@ -45,7 +45,7 @@ const authMiddleware = {
 
   verifyLoginOtpToken(req, res, next) {
     try {
-      const { otp_token: otpToken } = req.body;
+      const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
         const err = new Error("Thiếu thông tin xác thực");
         err.statusCode = 401;
@@ -60,7 +60,7 @@ const authMiddleware = {
 
   verifyRegisterOtpToken(req, res, next) {
     try {
-      const { otp_token: otpToken } = req.body;
+      const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
         const err = new Error("Thiếu thông tin xác thực");
         err.statusCode = 401;
@@ -73,11 +73,10 @@ const authMiddleware = {
     }
   },
 
-  // Xác thực otp_token của giao dịch (nạp/rút/chuyển/liên kết ngân hàng),
-  // lấy từ body như login (Authorization đang chứa access token)
+
   verifyTransactionOtpToken(req, res, next) {
     try {
-      const otpToken = req.body?.otp_token;
+      const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
         throw httpError(401, "Thiếu mã xác thực OTP của giao dịch");
       }
@@ -91,6 +90,29 @@ const authMiddleware = {
       next();
     } catch (e) {
       handleTokenError(e, next);
+    }
+  },
+
+  verifyPinToken(req, res, next) {
+    try {
+      const pinToken = req.headers["x-pin-token"];
+      const idempotencyKey = req.headers["idempotency-key"];
+      if (!pinToken || !idempotencyKey) {
+        throw httpError(403, "Thiếu mã xác thực PIN của giao dịch");
+      }
+
+      const payload = tokenUtil.verifyPinToken(pinToken);
+      if (
+        !req.user ||
+        payload.user_id !== req.user.user_id ||
+        payload.idempotency_key !== idempotencyKey
+      ) {
+        throw httpError(403, "Mã xác thực PIN không hợp lệ");
+      }
+      next();
+    } catch (e) {
+      if (e.statusCode) return next(e);
+      next(httpError(403, "Xác thực PIN đã hết hạn, vui lòng nhập lại PIN"));
     }
   },
 

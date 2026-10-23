@@ -36,7 +36,7 @@ const kycRepository = {
         `INSERT INTO user_kyc (
             id, user_id, dob, gender, address,
             front_image_url, back_image_url, face_image_url, status, face_match_score
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, user_id, dob, gender, address`,
         [
           idNumber,
           userId,

@@ -7,6 +7,7 @@ const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
 router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
 );
@@ -14,6 +15,7 @@ router.post(
 router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
 );
@@ -21,6 +23,7 @@ router.post(
 router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.withdrawnMoney,
 );
@@ -28,6 +31,7 @@ router.post(
 router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,
+  authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.processQRPayment,
 );

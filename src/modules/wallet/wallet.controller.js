@@ -27,8 +27,12 @@ const walletController = {
   async checkPin(req, res, next) {
     try {
       const { user_id: userId } = req.user;
-      const { pin } = req.body;
-      const result = await walletService.checkPin({userId, pin});
+      const { pin, idempotency_key: idempotencyKey } = req.body;
+      const result = await walletService.checkPin({
+        userId,
+        pin,
+        idempotencyKey,
+      });
       return successResponse(res, 200, "Kiểm tra mã PIN thành công", result);
     } catch (e) {
       next(e);

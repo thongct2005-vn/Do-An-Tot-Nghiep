@@ -19,9 +19,19 @@ app.use(
   }),
 );
 app.use("/api/v2", router);
+
+app.use(
+  "/images/avatar",
+  express.static(path.join(__dirname, "images", "avatar")),
+);
+app.use(
+  "/images/bank-logo",
+  express.static(path.join(__dirname, "images", "bank-logo")),
+);
+
 app.set("trust proxy", 1);
 app.use(errorHandler);
-app.use("/images", express.static(path.join(__dirname, "images")));
+
 app.get("/api/v2/merchant/sandbox/download-apk", (req, res) => {
   const filePath = path.join(__dirname, "app_test_apk", "app-release.apk");
   res.download(filePath, "e-wallet-test.apk", (err) => {

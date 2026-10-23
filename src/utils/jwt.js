@@ -4,8 +4,7 @@ const ACCESS_SECRET = process.env.ACCESS_SECRET;
 const REFRESH_SECRET = process.env.REFRESH_SECRET;
 const OTP_SECRET = process.env.OTP_SECRET;
 const LOGIN_OTP_PURPOSE = "login_otp";
-const REGISTER_OTP_PURPOSE = "register_otp";
-
+const PIN_VERIFIED_PURPOSE = "pin_verified";
 const tokenUtil = {
   generateAuthTokens(user) {
     const payload = {
@@ -48,6 +47,28 @@ const tokenUtil = {
     const payload = jwt.verify(otpToken, OTP_SECRET, { algorithms: ["HS256"] });
     if (payload.purpose !== expectedPurpose) {
       const err = new Error("Phương thức otp không chính xác");
+      err.name = "JsonWebTokenError";
+      throw err;
+    }
+    return payload;
+  },
+
+  generatePinToken({ userId, idempotencyKey }) {
+    const payload = {
+      user_id: userId,
+      idempotency_key: idempotencyKey,
+      purpose: PIN_VERIFIED_PURPOSE,
+    };
+    return jwt.sign(payload, OTP_SECRET, {
+      expiresIn: "3m",
+      algorithm: "HS256",
+    });
+  },
+
+  verifyPinToken(pinToken) {
+    const payload = jwt.verify(pinToken, OTP_SECRET, { algorithms: ["HS256"] });
+    if (payload.purpose !== PIN_VERIFIED_PURPOSE) {
+      const err = new Error("Mã xác thực PIN không đúng loại");
       err.name = "JsonWebTokenError";
       throw err;
     }

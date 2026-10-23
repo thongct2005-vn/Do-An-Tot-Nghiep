@@ -2,13 +2,12 @@
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-
-const IMAGES_ROOT = path.join(process.cwd(), "images");
+const KYC_ROOT = path.join(process.cwd(), "private", "kyc");
 
 const folders = {
-  front_id: path.join(IMAGES_ROOT, "front-id"),
-  back_id: path.join(IMAGES_ROOT, "back-id"),
-  face: path.join(IMAGES_ROOT, "face"),
+  front_id: path.join(KYC_ROOT, "front-id"),
+  back_id: path.join(KYC_ROOT, "back-id"),
+  face: path.join(KYC_ROOT, "face"),
 };
 
 Object.values(folders).forEach((dir) => {
@@ -23,7 +22,7 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const userId = req.user.user_id;
-    const ext = path.extname(file.originalname);
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
     cb(null, `${userId}_${Date.now()}${ext}`);
   },
 });
@@ -39,11 +38,11 @@ const fileFilter = (req, file, cb) => {
 const uploadKycImages = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 8 * 1024 * 1024 },// byte=>KB=>MB
+  limits: { fileSize: 8 * 1024 * 1024 },
 }).fields([
   { name: "front_id", maxCount: 1 },
   { name: "back_id", maxCount: 1 },
   { name: "face", maxCount: 1 },
 ]);
 
-module.exports = { uploadKycImages };
+module.exports = { uploadKycImages, KYC_ROOT };

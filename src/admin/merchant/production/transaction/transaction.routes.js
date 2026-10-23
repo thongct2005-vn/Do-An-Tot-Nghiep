@@ -3,18 +3,21 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../../../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../../../middlewares/idempotencyKey");
-const { otpLimiter } = require("../../../../middlewares/ratelimit.middleware");
+const {
+  otpLimiter,
+  sendOtpLimiter,
+} = require("../../../../middlewares/ratelimit.middleware");
 
 router.post(
   "/otp/send",
-  otpLimiter,
+  sendOtpLimiter,
   authMiddleware.verifyAccessToken,
   transactionController.sendTransactionOtp,
 );
 
 router.post(
   "/otp/resend",
-  otpLimiter,
+  sendOtpLimiter,
   authMiddleware.verifyAccessToken,
   transactionController.resendTransactionOtp,
 );

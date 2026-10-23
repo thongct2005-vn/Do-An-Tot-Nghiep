@@ -1,5 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const kycService = require("./kyc.service");
+
 const kycController = {
   async checkUserKYC(req, res, next) {
     try {
@@ -15,6 +16,7 @@ const kycController = {
       next(e);
     }
   },
+
   async verifyAndSaveKYC(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -33,4 +35,5 @@ const kycController = {
     }
   },
 };
+
 module.exports = kycController;

@@ -38,6 +38,42 @@ const userRepository = {
     return result.rows[0];
   },
 
+
+  async getPinState(userId) {
+    const result = await pool.query(
+      `SELECT pin_hash,
+              COALESCE(pin_failed_attempts, 0) AS pin_failed_attempts,
+              pin_locked_until,
+              (pin_locked_until > NOW()) AS is_locked
+       FROM users WHERE id = $1`,
+      [userId],
+    );
+    return result.rows[0];
+  },
+
+  async registerFailedPin({ userId, maxAttempts, lockMinutes }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET pin_failed_attempts = COALESCE(pin_failed_attempts, 0) + 1,
+           pin_locked_until = CASE
+             WHEN COALESCE(pin_failed_attempts, 0) + 1 >= $2::INT
+             THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
+             ELSE pin_locked_until
+           END
+       WHERE id = $1
+       RETURNING pin_failed_attempts`,
+      [userId, maxAttempts, lockMinutes],
+    );
+    return result.rows[0];
+  },
+
+  async resetFailedPin(userId) {
+    await pool.query(
+      `UPDATE users SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE id = $1`,
+      [userId],
+    );
+  },
+
   async createPin({ userId, pinHash }) {
     const result = await pool.query(
       `UPDATE users SET pin_hash = $1 WHERE id = $2 AND pin_hash IS NULL RETURNING id`,

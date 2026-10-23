@@ -62,5 +62,6 @@ const kycService = {
       throw e;
     }
   },
+
 };
 module.exports = kycService;

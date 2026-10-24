@@ -3,7 +3,7 @@ const merchantAuthRepository = require("../auth/auth.repository");
 const otpService = require("../../../../modules/otp/otp.service");
 const tokenUtil = require("../../../../utils/jwt");
 const { httpError } = require("../../../../utils/httpError");
-const { maskEmail } = require("../../../../utils/maskEmail");
+const { maskEmail } = require("../../../../utils/maskPhoneAndEmail");
 const { isValidPhone } = require("../../../../utils/validators");
 
 const TRANSACTION_TYPES = [

@@ -5,7 +5,8 @@ const userController = {
   async findUserByPhone(req, res, next) {
     try {
       const { phone } = req.query;
-      const result = await userService.findUserByPhone(phone);
+      const { user_id: userId } = req.user;
+      const result = await userService.findUserByPhone({ userId, phone });
       return successResponse(res, 200, "Tìm người dùng thành công", result);
     } catch (e) {
       next(e);
@@ -17,12 +18,12 @@ const userController = {
       const { phones } = req.body;
       const {user_id: userId} = req.user;
       const result = await userService.findUserByPhoneHashList(phones);
-      const foundUsers = result.filter(u => u.id !== userId);
+      const foundUsers = result.filter((u) => u.id !== userId);
       return successResponse(
         res,
         200,
         "Tìm danh sách người dùng thành công",
-        result,
+        foundUsers,
       );
     } catch (e) {
       next(e);

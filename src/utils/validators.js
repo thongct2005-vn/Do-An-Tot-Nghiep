@@ -21,10 +21,20 @@ const isValidEmail = (email) => {
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   return emailRegex.test(email);
 };
+const isValidPhonesHash = (phones) => {
+  const PHONE_HASH_PATTERN = /^[0-9a-f]{64}$/i;
+  if (
+    phones.some((p) => typeof p !== "string" || !PHONE_HASH_PATTERN.test(p))
+  ) {
+    return false;
+  }
+  return true;
+};
 
 module.exports = {
   isValidPhone,
   isValidPasswordOrPin,
   isValidEmail,
-  isValidPasswordMerchant
+  isValidPasswordMerchant,
+  isValidPhonesHash
 };

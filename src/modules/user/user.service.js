@@ -1,12 +1,20 @@
 const userRepository = require("./user.repository");
 const bcrypt = require("bcrypt");
-const { isValidPasswordOrPin } = require("../../utils/validators");
+const {
+  isValidPasswordOrPin,
+  isValidPhone,
+} = require("../../utils/validators");
 const { httpError } = require("../../utils/httpError");
-
+const { maskPhone } = require("../../utils/maskPhoneAndEmail");
+const { isValidPhonesHash } = require("../../utils/validators");
 const userService = {
-  async findUserByPhone(phone) {
+  async findUserByPhone({ userId, phone }) {
     if (!phone) {
       throw httpError(400, "Thiếu số điện thoại");
+    }
+
+    if (!isValidPhone(phone)) {
+      throw httpError(400, "Số điện thoại không hợp lệ");
     }
 
     const user = await userRepository.findUserByPhone(phone);
@@ -15,10 +23,14 @@ const userService = {
       throw httpError(404, "Không tìm thấy người dùng này");
     }
 
+    if (user.id === userId) {
+      throw httpError(400, "Không thể chuyển tiền cho chính mình");
+    }
+
     return {
       user_info: {
         user_id: user.id,
-        phone: user.phone,
+        phone: maskPhone(user.phone),
         full_name: user.full_name,
       },
     };
@@ -35,6 +47,10 @@ const userService = {
 
     if (phones.length === 0) {
       return [];
+    }
+
+    if (!isValidPhonesHash(phones)) {
+      throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
     const uniquePhone = [...new Set(phones)];

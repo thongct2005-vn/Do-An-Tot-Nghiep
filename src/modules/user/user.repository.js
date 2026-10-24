@@ -24,7 +24,7 @@ const userRepository = {
 
   async findUserByPhoneHashList(phones) {
     const result = await pool.query(
-      `SELECT id, phone, full_name FROM users WHERE phone_hash = ANY($1) AND status = 'ACTIVE'`,
+      `SELECT id, phone_hash, full_name FROM users WHERE phone_hash = ANY($1) AND status = 'ACTIVE'`,
       [phones],
     );
     return result.rows;

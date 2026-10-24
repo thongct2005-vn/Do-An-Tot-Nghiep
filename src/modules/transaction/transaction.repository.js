@@ -456,19 +456,11 @@ const TransactionRepository = {
         t.transaction_type,
         t.source_user_id,
         su.full_name AS source_display_name,
-        CASE 
-          WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3 
-          THEN '*********' || RIGHT(su.phone, 3)
-          ELSE su.phone 
-        END AS source_display_phone,
+        su.phone AS source_display_phone,
         
         t.destination_user_id,
         du.full_name AS destination_display_name,
-        CASE 
-          WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3 
-          THEN '*********' || RIGHT(du.phone, 3)
-          ELSE du.phone 
-        END AS destination_display_phone,
+        du.phone AS destination_display_phone,
 
         t.amount,
         t.fee,

@@ -11,4 +11,9 @@ function maskEmail(email) {
   return `${name.slice(0, head)}***${name.slice(-tail)}@${domain}`;
 }
 
-module.exports = { maskEmail };
+function maskPhone(phone) {
+  if (!phone) return null;
+  return phone.length >= 3 ? `*********${phone.slice(-3)}` : phone;
+}
+
+module.exports = { maskEmail, maskPhone };

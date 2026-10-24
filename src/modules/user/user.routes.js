@@ -2,15 +2,23 @@ const express = require("express");
 const router = express.Router();
 const userController = require("./user.controller");
 const authMiddleware = require("../../middlewares/auth.middleware");
+const {
+  contactCheckLimiter,
+  findUserLimiter,
+  contactDailyQuota,
+} = require("../../middlewares/ratelimit.middleware");
 
 router.get(
   "/find-user",
   authMiddleware.verifyAccessToken,
+  findUserLimiter,
   userController.findUserByPhone,
 );
 router.post(
   "/check-contact",
   authMiddleware.verifyAccessToken,
+  contactCheckLimiter,
+  contactDailyQuota,
   userController.findUserByPhoneHashList,
 );
 

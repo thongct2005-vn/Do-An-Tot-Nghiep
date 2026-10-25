@@ -3,10 +3,12 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
+const { transactionLimiter } = require("../../middlewares/ratelimit.middleware");
 
 router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
+  transactionLimiter,
   authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
@@ -15,6 +17,7 @@ router.post(
 router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
+  transactionLimiter,
   authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
@@ -23,6 +26,7 @@ router.post(
 router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
+  transactionLimiter,
   authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.withdrawnMoney,
@@ -31,6 +35,7 @@ router.post(
 router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,
+  transactionLimiter,
   authMiddleware.verifyPinToken,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.processQRPayment,

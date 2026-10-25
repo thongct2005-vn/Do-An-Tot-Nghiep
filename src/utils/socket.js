@@ -4,10 +4,10 @@ const tokenUtil = require("./jwt");
 let io;
 const activeSockets = new Map();
 
-const initSocket = (server) => {
+const initSocket = (server, corsOrigins = []) => {
   io = new Server(server, {
     cors: {
-      origin: "*",
+      origin: corsOrigins,
       methods: ["GET", "POST"],
     },
   });

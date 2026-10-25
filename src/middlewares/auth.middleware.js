@@ -98,7 +98,6 @@ const authMiddleware = {
     }
   },
 
-
   verifyPinToken(req, res, next) {
     try {
       const pinToken = req.headers["x-pin-token"];
@@ -188,7 +187,8 @@ function handleTokenError(e, next) {
     err.statusCode = 401;
     return next(err);
   }
-  const err = new Error(e.message || "Lỗi xác thực");
+  console.error("Lỗi xác thực không xác định:", e);
+  const err = new Error("Lỗi xác thực");
   err.statusCode = 500;
   next(err);
 }

@@ -1,11 +1,27 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 require("dotenv").config();
 const ACCESS_SECRET = process.env.ACCESS_SECRET;
 const REFRESH_SECRET = process.env.REFRESH_SECRET;
 const OTP_SECRET = process.env.OTP_SECRET;
 const LOGIN_OTP_PURPOSE = "login_otp";
 const PIN_VERIFIED_PURPOSE = "pin_verified";
+const TRANSACTION_OTP_PURPOSE = "transaction_otp";
+const PIN_SECRET = process.env.PIN_SECRET;
+const TRANSACTION_OTP_SECRET = process.env.TRANSACTION_OTP_SECRET;
+
+function requireSecret(secret, name) {
+  if (!secret) {
+    throw new Error(`Thiếu biến môi trường ${name}`);
+  }
+  return secret;
+}
+
 const tokenUtil = {
+  hashToken(token) {
+    return crypto.createHash("sha256").update(String(token)).digest("hex");
+  },
+
   generateAuthTokens(user) {
     const payload = {
       user_id: user.id,
@@ -53,20 +69,50 @@ const tokenUtil = {
     return payload;
   },
 
+  generateTransactionOtpToken({ user, idempotencyKey }) {
+    const payload = {
+      user_id: user.id,
+      phone: user.phone,
+      idempotency_key: idempotencyKey,
+      purpose: TRANSACTION_OTP_PURPOSE,
+    };
+    return jwt.sign(
+      payload,
+      requireSecret(TRANSACTION_OTP_SECRET, "TRANSACTION_OTP_SECRET"),
+      { expiresIn: "5m", algorithm: "HS256" },
+    );
+  },
+
+  verifyTransactionOtpToken(otpToken) {
+    const payload = jwt.verify(
+      otpToken,
+      requireSecret(TRANSACTION_OTP_SECRET, "TRANSACTION_OTP_SECRET"),
+      { algorithms: ["HS256"] },
+    );
+    if (payload.purpose !== TRANSACTION_OTP_PURPOSE) {
+      const err = new Error("Mã xác thực OTP không đúng loại");
+      err.name = "JsonWebTokenError";
+      throw err;
+    }
+    return payload;
+  },
+
   generatePinToken({ userId, idempotencyKey }) {
     const payload = {
       user_id: userId,
       idempotency_key: idempotencyKey,
       purpose: PIN_VERIFIED_PURPOSE,
     };
-    return jwt.sign(payload, OTP_SECRET, {
+    return jwt.sign(payload, requireSecret(PIN_SECRET, "PIN_SECRET"), {
       expiresIn: "3m",
       algorithm: "HS256",
     });
   },
 
   verifyPinToken(pinToken) {
-    const payload = jwt.verify(pinToken, OTP_SECRET, { algorithms: ["HS256"] });
+    const payload = jwt.verify(pinToken, requireSecret(PIN_SECRET, "PIN_SECRET"), {
+      algorithms: ["HS256"],
+    });
     if (payload.purpose !== PIN_VERIFIED_PURPOSE) {
       const err = new Error("Mã xác thực PIN không đúng loại");
       err.name = "JsonWebTokenError";

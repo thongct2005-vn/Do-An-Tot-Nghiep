@@ -2,6 +2,9 @@ const merchantBankRepository = require("./bank.repository");
 const userRepository = require("../../../../modules/user/user.repository");
 const { uuidv7 } = require("uuidv7");
 const { httpError } = require("../../../../utils/httpError");
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const merchantBankService = {
   async getBankLinkStatus(userId) {
     if (!userId) {
@@ -44,6 +47,30 @@ const merchantBankService = {
       accountNumber,
       accountHolderName,
     });
+  },
+
+  async getLinkedAccountBalance({ userId, linkedBankAccountId }) {
+    if (!userId || !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin để lấy số dư ngân hàng");
+    }
+
+    if (!UUID_PATTERN.test(linkedBankAccountId)) {
+      throw httpError(400, "Mã ngân hàng liên kết không hợp lệ");
+    }
+
+    const account = await merchantBankRepository.getLinkedAccountBalance(
+      userId,
+      linkedBankAccountId,
+    );
+    if (!account) {
+      throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+    }
+
+    return {
+      linked_bank_account_id: account.id,
+      bank_name: account.bank_name,
+      balance: Number(account.balance),
+    };
   },
 };
 

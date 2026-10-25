@@ -2,6 +2,7 @@ const merchantAuthRepository = require("./auth.repository");
 const otpService = require("../../../../modules/otp/otp.service");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
+const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
 const {
   isValidPhone,
   isValidPasswordMerchant,
@@ -18,7 +19,7 @@ const {
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
-const { maskEmail } = require("../../../../utils/maskEmail");
+const { maskEmail } = require("../../../../utils/maskPhoneAndEmail");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {

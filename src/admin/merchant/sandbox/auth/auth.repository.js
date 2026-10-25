@@ -1,10 +1,12 @@
 const pool = require("../../../../config/database");
-const merchantAuthRepository = {
-  async findMerchantByPhone(phone) {
+const tokenUtil = require("../../../../utils/jwt");
+
+const authRepository = {
+  async findUserByPhone(phone) {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key, u.secret_key
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
       FROM users u
       WHERE u.phone = $1
       `,
@@ -13,41 +15,15 @@ const merchantAuthRepository = {
     return result.rows[0];
   },
 
-  async findMerchantByEmail(email) {
+  async findUserByEmail(email) {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key, u.secret_key
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
       FROM users u
       WHERE u.email = $1
       `,
       [email],
-    );
-    return result.rows[0];
-  },
-
-  async findMerchantApiKey(apiKey) {
-    const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key, u.secret_key
-      FROM users u
-      WHERE u.api_key = $1
-      `,
-      [apiKey],
-    );
-    return result.rows[0];
-  },
-
-  async findMerchantSecretKey(secretKey) {
-    const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key, u.secret_key
-      FROM users u
-      WHERE u.secret_key = $1
-      `,
-      [secretKey],
     );
     return result.rows[0];
   },
@@ -83,59 +59,34 @@ const merchantAuthRepository = {
 
   async updateRefeshToken({ refreshToken, userId }) {
     await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
-      refreshToken,
+      tokenUtil.hashToken(refreshToken),
       userId,
     ]);
   },
 
-  async findMerchantByRefreshToken(refreshToken) {
+  async findUserByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status
+      SELECT u.id, u.phone, u.full_name, u.balance
       FROM users u
       WHERE u.refresh_token = $1
-        AND u.status = 'ACTIVE'
-        AND u.role = 'MERCHANT'
       `,
-      [refreshToken],
+      [tokenUtil.hashToken(refreshToken)],
     );
     return result.rows[0];
   },
 
-  async addMerchant({
-    userId,
-    phone,
-    phoneHash,
-    email,
-    passwordHash,
-    role = "MERCHANT",
-    storeName,
-    callbackUrl,
-    apiKey,
-    secretKey,
-  }) {
+  async createUserWithKyc({ userId, phone, phoneHash, email, passwordHash }) {
     const client = await pool.connect();
-
     try {
       await client.query("BEGIN");
 
       await client.query(
         `
-        INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key, secret_key)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO users(id, phone, phone_hash, email, password_hash, full_name)
+        VALUES ($1, $2, $3, $4, $5, $6)
         `,
-        [
-          userId,
-          phone,
-          phoneHash,
-          storeName,
-          email,
-          passwordHash,
-          role,
-          callbackUrl,
-          apiKey,
-          secretKey,
-        ],
+        [userId, phone, phoneHash, email, passwordHash, "unknow"],
       );
 
       await client.query(
@@ -147,9 +98,9 @@ const merchantAuthRepository = {
       );
 
       await client.query("COMMIT");
-    } catch (e) {
+    } catch (error) {
       await client.query("ROLLBACK");
-      throw e;
+      throw error;
     } finally {
       client.release();
     }
@@ -163,4 +114,4 @@ const merchantAuthRepository = {
   },
 };
 
-module.exports = merchantAuthRepository;
+module.exports = authRepository;

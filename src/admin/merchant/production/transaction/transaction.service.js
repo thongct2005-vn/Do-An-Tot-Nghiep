@@ -419,12 +419,22 @@ const merchantTransactionService = {
   },
 
   // OTP đúng thì trả về otp_token (purpose: transaction_otp), giống verifyLoginOtp
-  async verifyTransactionOtp({ userId, phone, otp }) {
+  async verifyTransactionOtp({ userId, phone, otp, idempotencyKey }) {
+    if (
+      typeof idempotencyKey !== "string" ||
+      !idempotencyKey ||
+      idempotencyKey.length > 100
+    ) {
+      throw httpError(400, "Thiếu hoặc sai idempotency key của giao dịch");
+    }
+
     const user = await getOtpMerchant({ userId, phone });
 
     await otpService.verifyOtp({ email: user.email, otp });
 
-    return { otp_token: tokenUtil.generateOtpToken(user, "transaction_otp") };
+    return {
+      otp_token: tokenUtil.generateTransactionOtpToken({ user, idempotencyKey }),
+    };
   },
 
   // Tra tên người nhận theo số điện thoại trước khi chuyển tiền

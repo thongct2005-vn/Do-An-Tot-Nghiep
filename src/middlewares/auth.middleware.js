@@ -73,25 +73,31 @@ const authMiddleware = {
     }
   },
 
-
   verifyTransactionOtpToken(req, res, next) {
     try {
       const otpToken = req.headers["x-otp-token"];
-      if (!otpToken) {
-        throw httpError(401, "Thiếu mã xác thực OTP của giao dịch");
+      const idempotencyKey = req.headers["idempotency-key"];
+      if (!otpToken || !idempotencyKey) {
+        throw httpError(403, "Thiếu mã xác thực OTP của giao dịch");
       }
 
-      const otpUser = tokenUtil.verifyOtpToken(otpToken, "transaction_otp");
-      if (!req.user || otpUser.user_id !== req.user.user_id) {
-        throw httpError(401, "Mã xác thực OTP không hợp lệ");
+      const payload = tokenUtil.verifyTransactionOtpToken(otpToken);
+      if (
+        !req.user ||
+        payload.user_id !== req.user.user_id ||
+        payload.idempotency_key !== idempotencyKey
+      ) {
+        throw httpError(403, "Mã xác thực OTP không hợp lệ");
       }
 
-      req.otpUser = otpUser;
+      req.otpUser = payload;
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      if (e.statusCode) return next(e);
+      next(httpError(403, "Xác thực OTP đã hết hạn, vui lòng thực hiện lại"));
     }
   },
+
 
   verifyPinToken(req, res, next) {
     try {

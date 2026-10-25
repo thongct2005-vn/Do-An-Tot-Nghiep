@@ -7,8 +7,7 @@ function generateMerchantApiKey() {
 }
 
 function generateMerchantSecretKey() {
-  const apiKey = "sk_" + crypto.randomBytes(32).toString("hex");
-  return apiKey;
+  return "sk_" + crypto.randomBytes(32).toString("hex");
 }
 
 async function generateUniqueMerchantApiKey(maxRetries = 5) {
@@ -28,21 +27,8 @@ async function generateUniqueMerchantApiKey(maxRetries = 5) {
   throw httpError(500, "Lỗi tại api key sau nhiều lần thử");
 }
 
-async function generateUniqueMerchantSecretKey(maxRetries = 5) {
-  let attempts = 0;
-
-  while (attempts < maxRetries) {
-    attempts++;
-    const secretKey = generateMerchantSecretKey();
-
-    const checkResult = await authMerchantRepository.findMerchantSecretKey(secretKey);
-
-    if (!checkResult) {
-      return secretKey;
-    }
-  }
-
-  throw httpError(500, "Lỗi tại api key sau nhiều lần thử");
+async function generateUniqueMerchantSecretKey() {
+  return generateMerchantSecretKey();
 }
 
 module.exports = {

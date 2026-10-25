@@ -16,6 +16,19 @@ const merchantBankController = {
       next(e);
     }
   },
+  async getLinkedAccountBalance(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { linkedBankAccountId } = req.params;
+      const result = await merchantBankService.getLinkedAccountBalance({
+        userId,
+        linkedBankAccountId,
+      });
+      return successResponse(res, 200, "Lấy số dư ngân hàng thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
   async linkBankAccount(req, res, next) {
     try {
       const { user_id: userId } = req.user;

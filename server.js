@@ -42,6 +42,8 @@ app.get("/api/v2/merchant/sandbox/download-apk", (req, res) => {
     }
   });
 });
+
+
 server.listen(PORT, () => {
   console.log(`Server running ${PORT}`);
 });

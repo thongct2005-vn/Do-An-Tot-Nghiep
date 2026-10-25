@@ -1,4 +1,8 @@
 const pool = require("../../../../config/database");
+const {
+  encryptSecretKey,
+  decryptSecretKey,
+} = require("../../../../utils/hashSecretKey");
 
 const dashboardRepository = {
   async getMerchantInfoById(userId) {
@@ -10,7 +14,9 @@ const dashboardRepository = {
             `,
       [userId],
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row) row.secret_key = decryptSecretKey(row.secret_key);
+    return row;
   },
 
   async getMerchantInfoByApiKey(apiKey) {
@@ -22,7 +28,9 @@ const dashboardRepository = {
             `,
       [apiKey],
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row) row.secret_key = decryptSecretKey(row.secret_key);
+    return row;
   },
   async updateCallBackUrl({ userId, callbackUrl }) {
     await pool.query(
@@ -47,8 +55,10 @@ const dashboardRepository = {
     const result = await pool.query(
       `UPDATE users SET secret_key = $1
        WHERE id = $2 RETURNING secret_key`,
-      [secretKey, userId],
+      [encryptSecretKey(secretKey), userId],
     );
+    
+    if (result.rows[0]) result.rows[0].secret_key = secretKey;
     return result;
   },
 };

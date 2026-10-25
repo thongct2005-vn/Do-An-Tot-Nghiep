@@ -14,7 +14,7 @@ const { httpError } = require("../../utils/httpError");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
-const { maskEmail } = require("../../utils/maskEmail");
+const { maskEmail} = require("../../utils/maskPhoneAndEmail");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {

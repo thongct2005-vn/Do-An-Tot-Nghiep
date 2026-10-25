@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const { decryptSecretKey } = require("../../utils/hashSecretKey");
 
 const userRepository = {
   async findUserByPhone(phone) {
@@ -19,7 +20,9 @@ const userRepository = {
       [userId],
     );
 
-    return result?.rows[0] ?? null;
+    const row = result?.rows[0] ?? null;
+    if (row) row.secret_key = decryptSecretKey(row.secret_key);
+    return row;
   },
 
   async findUserByPhoneHashList(phones) {

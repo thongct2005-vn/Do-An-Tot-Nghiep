@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const tokenUtil = require("../../utils/jwt");
 const authRepository = {
   async findUserByPhone(phone) {
     const result = await pool.query(
@@ -57,7 +58,7 @@ const authRepository = {
 
   async updateRefeshToken({ refreshToken, userId }) {
     await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
-      refreshToken,
+      tokenUtil.hashToken(refreshToken),
       userId,
     ]);
   },
@@ -69,7 +70,7 @@ const authRepository = {
       FROM users u
       WHERE u.refresh_token = $1
       `,
-      [refreshToken],
+      [tokenUtil.hashToken(refreshToken)],
     );
     return result.rows[0];
   },

@@ -31,7 +31,7 @@ router.get(
 );
 router.post(
   "/refresh-token",
-  authMiddleware.verifyRefreshToken,
+  authMiddleware.verifySandboxRefreshTokenCookie,
   merchantAuthController.refreshToken,
 );
 module.exports = router;

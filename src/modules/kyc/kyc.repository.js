@@ -63,6 +63,13 @@ const kycRepository = {
       client.release();
     }
   },
+
+  async updateFaceImage({ userId, faceImageUrl }) {
+    await pool.query(
+      `UPDATE user_kyc SET face_image_url = $1 WHERE user_id = $2`,
+      [faceImageUrl, userId],
+    );
+  },
 };
 
 module.exports = kycRepository;

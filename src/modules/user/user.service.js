@@ -105,6 +105,29 @@ const userService = {
     const result = await userRepository.getFcmToken(userId);
     return result;
   },
+  async updatePin({ userId, pin }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    if (!pin) {
+      throw httpError(400, "Thiếu mã pin");
+    }
+    const salt = await bcrypt.genSalt(10);
+    const pinHash = await bcrypt.hash(pin, salt);
+    await userRepository.updatePin({ userId, pinHash });
+  },
+
+  async updatePassWord({ userId, password }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    if (!password) {
+      throw httpError(400, "Thiếu mật khẩu");
+    }
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+    await userRepository.updatePassWord({ userId, passwordHash });
+  },
 };
 
 module.exports = userService;

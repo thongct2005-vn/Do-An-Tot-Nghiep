@@ -14,14 +14,10 @@ const createLimiter = ({ windowMs, limit, keyGenerator }) =>
     },
   });
 
-// Giới hạn theo user (dùng sau verifyAccessToken) thay vì theo IP
 const byUser = (req) => String(req.user?.user_id ?? "anonymous");
 
-// ---- Giới hạn tra cứu danh bạ: tối đa 2.000 số KHÁC NHAU mỗi user mỗi ngày ----
-// Lưu trong RAM của server: restart là đếm lại, chạy nhiều instance thì mỗi instance đếm riêng
-// (khi đó chuyển sang Redis). Mở lại danh bạ nhiều lần không bị tính thêm vì chỉ đếm số chưa tra.
 const CONTACT_DAILY_LIMIT = 2000;
-const contactUsage = new Map(); // userId -> { day, hashes: Set }
+const contactUsage = new Map();
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 const currentDay = () =>
@@ -87,6 +83,23 @@ module.exports = {
     limit: 10,
     keyGenerator: byUser,
   }),
-  resetApiKey: createLimiter({ windowMs: 7 * 24 * 60 * 60 * 1000, limit: 1 }),
-  resetSecretKey: createLimiter({ windowMs: 7 * 24 * 60 * 60 * 1000, limit: 1 }),
+  resetApiKey: createLimiter({
+    windowMs: 7 * 24 * 60 * 60 * 1000,
+    limit: 1,
+  }),
+  resetSecretKey: createLimiter({
+    windowMs: 7 * 24 * 60 * 60 * 1000,
+    limit: 1,
+  }),
+
+  updatePin: createLimiter({
+    windowMs: 7 * 24 * 60 * 60 * 1000,
+    limit: 1,
+    keyGenerator: byUser,
+  }),
+  updatePassWord: createLimiter({
+    windowMs: 7 * 24 * 60 * 60 * 1000,
+    limit: 1,
+    keyGenerator: byUser,
+  }),
 };

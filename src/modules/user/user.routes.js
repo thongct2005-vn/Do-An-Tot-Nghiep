@@ -45,4 +45,16 @@ router.get(
   authMiddleware.verifyAccessToken,
   userController.getFcmToken,
 );
+
+router.patch(
+  "/update-pin",
+  authMiddleware.verifyAccessToken,
+  userController.updatePin,
+);
+
+router.patch(
+  "/update-password",
+  authMiddleware.verifyAccessToken,
+  userController.updatePassWord,
+);
 module.exports = router;

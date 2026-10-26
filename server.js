@@ -31,6 +31,7 @@ app.use(
   cors({
     origin: (origin, callback) =>
       callback(null, !origin || allowedOrigins.includes(origin)),
+    credentials: true,
   }),
 );
 
@@ -63,6 +64,7 @@ app.get("/api/v2/merchant/sandbox/download-apk", (req, res) => {
     }
   });
 });
+
 app.use(errorHandler);
 
 server.listen(PORT, () => {

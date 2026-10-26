@@ -41,7 +41,6 @@ const userRepository = {
     return result.rows[0];
   },
 
-
   async getPinState(userId) {
     const result = await pool.query(
       `SELECT pin_hash,
@@ -98,6 +97,20 @@ const userRepository = {
       [userId],
     );
     return result.rows[0]?.fcm_token || null;
+  },
+
+  async updatePin({ userId, pinHash }) {
+    await pool.query(`UPDATE users SET pin_hash  = $1 WHERE id = $2`, [
+      pinHash,
+      userId,
+    ]);
+  },
+
+  async updatePassWord({ userId, passwordHash }) {
+    await pool.query(`UPDATE users SET password_hash  = $1 WHERE id = $2`, [
+      passwordHash,
+      userId,
+    ]);
   },
 };
 module.exports = userRepository;

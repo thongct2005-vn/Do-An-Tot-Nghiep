@@ -1,4 +1,3 @@
-const crypto = require("crypto");
 const tokenUtil = require("../utils/jwt");
 const { httpError } = require("../utils/httpError");
 const { computeSignature, isSameSignature } = require("../utils/hashSecretKey");
@@ -42,6 +41,15 @@ const authMiddleware = {
       handleTokenError(e, next);
     }
   },
+
+  
+  verifyRefreshTokenCookie: createRefreshCookieVerifier(
+    tokenUtil.MERCHANT_REFRESH_COOKIE,
+  ),
+
+  verifySandboxRefreshTokenCookie: createRefreshCookieVerifier(
+    tokenUtil.MERCHANT_SANDBOX_REFRESH_COOKIE,
+  ),
 
   verifyLoginOtpToken(req, res, next) {
     try {
@@ -174,6 +182,47 @@ const authMiddleware = {
     };
   },
 };
+
+function createRefreshCookieVerifier(cookieName) {
+  return (req, res, next) => {
+    try {
+      const dashboardOrigins = process.env.DASHBOARD_ORIGINS.split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+      if (!dashboardOrigins.includes(req.headers.origin)) {
+        throw httpError(403, "Nguồn gửi yêu cầu không hợp lệ");
+      }
+
+      const refreshToken = getCookie(req, cookieName);
+      if (!refreshToken) {
+        throw httpError(401, "Thiếu thông tin xác thực");
+      }
+
+      req.user = tokenUtil.verifyRefreshToken(refreshToken);
+      req.refreshToken = refreshToken;
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  };
+}
+
+function getCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index === -1) continue;
+    if (part.slice(0, index).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(index + 1).trim());
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 
 function handleTokenError(e, next) {
   if (e.statusCode) return next(e);

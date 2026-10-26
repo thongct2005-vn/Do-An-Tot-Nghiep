@@ -18,6 +18,9 @@ function requireSecret(secret, name) {
 }
 
 const tokenUtil = {
+  MERCHANT_REFRESH_COOKIE: "merchant_refresh_token",
+  MERCHANT_SANDBOX_REFRESH_COOKIE: "merchant_sandbox_refresh_token",
+
   hashToken(token) {
     return crypto.createHash("sha256").update(String(token)).digest("hex");
   },
@@ -110,9 +113,13 @@ const tokenUtil = {
   },
 
   verifyPinToken(pinToken) {
-    const payload = jwt.verify(pinToken, requireSecret(PIN_SECRET, "PIN_SECRET"), {
-      algorithms: ["HS256"],
-    });
+    const payload = jwt.verify(
+      pinToken,
+      requireSecret(PIN_SECRET, "PIN_SECRET"),
+      {
+        algorithms: ["HS256"],
+      },
+    );
     if (payload.purpose !== PIN_VERIFIED_PURPOSE) {
       const err = new Error("Mã xác thực PIN không đúng loại");
       err.name = "JsonWebTokenError";

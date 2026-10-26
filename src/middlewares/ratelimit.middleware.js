@@ -15,6 +15,13 @@ const createLimiter = ({ windowMs, limit, keyGenerator }) =>
   });
 
 const byUser = (req) => String(req.user?.user_id ?? "anonymous");
+const byForgotUser = (req) =>
+  String(
+    req.forgotUser?.user_id ??
+      req.resetUser?.user_id ??
+      req.otpUser?.user_id ??
+      "anonymous",
+  );
 
 const CONTACT_DAILY_LIMIT = 2000;
 const contactUsage = new Map();
@@ -90,6 +97,18 @@ module.exports = {
   resetSecretKey: createLimiter({
     windowMs: 7 * 24 * 60 * 60 * 1000,
     limit: 1,
+  }),
+
+  forgotRequestLimiter: createLimiter({ windowMs: 15 * 60 * 1000, limit: 5 }),
+  forgotKycLimiter: createLimiter({
+    windowMs:7 * 24 * 60 * 60 * 1000,
+    limit: 1,
+    keyGenerator: byForgotUser,
+  }),
+  resetCredentialLimiter: createLimiter({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    keyGenerator: byForgotUser,
   }),
 
   updatePin: createLimiter({

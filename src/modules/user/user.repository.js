@@ -99,18 +99,46 @@ const userRepository = {
     return result.rows[0]?.fcm_token || null;
   },
 
-  async updatePin({ userId, pinHash }) {
-    await pool.query(`UPDATE users SET pin_hash  = $1 WHERE id = $2`, [
-      pinHash,
-      userId,
-    ]);
+  // Tìm tài khoản theo số điện thoại cho luồng quên mật khẩu / PIN
+  async findAccountByPhone(phone) {
+    const result = await pool.query(
+      `SELECT id, phone, email, status, role FROM users WHERE phone = $1`,
+      [phone],
+    );
+    return result.rows[0] ?? null;
   },
 
-  async updatePassWord({ userId, passwordHash }) {
-    await pool.query(`UPDATE users SET password_hash  = $1 WHERE id = $2`, [
-      passwordHash,
-      userId,
-    ]);
+  async getCredentialState(userId) {
+    const result = await pool.query(
+      `SELECT id, role, status, password_hash, pin_hash FROM users WHERE id = $1`,
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  // Chỉ ghi khi pin_hash vẫn là giá trị lúc cấp token (chặn dùng lại token)
+  async resetPin({ userId, pinHash, oldPinHash }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET pin_hash = $1, pin_failed_attempts = 0, pin_locked_until = NULL
+       WHERE id = $2 AND pin_hash IS NOT DISTINCT FROM $3
+       RETURNING id`,
+      [pinHash, userId, oldPinHash],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  // Đổi mật khẩu: xoá refresh token (đăng xuất mọi thiết bị) và mở khoá đăng nhập
+  async resetPassword({ userId, passwordHash, oldPasswordHash }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET password_hash = $1, refresh_token = NULL,
+           failed_login_attempts = 0, locked_until = NULL
+       WHERE id = $2 AND password_hash IS NOT DISTINCT FROM $3
+       RETURNING id`,
+      [passwordHash, userId, oldPasswordHash],
+    );
+    return result.rows[0] ?? null;
   },
 };
 module.exports = userRepository;

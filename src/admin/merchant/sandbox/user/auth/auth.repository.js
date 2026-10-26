@@ -75,7 +75,7 @@ const authRepository = {
     return result.rows[0];
   },
 
-  async createUserWithKyc({ userId, phone, phoneHash, email, passwordHash }) {
+  async createUserWithKyc({ userId, phone, phoneHash, email, passwordHash, status = "APPROVED" }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -90,10 +90,10 @@ const authRepository = {
 
       await client.query(
         `
-        INSERT INTO user_kyc(id, user_id)
-        VALUES ($1, $2)
+        INSERT INTO user_kyc(id, user_id, status)
+        VALUES ($1, $2, $3)
         `,
-        [phone, userId],
+        [phone, userId, status],
       );
 
       await client.query("COMMIT");

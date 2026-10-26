@@ -21,7 +21,8 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const userId = req.user.user_id;
+    const userId = req.user?.user_id ?? req.forgotUser?.user_id;
+    if (!userId) return cb(new Error("Thiếu thông tin người dùng"), null);
     const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
     cb(null, `${userId}_${Date.now()}${ext}`);
   },

@@ -10,10 +10,22 @@ const kycRepository = {
 
   async checkUserKYC(userId) {
     const result = await pool.query(
-      `SELECT user_id FROM user_kyc WHERE user_id = $1`,
+      `SELECT user_id FROM user_kyc WHERE user_id = $1 AND status = 'APPROVED' LIMIT 1`,
       [userId],
     );
     return { is_kyc: result.rows.length > 0 };
+  },
+
+  async findApprovedKycByUserId(userId) {
+    const result = await pool.query(
+      `SELECT id, front_image_url, face_image_url
+       FROM user_kyc
+       WHERE user_id = $1 AND status = 'APPROVED'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId],
+    );
+    return result.rows[0] ?? null;
   },
 
   async saveKYCResult({

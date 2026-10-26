@@ -75,22 +75,72 @@ const userController = {
       next(e);
     }
   },
-  async updatePin(req, res, next) {
+  async resetPin(req, res, next) {
     try {
-      const { user_id: userId } = req.user;
+      const { user_id: userId, pv: version } = req.resetUser;
       const { pin } = req.body;
-      await userService.updatePin({ userId, pin });
-      successResponse(res, 200, "Cập nhật mã pin thành công");
+      await userService.resetPin({ userId, version, pin });
+      return successResponse(res, 200, "Đặt lại mã PIN thành công");
     } catch (e) {
       next(e);
     }
   },
-  async updatePassWord(req, res, next) {
+  async resetPassword(req, res, next) {
     try {
-      const { user_id: userId } = req.user;
+      const { user_id: userId, pv: version } = req.resetUser;
       const { password } = req.body;
-      await userService.updatePassWord({ userId, password });
-      successResponse(res, 200, "Cập nhật mật khẩu thành công");
+      await userService.resetPassword({ userId, version, password });
+      return successResponse(res, 200, "Đặt lại mật khẩu thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
+
+ 
+  async forgotRequest(req, res, next) {
+    try {
+      const { phone, type } = req.body;
+      const result = await userService.forgotRequest({ phone, type });
+      return successResponse(res, 200, "Đã gửi mã OTP về email của bạn", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+  async forgotResendOtp(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.otpUser;
+      const result = await userService.forgotResendOtp({ userId, phone });
+      return successResponse(res, 200, "Đã gửi lại mã OTP", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+  async forgotVerifyOtp(req, res, next) {
+    try {
+      const { otp } = req.body;
+      const { user_id: userId, phone, type } = req.otpUser;
+      const result = await userService.forgotVerifyOtp({
+        userId,
+        phone,
+        type,
+        otp,
+      });
+      return successResponse(res, 200, "Xác thực OTP thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+  async forgotVerifyKyc(req, res, next) {
+    try {
+      const { user_id: userId, type } = req.forgotUser;
+      const result = await userService.forgotVerifyKyc({
+        userId,
+        type,
+        frontPath: req.files?.front_id?.[0]?.path,
+        backPath: req.files?.back_id?.[0]?.path,
+        facePath: req.files?.face?.[0]?.path,
+      });
+      return successResponse(res, 200, "Xác thực danh tính thành công", result);
     } catch (e) {
       next(e);
     }

@@ -9,6 +9,8 @@ const PIN_VERIFIED_PURPOSE = "pin_verified";
 const TRANSACTION_OTP_PURPOSE = "transaction_otp";
 const PIN_SECRET = process.env.PIN_SECRET;
 const TRANSACTION_OTP_SECRET = process.env.TRANSACTION_OTP_SECRET;
+const RESET_SECRET = process.env.RESET_SECRET;
+const FORGOT_KYC_PURPOSE = "forgot_kyc";
 
 function requireSecret(secret, name) {
   if (!secret) {
@@ -49,8 +51,9 @@ const tokenUtil = {
     return jwt.verify(refreshToken, REFRESH_SECRET);
   },
 
-  generateOtpToken(user, purpose = LOGIN_OTP_PURPOSE) {
+  generateOtpToken(user, purpose = LOGIN_OTP_PURPOSE, extra = {}) {
     const payload = {
+      ...extra,
       user_id: user.id,
       phone: user.phone,
       email: user.email,
@@ -66,6 +69,58 @@ const tokenUtil = {
     const payload = jwt.verify(otpToken, OTP_SECRET, { algorithms: ["HS256"] });
     if (payload.purpose !== expectedPurpose) {
       const err = new Error("Phương thức otp không chính xác");
+      err.name = "JsonWebTokenError";
+      throw err;
+    }
+    return payload;
+  },
+
+  // Token cho bước chụp CCCD + khuôn mặt, cấp sau khi nhập đúng OTP email
+  generateForgotKycToken({ userId, type }) {
+    return jwt.sign(
+      { user_id: userId, type, purpose: FORGOT_KYC_PURPOSE },
+      requireSecret(RESET_SECRET, "RESET_SECRET"),
+      { expiresIn: "15m", algorithm: "HS256" },
+    );
+  },
+
+  verifyForgotKycToken(token) {
+    const payload = jwt.verify(token, requireSecret(RESET_SECRET, "RESET_SECRET"), {
+      algorithms: ["HS256"],
+    });
+    if (payload.purpose !== FORGOT_KYC_PURPOSE) {
+      const err = new Error("Mã xác thực không đúng loại");
+      err.name = "JsonWebTokenError";
+      throw err;
+    }
+    return payload;
+  },
+
+  // Dấu vân tay của hash hiện tại (mật khẩu hoặc PIN). Token đặt lại gắn với nó,
+  // đổi xong thì hash đổi nên token chỉ dùng được một lần.
+  credentialVersion(hash) {
+    return crypto
+      .createHash("sha256")
+      .update(String(hash ?? ""))
+      .digest("hex")
+      .slice(0, 32);
+  },
+
+  // purpose: "reset_password" | "reset_pin"
+  generateResetToken({ userId, purpose, version }) {
+    return jwt.sign(
+      { user_id: userId, purpose, pv: version },
+      requireSecret(RESET_SECRET, "RESET_SECRET"),
+      { expiresIn: "10m", algorithm: "HS256" },
+    );
+  },
+
+  verifyResetToken(token, expectedPurpose) {
+    const payload = jwt.verify(token, requireSecret(RESET_SECRET, "RESET_SECRET"), {
+      algorithms: ["HS256"],
+    });
+    if (payload.purpose !== expectedPurpose) {
+      const err = new Error("Mã xác thực không đúng loại");
       err.name = "JsonWebTokenError";
       throw err;
     }

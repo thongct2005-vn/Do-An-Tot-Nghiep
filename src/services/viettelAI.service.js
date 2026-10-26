@@ -24,7 +24,11 @@ const viettelAIService = {
       }
       return data;
     } catch (error) {
-      console.log(error);
+      if (error.statusCode) throw error;
+      console.error("Lỗi kiểm tra giấy tờ giả mạo:", error.message);
+      const err = new Error("Không kiểm tra được giấy tờ, vui lòng thử lại sau");
+      err.statusCode = 502;
+      throw err;
     }
   },
 

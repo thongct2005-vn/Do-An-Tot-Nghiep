@@ -81,6 +81,48 @@ const authMiddleware = {
     }
   },
 
+  verifyForgotOtpToken(req, res, next) {
+    try {
+      const otpToken = req.headers["x-otp-token"];
+      if (!otpToken) {
+        throw httpError(401, "Thiếu thông tin xác thực");
+      }
+      req.otpUser = tokenUtil.verifyOtpToken(otpToken, "forgot_otp");
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
+  verifyForgotKycToken(req, res, next) {
+    try {
+      const token = req.headers["x-forgot-token"];
+      if (!token) {
+        throw httpError(401, "Thiếu thông tin xác thực");
+      }
+      req.forgotUser = tokenUtil.verifyForgotKycToken(token);
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
+  // purpose: "reset_password" | "reset_pin"
+  verifyResetToken(purpose) {
+    return (req, res, next) => {
+      try {
+        const token = req.headers["x-reset-token"];
+        if (!token) {
+          throw httpError(401, "Thiếu thông tin xác thực");
+        }
+        req.resetUser = tokenUtil.verifyResetToken(token, purpose);
+        next();
+      } catch (e) {
+        handleTokenError(e, next);
+      }
+    };
+  },
+
   verifyTransactionOtpToken(req, res, next) {
     try {
       const otpToken = req.headers["x-otp-token"];

@@ -45,14 +45,26 @@ const walletService = {
   },
 
   async updateWalletBalance({ phone, amount }) {
-    if (!phone || !amount) {
+    if (!phone || amount === undefined || amount === null || amount === "") {
       throw httpError(400, "Thiếu số điện thoại hoặc số tiền");
     }
+
+    const numAmount = Number(amount);
+
+    if (isNaN(numAmount) || !isFinite(numAmount)) {
+      throw httpError(400, "Số tiền không hợp lệ");
+    }
+
+    if (numAmount < 1 || numAmount > 50000000) {
+      throw httpError(400, "Số tiền phải từ 1 đến 50.000.000đ");
+    }
+
     const user = await userRepository.findUserByPhone(phone);
     if (!user) {
       throw httpError(404, "Không tìm thấy tài khoản này");
     }
-    await walletRepository.updateWalletBalance({ phone, amount });
+
+    await walletRepository.updateWalletBalance({ phone, amount: numAmount });
   },
 };
 

@@ -3,12 +3,11 @@ const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 const {
   isValidPhone,
-  isValidPasswordMerchant,
   isValidEmail,
 } = require("../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../../utils/jwt");
-const { emitToUser } = require("../../../../utils/socket");
+const { emitToUser, disconnectUser } = require("../../../../utils/socket");
 const { httpError } = require("../../../../utils/httpError");
 const {
   generateUniqueMerchantApiKey,
@@ -136,6 +135,7 @@ const merchantAuthService = {
       throw httpError(400, "Thiếu thông tin để đăng xuất");
     }
     await merchantAuthRepository.logout(userId);
+    disconnectUser(userId);
   },
 
   async refreshToken(token) {

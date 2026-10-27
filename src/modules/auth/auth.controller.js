@@ -140,6 +140,38 @@ const authController = {
       next(e);
     }
   },
+
+  // ===== Google Authenticator =====
+  async setupTotp(req, res, next) {
+    try {
+      const { phone, password } = req.body;
+      const result = await authService.setupTotp({ phone, password });
+      return successResponse(res, 200, "Tạo mã QR thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async enableTotp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { code } = req.body;
+      await authService.enableTotp({ userId, code });
+      return successResponse(res, 200, "Đã bật Google Authenticator");
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async disableTotp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      await authService.disableTotp(userId);
+      return successResponse(res, 200, "Đã chuyển sang nhận OTP qua email");
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = authController;

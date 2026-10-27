@@ -128,12 +128,14 @@ const userRepository = {
     return result.rows[0] ?? null;
   },
 
-  // Đổi mật khẩu: xoá refresh token (đăng xuất mọi thiết bị) và mở khoá đăng nhập
+
   async resetPassword({ userId, passwordHash, oldPasswordHash }) {
     const result = await pool.query(
       `UPDATE users
        SET password_hash = $1, refresh_token = NULL,
-           failed_login_attempts = 0, locked_until = NULL
+           failed_login_attempts = 0, locked_until = NULL,
+           totp_enabled = false, totp_secret = NULL, totp_last_step = NULL,
+           totp_failed_attempts = 0, totp_locked_until = NULL
        WHERE id = $2 AND password_hash IS NOT DISTINCT FROM $3
        RETURNING id`,
       [passwordHash, userId, oldPasswordHash],

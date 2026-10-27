@@ -8,7 +8,7 @@ const {
 } = require("../../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../../../utils/jwt");
-const { emitToUser } = require("../../../../../utils/socket");
+const { emitToUser, disconnectUser } = require("../../../../../utils/socket");
 const { httpError } = require("../../../../../utils/httpError");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
@@ -129,6 +129,7 @@ const authService = {
       throw httpError(400, "Thiếu thông tin để đăng xuất");
     }
     await authRepository.logout(userId);
+    disconnectUser(userId);
   },
 
   async refreshToken(token) {

@@ -2,7 +2,6 @@ const merchantAuthRepository = require("./auth.repository");
 const otpService = require("../../../../modules/otp/otp.service");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
-const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
 const {
   isValidPhone,
   isValidPasswordMerchant,
@@ -10,6 +9,7 @@ const {
 } = require("../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../../utils/jwt");
+const totpUtil = require("../../../../utils/totp");
 const { emitToUser } = require("../../../../utils/socket");
 const { httpError } = require("../../../../utils/httpError");
 const {
@@ -18,6 +18,9 @@ const {
 } = require("../../../../utils/generateApikeySecretkey");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
+const TOTP_MAX_ATTEMPTS = 5;
+const TOTP_LOCK_MINUTES = 5;
+const TOTP_ISSUER = process.env.TOTP_MERCHANT_ISSUER;
 
 const { maskEmail } = require("../../../../utils/maskPhoneAndEmail");
 
@@ -78,6 +81,62 @@ async function checkCredentials(phone, password) {
   return user;
 }
 
+// Kiểm tra mã 6 số của Google Authenticator.
+// requireEnabled = true: đăng nhập / tắt; false: bước xác nhận bật lần đầu.
+async function verifyTotpCode({ userId, code, requireEnabled }) {
+  if (!/^\d{6}$/.test(String(code ?? ""))) {
+    throw httpError(400, "Mã xác thực phải gồm 6 chữ số");
+  }
+
+  const state = await merchantAuthRepository.getTotpState(userId);
+  if (!state || !state.totp_secret || state.totp_enabled !== requireEnabled) {
+    throw httpError(
+      400,
+      requireEnabled
+        ? "Tài khoản chưa bật Google Authenticator"
+        : "Chưa có mã QR để xác nhận, vui lòng quét lại mã QR",
+    );
+  }
+  if (state.is_totp_locked) {
+    throw httpError(
+      403,
+      `Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau ${TOTP_LOCK_MINUTES} phút`,
+    );
+  }
+
+  const secret = totpUtil.decryptSecret(state.totp_secret);
+  const lastStep =
+    state.totp_last_step === null ? null : Number(state.totp_last_step);
+  const step = totpUtil.verifyCode(secret, code, { lastStep });
+
+  if (step === null) {
+    const row = await merchantAuthRepository.registerTotpFailure({
+      userId,
+      maxAttempts: TOTP_MAX_ATTEMPTS,
+      lockMinutes: TOTP_LOCK_MINUTES,
+    });
+    const attempts = Number(row?.totp_failed_attempts ?? TOTP_MAX_ATTEMPTS);
+    if (attempts >= TOTP_MAX_ATTEMPTS) {
+      throw httpError(
+        403,
+        `Bạn đã nhập sai ${TOTP_MAX_ATTEMPTS} lần. Tạm khóa ${TOTP_LOCK_MINUTES} phút`,
+      );
+    }
+    throw httpError(
+      400,
+      `Mã không chính xác hoặc đã được sử dụng. Bạn còn ${TOTP_MAX_ATTEMPTS - attempts} lần thử`,
+    );
+  }
+
+  const consumed = await merchantAuthRepository.consumeTotpStep({
+    userId,
+    step,
+  });
+  if (!consumed) {
+    throw httpError(400, "Mã đã được sử dụng, vui lòng đợi mã mới");
+  }
+}
+
 async function getOtpMerchant({ userId, phone }) {
   const user = await merchantAuthRepository.findMerchantByPhone(phone);
   if (
@@ -97,6 +156,11 @@ async function getOtpMerchant({ userId, phone }) {
 }
 
 const merchantAuthService = {
+  // Dùng chung cho OTP giao dịch khi merchant đã bật Google Authenticator
+  async verifyEnabledTotp({ userId, code }) {
+    await verifyTotpCode({ userId, code, requireEnabled: true });
+  },
+
   async isPhoneExist(phone) {
     if (!phone) {
       throw httpError(400, "Thiếu số điện thoại");
@@ -129,6 +193,16 @@ const merchantAuthService = {
 
   async login({ phone, password }) {
     const user = await checkCredentials(phone, password);
+
+    // Đã bật Google Authenticator: không gửi email, merchant nhập mã từ ứng dụng
+    if (user.totp_enabled) {
+      return {
+        otp_token: tokenUtil.generateOtpToken(user),
+        masked_email: maskEmail(user.email),
+        otp_method: "totp",
+      };
+    }
+
     try {
       await otpService.generateAndSaveOtp({ email: user.email });
     } catch (e) {
@@ -138,11 +212,19 @@ const merchantAuthService = {
     return {
       otp_token: tokenUtil.generateOtpToken(user),
       masked_email: maskEmail(user.email),
+      otp_method: "email",
     };
   },
 
   async resendLoginOtp({ userId, phone }) {
     const user = await getOtpMerchant({ userId, phone });
+
+    if (user.totp_enabled) {
+      throw httpError(
+        400,
+        "Tài khoản đang dùng Google Authenticator, không có mã gửi qua email",
+      );
+    }
 
     await otpService.generateAndSaveOtp({ email: user.email });
 
@@ -154,7 +236,15 @@ const merchantAuthService = {
   async verifyLoginOtp({ userId, phone, otp }) {
     const user = await getOtpMerchant({ userId, phone });
 
-    await otpService.verifyOtp({ email: user.email, otp });
+    if (user.totp_enabled) {
+      await verifyTotpCode({
+        userId: user.id,
+        code: otp,
+        requireEnabled: true,
+      });
+    } else {
+      await otpService.verifyOtp({ email: user.email, otp });
+    }
 
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await merchantAuthRepository.updateRefeshToken({
@@ -177,6 +267,68 @@ const merchantAuthService = {
         full_name: user.full_name,
       },
     };
+  },
+
+  // ===== Google Authenticator (TOTP) =====
+
+  async getTotpStatus(userId) {
+    const state = await merchantAuthRepository.getTotpState(userId);
+    return { totp_enabled: state?.totp_enabled === true };
+  },
+
+  // Tạo khoá + mã QR. Merchant đã đăng nhập nhưng vẫn phải nhập lại mật khẩu;
+  // chưa bật cho tới khi nhập mã đầu tiên (enableTotp).
+  async setupTotp({ userId, phone, password }) {
+    const user = await checkCredentials(phone, password);
+    if (user.id !== userId) {
+      throw httpError(403, "Tài khoản không hợp lệ");
+    }
+
+    if (user.totp_enabled) {
+      throw httpError(409, "Tài khoản đã bật Google Authenticator");
+    }
+
+    const secret = totpUtil.generateSecret();
+    const saved = await merchantAuthRepository.saveTotpSecret({
+      userId: user.id,
+      encryptedSecret: totpUtil.encryptSecret(secret),
+    });
+    if (!saved) {
+      throw httpError(409, "Tài khoản đã bật Google Authenticator");
+    }
+
+    return {
+      otpauth_uri: totpUtil.buildOtpAuthUri({
+        secret,
+        account: user.phone,
+        issuer: TOTP_ISSUER,
+      }),
+      secret,
+    };
+  },
+
+  async enableTotp({ userId, code }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    await verifyTotpCode({ userId, code, requireEnabled: false });
+    const enabled = await merchantAuthRepository.enableTotp(userId);
+    if (!enabled) {
+      throw httpError(
+        409,
+        "Không thể bật Google Authenticator, vui lòng thử lại",
+      );
+    }
+  },
+
+  // Tắt phải nhập đúng mã hiện tại của ứng dụng (khác app: ở đây không có
+  // bước đăng nhập ngay trước đó để chứng minh người dùng còn giữ thiết bị)
+  async disableTotp({ userId, code }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    await verifyTotpCode({ userId, code, requireEnabled: true });
+    await merchantAuthRepository.disableTotp(userId);
   },
 
   async logout(userId) {

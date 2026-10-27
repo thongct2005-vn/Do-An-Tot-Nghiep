@@ -63,7 +63,14 @@ const emitToUser = (userId, eventName, data) => {
   }
 };
 
+const disconnectUser = (userId) => {
+  if (!io) return;
+  io.in(`user_${userId}`).disconnectSockets(true); // cần socket.io v4
+  activeSockets.delete(userId);
+};
+
 module.exports = {
   initSocket,
   emitToUser,
+  disconnectUser 
 };

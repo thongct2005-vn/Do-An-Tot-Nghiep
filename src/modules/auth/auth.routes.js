@@ -7,11 +7,7 @@ const {
   otpLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 
-router.post(
-  "/login",
-  loginLimiter,
-  authController.login,
-);
+router.post("/login", loginLimiter, authController.login);
 router.post(
   "/resend-login-otp",
   otpLimiter,
@@ -24,10 +20,21 @@ router.post(
   authMiddleware.verifyLoginOtpToken,
   authController.verifyLoginOtp,
 );
+router.post("/logout", authMiddleware.verifyAccessToken, authController.logout);
+
+router.post("/totp/setup", loginLimiter, authController.setupTotp);
 router.post(
-  "/logout",
+  "/totp/enable",
+  otpLimiter,
   authMiddleware.verifyAccessToken,
-  authController.logout,
+  authMiddleware.requireRole("USER"),
+  authController.enableTotp,
+);
+router.post(
+  "/totp/disable",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("USER"),
+  authController.disableTotp,
 );
 router.post("/register", loginLimiter, authController.register);
 router.post(

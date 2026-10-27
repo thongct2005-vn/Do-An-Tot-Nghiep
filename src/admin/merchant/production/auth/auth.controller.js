@@ -185,6 +185,59 @@ const merchantAuthController = {
       next(e);
     }
   },
+
+  // ===== Google Authenticator =====
+  async getTotpStatus(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await merchantAuthService.getTotpStatus(userId);
+      return successResponse(
+        res,
+        200,
+        "Lấy trạng thái bảo mật thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async setupTotp(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const { password } = req.body;
+      const result = await merchantAuthService.setupTotp({
+        userId,
+        phone,
+        password,
+      });
+      return successResponse(res, 200, "Tạo mã QR thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async enableTotp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { code } = req.body;
+      await merchantAuthService.enableTotp({ userId, code });
+      return successResponse(res, 200, "Đã bật Google Authenticator");
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async disableTotp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { code } = req.body;
+      await merchantAuthService.disableTotp({ userId, code });
+      return successResponse(res, 200, "Đã tắt Google Authenticator");
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = merchantAuthController;

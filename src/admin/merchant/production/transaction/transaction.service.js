@@ -1,5 +1,6 @@
 const merchantTransactionRepository = require("./transaction.repository");
 const merchantAuthRepository = require("../auth/auth.repository");
+const merchantAuthService = require("../auth/auth.service");
 const otpService = require("../../../../modules/otp/otp.service");
 const tokenUtil = require("../../../../utils/jwt");
 const { httpError } = require("../../../../utils/httpError");
@@ -397,9 +398,15 @@ const merchantTransactionService = {
     };
   },
 
-  // Gửi OTP xác thực giao dịch (nếu OTP cũ còn hiệu lực thì dùng tiếp, giống login)
+  // Gửi OTP xác thực giao dịch. Đồng bộ với đăng nhập:
+  // - Đã bật Google Authenticator: không gửi email, merchant nhập mã từ ứng dụng
+  // - Chưa bật: gửi OTP qua email (nếu OTP cũ còn hiệu lực thì dùng tiếp)
   async sendTransactionOtp({ userId, phone }) {
     const user = await getOtpMerchant({ userId, phone });
+
+    if (user.totp_enabled) {
+      return { masked_email: maskEmail(user.email), otp_method: "totp" };
+    }
 
     try {
       await otpService.generateAndSaveOtp({ email: user.email });
@@ -407,15 +414,22 @@ const merchantTransactionService = {
       if (e.statusCode !== 429) throw e;
     }
 
-    return { masked_email: maskEmail(user.email) };
+    return { masked_email: maskEmail(user.email), otp_method: "email" };
   },
 
   async resendTransactionOtp({ userId, phone }) {
     const user = await getOtpMerchant({ userId, phone });
 
+    if (user.totp_enabled) {
+      throw httpError(
+        400,
+        "Tài khoản đang dùng Google Authenticator, không có mã gửi qua email",
+      );
+    }
+
     await otpService.generateAndSaveOtp({ email: user.email });
 
-    return { masked_email: maskEmail(user.email) };
+    return { masked_email: maskEmail(user.email), otp_method: "email" };
   },
 
   // OTP đúng thì trả về otp_token (purpose: transaction_otp), giống verifyLoginOtp
@@ -430,7 +444,11 @@ const merchantTransactionService = {
 
     const user = await getOtpMerchant({ userId, phone });
 
-    await otpService.verifyOtp({ email: user.email, otp });
+    if (user.totp_enabled) {
+      await merchantAuthService.verifyEnabledTotp({ userId: user.id, code: otp });
+    } else {
+      await otpService.verifyOtp({ email: user.email, otp });
+    }
 
     return {
       otp_token: tokenUtil.generateTransactionOtpToken({ user, idempotencyKey }),

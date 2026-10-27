@@ -1,12 +1,13 @@
 const pool = require("../../../../config/database");
 const tokenUtil = require("../../../../utils/jwt");
+const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
 
-const authRepository = {
-  async findUserByPhone(phone) {
+const merchantAuthRepository = {
+  async findMerchantByPhone(phone) {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.phone = $1
       `,
@@ -15,15 +16,28 @@ const authRepository = {
     return result.rows[0];
   },
 
-  async findUserByEmail(email) {
+  async findMerchantByEmail(email) {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.email = $1
       `,
       [email],
+    );
+    return result.rows[0];
+  },
+
+  async findMerchantApiKey(apiKey) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+      FROM users u
+      WHERE u.api_key = $1
+      `,
+      [apiKey],
     );
     return result.rows[0];
   },
@@ -64,29 +78,54 @@ const authRepository = {
     ]);
   },
 
-  async findUserByRefreshToken(refreshToken) {
+  async findMerchantByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.balance
+      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status
       FROM users u
       WHERE u.refresh_token = $1
+        AND u.status = 'ACTIVE'
+        AND u.role = 'MERCHANT'
       `,
       [tokenUtil.hashToken(refreshToken)],
     );
     return result.rows[0];
   },
 
-  async createUserWithKyc({ userId, phone, phoneHash, email, passwordHash }) {
+  async addMerchant({
+    userId,
+    phone,
+    phoneHash,
+    email,
+    passwordHash,
+    role = "MERCHANT",
+    storeName,
+    callbackUrl,
+    apiKey,
+    secretKey,
+  }) {
     const client = await pool.connect();
+
     try {
       await client.query("BEGIN");
 
       await client.query(
         `
-        INSERT INTO users(id, phone, phone_hash, email, password_hash, full_name)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key, secret_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `,
-        [userId, phone, phoneHash, email, passwordHash, "unknow"],
+        [
+          userId,
+          phone,
+          phoneHash,
+          storeName,
+          email,
+          passwordHash,
+          role,
+          callbackUrl,
+          apiKey,
+          encryptSecretKey(secretKey),
+        ],
       );
 
       await client.query(
@@ -98,9 +137,9 @@ const authRepository = {
       );
 
       await client.query("COMMIT");
-    } catch (error) {
+    } catch (e) {
       await client.query("ROLLBACK");
-      throw error;
+      throw e;
     } finally {
       client.release();
     }
@@ -114,4 +153,4 @@ const authRepository = {
   },
 };
 
-module.exports = authRepository;
+module.exports = merchantAuthRepository;

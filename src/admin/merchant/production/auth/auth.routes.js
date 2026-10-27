@@ -25,6 +25,33 @@ router.post(
   authMiddleware.verifyAccessToken,
   merchantAuthController.logout,
 );
+router.get(
+  "/totp/status",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  merchantAuthController.getTotpStatus,
+);
+router.post(
+  "/totp/setup",
+  loginLimiter,
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  merchantAuthController.setupTotp,
+);
+router.post(
+  "/totp/enable",
+  otpLimiter,
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  merchantAuthController.enableTotp,
+);
+router.post(
+  "/totp/disable",
+  otpLimiter,
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  merchantAuthController.disableTotp,
+);
 router.post("/register", loginLimiter, merchantAuthController.register);
 router.post(
   "/verify-register",

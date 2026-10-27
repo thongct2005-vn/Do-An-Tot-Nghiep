@@ -35,7 +35,7 @@ const sendPushNotification = async (userId, { title, body, data = {} }) => {
       e.code === "messaging/registration-token-not-registered" ||
       e.code === "messaging/invalid-registration-token"
     ) {
-      await UserRepository.updateFcmToken(userId, null);
+      await userRepository.updateFcmToken(userId, null);
       console.log(`Đã xóa fcm_token không hợp lệ của user ${userId}`);
     }
   }

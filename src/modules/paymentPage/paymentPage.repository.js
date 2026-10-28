@@ -5,7 +5,7 @@ const SELECT_SQL = `
   SELECT pr.id, pr.reference_code, pr.order_id, pr.destination_user_id,
          pr.amount, pr.description, pr.status, pr.paid_at, pr.return_url,
          GREATEST(0, CEIL(EXTRACT(EPOCH FROM (pr.expires_at - NOW()))))::int AS seconds_left,
-         u.full_name AS merchant_name
+         u.full_name AS merchant_name, u.secret_key AS merchant_secret_key
   FROM payment_requests pr
   JOIN users u ON u.id = pr.destination_user_id
   WHERE pr.reference_code = $1

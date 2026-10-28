@@ -3,7 +3,6 @@
 
   var API = "/api/v2/pay/";
   var POLL_MS = 2500;
-  var REDIRECT_SECONDS = 3;
 
   // URL dạng /pay/<reference_code>
   var parts = location.pathname.split("/").filter(Boolean);
@@ -34,15 +33,13 @@
     }
   }
 
-  // Ghép order_id + status vào return_url. Chỉ cho http/https.
-  // Lưu ý: trạng thái trên URL chỉ để hiển thị, merchant phải xác nhận bằng webhook hoặc API tra cứu.
-  function buildReturnUrl(returnUrl, orderId, status) {
+  // Chỉ chấp nhận link http/https do server ký sẵn (redirect_url).
+  function safeHttpUrl(raw) {
     try {
-      var u = new URL(returnUrl);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-      u.searchParams.set("order_id", orderId);
-      u.searchParams.set("status", status);
-      return u.toString();
+      var u = new URL(raw);
+      return u.protocol === "https:" || u.protocol === "http:"
+        ? u.toString()
+        : null;
     } catch (e) {
       return null;
     }
@@ -112,9 +109,7 @@
     fillSummary(data);
     showState(data.status === "success" ? "success" : "failed");
 
-    var target = data.return_url
-      ? buildReturnUrl(data.return_url, data.order_id, data.status)
-      : null;
+    var target = data.redirect_url ? safeHttpUrl(data.redirect_url) : null;
     var area = $("return-area");
     if (!target) {
       $("redirect-note").textContent = "Bạn có thể đóng trang này.";
@@ -123,25 +118,15 @@
       return;
     }
 
+    // Không tự động chuyển trang: người dùng phải bấm và thấy rõ tên miền sẽ tới.
+    var host = data.redirect_host || new URL(target).host;
+    $("redirect-note").textContent =
+      "Bạn sắp rời cổng thanh toán để tới: " +
+      host +
+      ". Chỉ tiếp tục nếu bạn tin tưởng trang này.";
     $("return-link").hidden = false;
     $("return-link").href = target;
     area.hidden = false;
-
-    var left = REDIRECT_SECONDS;
-    function render() {
-      $("redirect-note").textContent =
-        "Tự động quay lại cửa hàng sau " + left + " giây...";
-    }
-    render();
-    var t = setInterval(function () {
-      left -= 1;
-      if (left <= 0) {
-        clearInterval(t);
-        location.replace(target);
-        return;
-      }
-      render();
-    }, 1000);
   }
 
   function handle(data) {

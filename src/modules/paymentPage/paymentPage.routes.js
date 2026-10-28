@@ -38,6 +38,9 @@ pageRouter.get("/assets/pay.js", (req, res) => {
 pageRouter.get("/:referenceCode", (req, res) => {
   res.setHeader("Content-Security-Policy", PAGE_CSP);
   res.setHeader("Cache-Control", "no-store");
+  // Link thanh toán là bí mật: không để lọt qua Referer hay bị công cụ tìm kiếm lập chỉ mục.
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
   res.sendFile(path.join(__dirname, "pay.html"));
 });
 

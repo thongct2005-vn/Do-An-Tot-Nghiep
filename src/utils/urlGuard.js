@@ -72,29 +72,29 @@ function isPrivateAddress(ip) {
 /**
  * Kiểm tra cú pháp URL, không cần DNS. Trả về URL đã parse hoặc ném Error có message tiếng Việt.
  */
-function validateCallbackUrlSyntax(raw) {
+function validateCallbackUrlSyntax(raw, label = "Callback URL") {
   let parsed;
   try {
     parsed = new URL(String(raw).trim());
   } catch (_) {
-    throw new Error("Callback URL không hợp lệ");
+    throw new Error(`${label} không hợp lệ`);
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error("Callback URL phải bắt đầu bằng http hoặc https");
+    throw new Error(`${label} phải bắt đầu bằng http hoặc https`);
   }
   if (isProduction() && parsed.protocol !== "https:" && !allowPrivate()) {
-    throw new Error("Callback URL phải dùng https");
+    throw new Error(`${label} phải dùng https`);
   }
   if (parsed.username || parsed.password) {
-    throw new Error("Callback URL không được chứa thông tin đăng nhập");
+    throw new Error(`${label} không được chứa thông tin đăng nhập`);
   }
   if (!allowPrivate()) {
     const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
-      throw new Error("Callback URL không được trỏ về địa chỉ nội bộ");
+      throw new Error(`${label} không được trỏ về địa chỉ nội bộ`);
     }
     if (net.isIP(host) && isPrivateAddress(host)) {
-      throw new Error("Callback URL không được trỏ về địa chỉ nội bộ");
+      throw new Error(`${label} không được trỏ về địa chỉ nội bộ`);
     }
   }
   return parsed;

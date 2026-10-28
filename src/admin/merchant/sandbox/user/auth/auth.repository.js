@@ -66,7 +66,7 @@ const authRepository = {
   async findUserByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.balance
+      SELECT u.id, u.phone, u.full_name, u.balance, u.role
       FROM users u
       WHERE u.refresh_token = $1
       `,

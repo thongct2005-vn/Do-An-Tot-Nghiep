@@ -10,8 +10,17 @@ const router = require("./src/routes/index");
 const { initSocket } = require("./src/utils/socket");
 const { startBackgroundJobs, stopBackgroundJobs } = require("./src/jobs");
 const { pageRouter: payPageRouter } = require("./src/modules/paymentPage/paymentPage.routes");
+const { assertPublicBaseUrlConfigured } = require("./src/utils/publicUrl");
 const server = http.createServer(app);
 const PORT = process.env.PORT;
+
+// Dừng ngay lúc khởi động nếu thiếu/sai PUBLIC_BASE_URL (bắt buộc khi NODE_ENV=production)
+try {
+  assertPublicBaseUrlConfigured();
+} catch (e) {
+  console.error("Cấu hình sai:", e.message);
+  process.exit(1);
+}
 
 // Phía trước server là proxy (ngrok, nginx...) nên tin 1 lớp proxy để lấy đúng IP người dùng
 app.set("trust proxy", 1);

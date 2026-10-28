@@ -1,3 +1,4 @@
+const { validateCallbackUrlSyntax } = require("../../../../utils/urlGuard");
 const paymentMerchantRequestRepository = require("./paymentRequest.repository");
 const walletRepository = require("../../../../modules/wallet/wallet.repository");
 const {
@@ -102,18 +103,12 @@ function normalizeReturnUrl(returnUrl) {
   if (trimmed.length > 255) {
     throw httpError(400, "Return URL tối đa 255 ký tự");
   }
-  let parsed;
+  // Chỉ http/https, production bắt buộc https, không chứa user:pass,
+  // không trỏ về localhost / IP nội bộ.
   try {
-    parsed = new URL(trimmed);
-  } catch (_) {
-    throw httpError(400, "Return URL không hợp lệ");
-  }
-  // Chỉ cho http/https để tránh các scheme nguy hiểm như javascript:
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw httpError(400, "Return URL phải bắt đầu bằng http hoặc https");
-  }
-  if (parsed.username || parsed.password) {
-    throw httpError(400, "Return URL không được chứa thông tin đăng nhập");
+    validateCallbackUrlSyntax(trimmed, "Return URL");
+  } catch (e) {
+    throw httpError(400, e.message);
   }
   return trimmed;
 }

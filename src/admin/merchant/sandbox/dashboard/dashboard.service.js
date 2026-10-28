@@ -1,3 +1,4 @@
+const { validateCallbackUrlSyntax } = require("../../../../utils/urlGuard");
 const dashboardRepository = require("./dashboard.repository");
 const {
   generateUniqueMerchantApiKey,
@@ -19,6 +20,11 @@ const dashboardService = {
     }
     if (!callbackUrl) {
       throw httpError(400, "Thiếu callback");
+    }
+    try {
+      validateCallbackUrlSyntax(callbackUrl);
+    } catch (e) {
+      throw httpError(400, e.message);
     }
     await dashboardRepository.updateCallBackUrl({ userId, callbackUrl });
   },

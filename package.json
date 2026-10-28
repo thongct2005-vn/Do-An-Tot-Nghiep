@@ -23,7 +23,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "server": "node --env-file=.env server.js",
-    "server_sb": "node --env-file=.env.sandbox server.js"
+    "s": "node --env-file=.env server.js",
+    "sb": "node --env-file=.env.sandbox server.js"
   }
 }

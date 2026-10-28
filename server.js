@@ -8,6 +8,8 @@ const app = express();
 const errorHandler = require("./src/middlewares/errorHandler");
 const router = require("./src/routes/index");
 const { initSocket } = require("./src/utils/socket");
+const { startBackgroundJobs, stopBackgroundJobs } = require("./src/jobs");
+const { pageRouter: payPageRouter } = require("./src/modules/paymentPage/paymentPage.routes");
 const server = http.createServer(app);
 const PORT = process.env.PORT;
 
@@ -45,6 +47,9 @@ app.use(
 );
 app.use("/api/v2", router);
 
+// Trang thanh toán của cổng (Redirect flow): https://<gateway>/pay/<reference_code>
+app.use("/pay", payPageRouter);
+
 app.use(
   "/images/avatar",
   express.static(path.join(__dirname, "images", "avatar")),
@@ -69,5 +74,18 @@ app.use(errorHandler);
 
 server.listen(PORT, () => {
   console.log(`Server running ${PORT}`);
+  // Chạy worker gửi lại webhook (retry) và job chuyển đơn hết hạn sang FAILED
+  startBackgroundJobs();
+  console.log("Background jobs started (webhook worker, payment expiry)");
 });
+
+// Tắt gọn gàng: dừng job trước rồi đóng server
+function shutdown() {
+  stopBackgroundJobs();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
 module.exports = app;

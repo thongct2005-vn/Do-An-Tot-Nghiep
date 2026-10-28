@@ -1,3 +1,4 @@
+const { validateCallbackUrlSyntax } = require("../../../../utils/urlGuard");
 const merchantAuthRepository = require("./auth.repository");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
@@ -186,6 +187,11 @@ const merchantAuthService = {
 
     if (!callbackUrl) {
       throw httpError(400, "Thiếu callback");
+    }
+    try {
+      validateCallbackUrlSyntax(callbackUrl);
+    } catch (e) {
+      throw httpError(400, e.message);
     }
     if (!storeName) {
       throw httpError(400, "Thiếu tên cửa hàng");

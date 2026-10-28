@@ -1,7 +1,6 @@
 const pool = require("../../../../config/database");
-const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
-const userRepository = require("../../../../modules/user/user.repository");
-const { postCallBack } = require("../../../../utils/axios");
+const paymentRequestRepository = require("../../../../modules/paymentRequest/paymentRequest.repository");
+const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const { httpError } = require("../../../../utils/httpError");
 
 const merchantTransactionRepository = {
@@ -392,6 +391,14 @@ const merchantTransactionRepository = {
         sourceUserId: sourceUserId,
         transactionId: transferResult.transactionId,
       });
+      if (!paymentResult) {
+        throw httpError(409, "Mã QR này đã được thanh toán hoặc hết hạn");
+      }
+
+      await webhookRepository.enqueue(client, {
+        paymentRequestId: paymentResult.id,
+        eventType: "payment.success",
+      });
 
       await client.query("COMMIT");
     } catch (e) {
@@ -399,30 +406,6 @@ const merchantTransactionRepository = {
       throw e;
     } finally {
       client.release();
-    }
-
-    try {
-      const destUser = await userRepository.getUserByUserId(
-        transferResult.destinationId,
-      );
-
-      if (destUser && destUser.role === "MERCHANT") {
-        await postCallBack({
-          callbackUrl: paymentResult.callback_url || destUser.call_back_url,
-          secretKey: destUser.secret_key,
-          time: Math.floor(Date.now() / 1000),
-          paymentId: paymentResult.id,
-          orderId: paymentResult.order_id,
-          amount: paymentResult.amount,
-          status: paymentResult.status,
-          paidAt: paymentResult.paid_at,
-        });
-      }
-    } catch (e) {
-      console.error(
-        `Gửi callback thất bại (order ${paymentResult.order_id}):`,
-        e.response?.status || e.message,
-      );
     }
 
     return transferResult;

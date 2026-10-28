@@ -1,3 +1,4 @@
+const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const pool = require("../../../../config/database");
 
 const merchantPaymentRequestRepository = {
@@ -10,15 +11,16 @@ const merchantPaymentRequestRepository = {
     orderId,
     items = [],
     callbackUrl = null,
+    returnUrl = null,
   }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       const result = await client.query(
         `INSERT INTO payment_requests
-           (id, reference_code, destination_user_id, amount, description, order_id, callback_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, reference_code, amount, description, status, expires_at, created_at, order_id`,
+           (id, reference_code, destination_user_id, amount, description, order_id, callback_url, return_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, reference_code, amount, description, status, expires_at, created_at, order_id, return_url`,
         [
           id,
           referenceCode,
@@ -27,6 +29,7 @@ const merchantPaymentRequestRepository = {
           description,
           orderId,
           callbackUrl,
+          returnUrl,
         ],
       );
       const payment = result?.rows[0] ?? null;
@@ -70,15 +73,7 @@ const merchantPaymentRequestRepository = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(
-        `UPDATE payment_requests 
-       SET status = 'FAILED'
-       WHERE order_id = $1
-         AND destination_user_id = $2
-         AND status = 'PENDING' 
-         AND expires_at <= NOW()`,
-        [orderId, merchantId],
-      );
+      await webhookRepository.expireDuePayments(client, { orderId, merchantId });
       const result = await client.query(
         `SELECT pr.*, (pr.expires_at <= NOW()) AS is_expires, u.full_name AS destination_name, u.phone AS destination_phone, u.role
        FROM payment_requests pr

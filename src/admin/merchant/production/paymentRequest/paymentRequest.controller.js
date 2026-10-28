@@ -1,5 +1,6 @@
 const paymentMerchantRequestService = require("./paymentRequest.service");
 const { successResponse } = require("../../../../utils/apiResponse");
+const { getPublicBaseUrl } = require("../../../../utils/publicUrl");
 const paymentMerchantRequestController = {
   async createDynamicQRToken(req, res, next) {
     try {
@@ -10,6 +11,7 @@ const paymentMerchantRequestController = {
         order_id: orderId,
         items,
         callback_url: callbackUrl,
+        return_url: returnUrl,
       } = req.body;
       const result = await paymentMerchantRequestService.createDynamicQRToken({
         userId,
@@ -18,6 +20,8 @@ const paymentMerchantRequestController = {
         orderId,
         items,
         callbackUrl,
+        returnUrl,
+        baseUrl: getPublicBaseUrl(req),
       });
       return successResponse(res, 200, "Tạo mã Dynamic QR thành công", result);
     } catch (e) {

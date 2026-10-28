@@ -19,10 +19,17 @@ const idempotencyMiddleware = {
       }
 
       const requestHash = hashResquestBody(req.body);
+      const actor = req.user ?? req.merchant;
+      const actorId = actor?.user_id ?? actor?.id;
       const existing =
         await transactionRepository.checkIdempotencyKey(idempotencyKey);
 
       if (existing) {
+        if (String(existing.actor_id) !== String(actorId)) {
+          const err = new Error("Mã đã được sử dụng");
+          err.statusCode = 422;
+          throw err;
+        }
         if (existing.request_hash !== requestHash) {
           const err = new Error(
             "Mã đã được sử dụng với dữ liệu khác",
@@ -37,18 +44,20 @@ const idempotencyMiddleware = {
             .json(existing.response_body);
         }
 
-        if (existing.status === "PENDING") {
+        const reclaimed = await transactionRepository.reclaimIdempotencyKey({
+          idempotencyKey,
+        });
+        if (!reclaimed) {
           const err = new Error("Yêu cầu đang được xử lý");
           err.statusCode = 409;
           throw err;
         }
       } else {
         try {
-          const user = req.user ?? req.merchant;
           await transactionRepository.createIdempotencyKey({
             idempotencyKey,
-            actorId: user.user_id?? user.id,
-            actorType: user.type?? user.role,
+            actorId,
+            actorType: actor.type ?? actor.role,
             requestPath: req.originalUrl,
             requestHash,
           });
@@ -75,7 +84,7 @@ const idempotencyMiddleware = {
             responseStatusCode: res.statusCode,
           })
           .catch((updateErr) => {
-            next(updateErr);
+            console.error("Cập nhật idempotency key thất bại:", updateErr.message);
           });
         return originalJson(body);
       };

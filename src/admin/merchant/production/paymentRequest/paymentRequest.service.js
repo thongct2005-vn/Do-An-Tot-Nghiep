@@ -57,10 +57,7 @@ function normalizeItems(items) {
       description !== null &&
       (typeof description !== "string" || description.length > 255)
     ) {
-      throw httpError(
-        400,
-        `Mô tả sản phẩm thứ ${position} tối đa 255 ký tự`,
-      );
+      throw httpError(400, `Mô tả sản phẩm thứ ${position} tối đa 255 ký tự`);
     }
     return {
       id: uuidv7(),
@@ -95,6 +92,32 @@ function normalizeCallbackUrl(callbackUrl) {
   return trimmed;
 }
 
+function normalizeReturnUrl(returnUrl) {
+  if (returnUrl === undefined || returnUrl === null) return null;
+  if (typeof returnUrl !== "string") {
+    throw httpError(400, "Return URL không hợp lệ");
+  }
+  const trimmed = returnUrl.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 255) {
+    throw httpError(400, "Return URL tối đa 255 ký tự");
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (_) {
+    throw httpError(400, "Return URL không hợp lệ");
+  }
+  // Chỉ cho http/https để tránh các scheme nguy hiểm như javascript:
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw httpError(400, "Return URL phải bắt đầu bằng http hoặc https");
+  }
+  if (parsed.username || parsed.password) {
+    throw httpError(400, "Return URL không được chứa thông tin đăng nhập");
+  }
+  return trimmed;
+}
+
 const paymentMerchantRequestService = {
   async createDynamicQRToken({
     userId,
@@ -103,6 +126,8 @@ const paymentMerchantRequestService = {
     orderId,
     items,
     callbackUrl,
+    returnUrl,
+    baseUrl,
   }) {
     if (!userId || !amount || !orderId) {
       throw httpError(400, "Thiếu thông tin để tạo mã QR");
@@ -122,6 +147,7 @@ const paymentMerchantRequestService = {
     }
     const normalizedItems = normalizeItems(items);
     const normalizedCallbackUrl = normalizeCallbackUrl(callbackUrl);
+    const normalizedReturnUrl = normalizeReturnUrl(returnUrl);
     const { id: destinationUserId } =
       await walletRepository.getWalletBalanceByUserId(userId);
     if (!destinationUserId) {
@@ -144,8 +170,11 @@ const paymentMerchantRequestService = {
         orderId,
         items: normalizedItems,
         callbackUrl: normalizedCallbackUrl,
+        returnUrl: normalizedReturnUrl,
       });
-    return { ...result, qr_image: qrImage };
+    // Redirect flow: merchant chuyển khách sang trang thanh toán của cổng
+    const paymentUrl = `${baseUrl}/pay/${referenceCode}`;
+    return { ...result, qr_image: qrImage, payment_url: paymentUrl };
   },
 
   async findPaymentByOrderId({ orderId, merchantId }) {
@@ -159,18 +188,11 @@ const paymentMerchantRequestService = {
       throw httpError(404, "Không tìm thấy đơn hàng");
     }
 
-    const STATUS_MAP = {
-      PENDING: "pending",
-      PAID: "success",
-      FAILED: "failed",
-    };
-
     return {
       payment_id: payment.id,
       order_id: payment.order_id,
       amount: Number(payment.amount),
-      status:
-        STATUS_MAP[payment.status] ?? String(payment.status).toLowerCase(),
+      status: payment.status.toLowerCase(),
       transaction_id: payment.transaction_id ?? null,
       paid_at: payment.paid_at ?? null,
       created_at: payment.created_at,

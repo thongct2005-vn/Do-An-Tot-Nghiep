@@ -39,7 +39,7 @@ const paymentRequestService = {
     if (!result) {
       throw httpError(404, "Mã QR không hợp lệ");
     }
-    if (result.user_status !== "ACTIVE" || result.wallet_status !== "ACTIVE") {
+    if (result.user_status !== "ACTIVE") {
       throw httpError(400, "Tài khoản không khả dụng");
     }
     if (result.user_id === requestingUserId) {

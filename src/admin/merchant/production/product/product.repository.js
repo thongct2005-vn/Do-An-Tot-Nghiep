@@ -41,7 +41,7 @@ const productRepository = {
       FROM payment_request_items pri
       JOIN payment_requests pr ON pri.payment_request_id = pr.id
       WHERE pr.destination_user_id = $1
-        AND pr.status = 'PAID'
+        AND pr.status = 'SUCCESS'
         AND pr.paid_at IS NOT NULL
         AND (
           $2::boolean = false

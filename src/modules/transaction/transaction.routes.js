@@ -9,7 +9,7 @@ router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("TRANSFER"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
 );
@@ -18,7 +18,7 @@ router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("TOPUP"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
 );
@@ -27,7 +27,7 @@ router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.withdrawnMoney,
 );
@@ -36,7 +36,7 @@ router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("QR_PAYMENT"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.processQRPayment,
 );

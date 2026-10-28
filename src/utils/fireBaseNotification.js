@@ -35,8 +35,12 @@ const sendPushNotification = async (userId, { title, body, data = {} }) => {
       e.code === "messaging/registration-token-not-registered" ||
       e.code === "messaging/invalid-registration-token"
     ) {
-      await userRepository.updateFcmToken(userId, null);
-      console.log(`Đã xóa fcm_token không hợp lệ của user ${userId}`);
+      try {
+        await userRepository.updateFcmToken(userId, null);
+        console.log(`Đã xóa fcm_token không hợp lệ của user ${userId}`);
+      } catch (cleanupErr) {
+        console.error(`Không xóa được fcm_token của user ${userId}:`, cleanupErr.message);
+      }
     }
   }
 };

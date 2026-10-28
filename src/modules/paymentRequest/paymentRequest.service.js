@@ -114,7 +114,22 @@ const paymentRequestService = {
     if (result.destination_user_id === requestingUserId) {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
-    return result;
+    return {
+      id: result.id,
+      reference_code: result.reference_code,
+      destination_user_id: result.destination_user_id,
+      destination_name: result.destination_name,
+      destination_phone: result.destination_phone,
+      role: result.role,
+      amount: result.amount,
+      description: result.description,
+      order_id: result.order_id,
+      status: result.status,
+      expires_at: result.expires_at,
+      is_expires: result.is_expires,
+      paid_at: result.paid_at,
+      created_at: result.created_at,
+    };
   },
 };
 module.exports = paymentRequestService;

@@ -3,6 +3,8 @@ const walletRepository = require("./wallet.repository");
 const bcrypt = require("bcrypt");
 const tokenUtil = require("../../utils/jwt");
 const { httpError } = require("../../utils/httpError");
+const { parseAmount } = require("../../utils/amount");
+const { computePinBinding } = require("../../utils/pinBinding");
 
 const MAX_PIN_ATTEMPTS = 5;
 const PIN_LOCK_MINUTES = 15;
@@ -22,24 +24,27 @@ const walletService = {
   },
 
   async checkTransferEligibility({ userId, amount }) {
-    if (!amount) {
+    if (amount === undefined || amount === null || amount === "") {
       throw httpError(400, "Thiếu dữ liệu để kiểm tra");
     }
+    const amountNum = parseAmount(amount);
     const wallet = await this.getWalletByUserId(userId);
     const currentBalance = wallet.balance;
     return {
-      is_eligible: currentBalance >= amount,
+      is_eligible: Number(currentBalance) >= amountNum,
       wallet_balance: currentBalance,
     };
   },
 
-  async checkPin({ userId, pin, idempotencyKey }) {
+  async checkPin({ userId, pin, idempotencyKey, action, params }) {
     if (!userId || !pin) {
       throw httpError(400, "Thiếu thông tin để kiểm tra mã pin");
     }
     if (!idempotencyKey) {
       throw httpError(400, "Thiếu idempotency key của giao dịch");
     }
+    
+    const binding = computePinBinding(action, params);
 
     const state = await userRepository.getPinState(userId);
     if (!state?.pin_hash) {
@@ -83,7 +88,12 @@ const walletService = {
 
     return {
       is_correct: true,
-      pin_token: tokenUtil.generatePinToken({ userId, idempotencyKey }),
+      pin_token: tokenUtil.generatePinToken({
+        userId,
+        idempotencyKey,
+        action,
+        binding,
+      }),
     };
   },
 };

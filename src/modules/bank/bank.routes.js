@@ -12,7 +12,7 @@ router.get(
 router.post(
   "/link",
   authMiddleware.verifyAccessToken,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("BANK_LINK"),
   bankController.linkBankAccount,
 );
 

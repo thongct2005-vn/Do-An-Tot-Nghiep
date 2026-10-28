@@ -1,5 +1,33 @@
 const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const pool = require("../../../../config/database");
+const transactionRepository = require("../../../../modules/transaction/transaction.repository");
+const { httpError } = require("../../../../utils/httpError");
+
+const DUPLICATE_ORDER_INDEX = "payment_requests_merchant_order_uk";
+
+// order_id đã tồn tại (UNIQUE destination_user_id + order_id): báo rõ lý do thay vì "Dữ liệu đã tồn tại".
+async function buildDuplicateOrderError({ merchantId, orderId }) {
+  const { rows } = await pool.query(
+    `SELECT status, (expires_at <= NOW()) AS is_expired
+       FROM payment_requests
+      WHERE destination_user_id = $1 AND order_id = $2`,
+    [merchantId, orderId],
+  );
+  const existing = rows[0];
+  if (existing && ["SUCCESS", "PAID"].includes(existing.status)) {
+    return httpError(409, "Đơn hàng này đã được thanh toán");
+  }
+  if (existing && existing.status === "PENDING" && !existing.is_expired) {
+    return httpError(
+      409,
+      "Đơn hàng này đang chờ thanh toán, vui lòng dùng lại mã thanh toán đã tạo",
+    );
+  }
+  return httpError(
+    409,
+    "order_id này đã được dùng cho một thanh toán đã hết hạn, vui lòng tạo order_id mới",
+  );
+}
 
 const merchantPaymentRequestRepository = {
   async insertMerchantPaymentRequest({
@@ -59,10 +87,30 @@ const merchantPaymentRequestRepository = {
         }));
       }
 
+      if (payment) {
+        await transactionRepository.recordAudit(client, {
+          eventType: "PAYMENT_CREATED",
+          payload: {
+            payment_id: payment.id,
+            merchant_id: destinationUserId,
+            order_id: orderId,
+            amount: Number(payment.amount),
+            expires_at: payment.expires_at,
+            item_count: insertedItems.length,
+          },
+        });
+      }
+
       await client.query("COMMIT");
       return payment ? { ...payment, items: insertedItems } : null;
     } catch (e) {
       await client.query("ROLLBACK");
+      if (e.code === "23505" && e.constraint === DUPLICATE_ORDER_INDEX) {
+        throw await buildDuplicateOrderError({
+          merchantId: destinationUserId,
+          orderId,
+        });
+      }
       throw e;
     } finally {
       client.release();

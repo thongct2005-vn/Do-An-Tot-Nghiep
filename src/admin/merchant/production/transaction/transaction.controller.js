@@ -272,12 +272,14 @@ const merchantTransactionController = {
   async verifyTransactionOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.user;
-      const { otp, idempotency_key: idempotencyKey } = req.body;
+      const { otp, idempotency_key: idempotencyKey, action, params } = req.body;
       const result = await merchantTransactionService.verifyTransactionOtp({
         userId,
         phone,
         otp,
         idempotencyKey,
+        action,
+        params,
       });
       return successResponse(res, 200, "Xác thực OTP thành công", result);
     } catch (e) {

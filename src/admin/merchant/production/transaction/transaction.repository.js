@@ -2,6 +2,7 @@ const pool = require("../../../../config/database");
 const paymentRequestRepository = require("../../../../modules/paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const { httpError } = require("../../../../utils/httpError");
+const transactionRepository = require("../../../../modules/transaction/transaction.repository");
 
 const merchantTransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
@@ -77,11 +78,11 @@ const merchantTransactionRepository = {
     ].sort();
 
     const firstUserResult = await client.query(
-      `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
+      `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
       [firstId],
     );
     const secondUserResult = await client.query(
-      `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
+      `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
       [secondId],
     );
 
@@ -98,6 +99,13 @@ const merchantTransactionRepository = {
     const sourceIsFirst = firstId === String(sourceUserId);
     const sourceUser = sourceIsFirst ? firstUser : secondUser;
     const destUser = sourceIsFirst ? secondUser : firstUser;
+
+    if (sourceUser.status !== "ACTIVE") {
+      throw httpError(403, "Tài khoản của bạn đang bị khoá hoặc không khả dụng");
+    }
+    if (destUser.status !== "ACTIVE") {
+      throw httpError(422, "Tài khoản người nhận không khả dụng");
+    }
 
     const totalDeduct = amountNum + feeNum;
     const sourceBalanceBefore = Number(sourceUser.balance);
@@ -144,6 +152,24 @@ const merchantTransactionRepository = {
       ],
     );
 
+    await transactionRepository.recordAudit(client, {
+      eventType: "TRANSACTION_COMPLETED",
+      payload: {
+        transaction_id: insertResult.rows[0].id,
+        transaction_type: transactionType,
+        status: insertResult.rows[0].status,
+        source_user_id: sourceUserId,
+        destination_user_id: destinationUserId,
+        amount: amountNum,
+        fee: feeNum,
+        source_balance_before: sourceBalanceBefore,
+        source_balance_after: sourceBalanceAfter,
+        dest_balance_before: destBalanceBefore,
+        dest_balance_after: destBalanceAfter,
+        idempotency_key: idempotencyKey,
+      },
+    });
+
     return {
       transactionId: insertResult.rows[0].id,
       status: insertResult.rows[0].status,
@@ -185,19 +211,22 @@ const merchantTransactionRepository = {
       await client.query("BEGIN");
 
       const userResult = await client.query(
-        `SELECT id, full_name, phone, balance FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
         [sourceUserId],
       );
       const sourceUser = userResult.rows[0];
       if (!sourceUser) {
         throw httpError(404, "Không tìm thấy thông tin người dùng");
       }
+      if (sourceUser.status !== "ACTIVE") {
+        throw httpError(403, "Tài khoản của bạn đang bị khoá hoặc không khả dụng");
+      }
 
       const bankResult = await client.query(
         `SELECT lba.balance, b.name AS bank_name
          FROM linked_bank_accounts lba
          LEFT JOIN banks b ON lba.bank_id = b.id
-         WHERE lba.id = $1 AND lba.user_id = $2
+         WHERE lba.id = $1 AND lba.user_id = $2 AND lba.status = 'ACTIVE'
          FOR UPDATE OF lba`,
         [linkedBankAccountId, sourceUserId],
       );
@@ -264,6 +293,24 @@ const merchantTransactionRepository = {
           linkedBankAccountId,
         ],
       );
+
+      await transactionRepository.recordAudit(client, {
+        eventType: "TRANSACTION_COMPLETED",
+        payload: {
+          transaction_id: insertResult.rows[0].id,
+          transaction_type: transactionType,
+          status: insertResult.rows[0].status,
+          source_user_id: sourceUserId,
+          linked_bank_account_id: linkedBankAccountId,
+          amount: amountNum,
+          fee: feeNum,
+          source_balance_before: sourceBalanceBefore,
+          source_balance_after: sourceBalanceAfter,
+          linked_bank_balance_before: linkedBankBalanceBefore,
+          linked_bank_balance_after: linkedBankBalanceAfter,
+          idempotency_key: idempotencyKey,
+        },
+      });
 
       await client.query("COMMIT");
 
@@ -398,6 +445,18 @@ const merchantTransactionRepository = {
       await webhookRepository.enqueue(client, {
         paymentRequestId: paymentResult.id,
         eventType: "payment.success",
+      });
+
+      await transactionRepository.recordAudit(client, {
+        eventType: "PAYMENT_PAID",
+        payload: {
+          payment_id: paymentResult.id,
+          order_id: paymentResult.order_id ?? null,
+          merchant_id: paymentResult.destination_user_id,
+          payer_user_id: sourceUserId,
+          transaction_id: transferResult.transactionId,
+          amount: Number(paymentResult.amount),
+        },
       });
 
       await client.query("COMMIT");

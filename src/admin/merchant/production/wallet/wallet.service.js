@@ -2,6 +2,7 @@ const userRepository = require("../../../../modules/user/user.repository");
 const merchantWalletRepository = require("./wallet.repository");
 const bcrypt = require("bcrypt");
 const { httpError } = require("../../../../utils/httpError");
+const { parseAmount } = require("../../../../utils/amount");
 
 const merchantWalletService = {
   async getWalletByUserId(userId) {
@@ -18,13 +19,14 @@ const merchantWalletService = {
   },
 
   async checkTransferEligibility({ userId, amount }) {
-    if (!amount) {
+    if (amount === undefined || amount === null || amount === "") {
       throw httpError(400, "Thiếu dữ liệu để kiểm tra");
     }
+    const amountNum = parseAmount(amount);
     const wallet = await this.getWalletByUserId(userId);
     const currentBalance = wallet.balance;
     return {
-      is_eligible: currentBalance >= amount,
+      is_eligible: Number(currentBalance) >= amountNum,
       wallet_balance: currentBalance,
     };
   },

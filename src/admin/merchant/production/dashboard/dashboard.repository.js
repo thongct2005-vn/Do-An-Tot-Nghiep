@@ -22,7 +22,7 @@ const dashboardRepository = {
   async getMerchantInfoByApiKey(apiKey) {
     const result = await pool.query(
       `
-            SELECT u.id, u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key, u.role
+            SELECT u.id, u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key, u.role, u.status
             FROM users u
             WHERE api_key = $1
             `,

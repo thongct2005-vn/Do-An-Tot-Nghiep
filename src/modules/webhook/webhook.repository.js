@@ -2,7 +2,7 @@ const pool = require("../../config/database");
 
 // Thời gian chờ trước lần thử tiếp theo (giây), theo số lần đã thử.
 // 8 lần tổng cộng: ngay lập tức, 1p, 5p, 30p, 2h, 6h, 12h, 24h.
-const RETRY_DELAYS_SECONDS = [60, 180, 300, 420, 540, 660, 780];
+const RETRY_DELAYS_SECONDS = [60, 300, 1800, 7200, 21600, 43200, 86400];
 // Thời gian "thuê" dòng khi worker đang gửi; nếu worker chết thì hết hạn và được gửi lại.
 const LEASE_SECONDS = 120;
 

@@ -4,6 +4,7 @@ const merchantAuthService = require("../auth/auth.service");
 const otpService = require("../../../../modules/otp/otp.service");
 const tokenUtil = require("../../../../utils/jwt");
 const { httpError } = require("../../../../utils/httpError");
+const { computePinBinding } = require("../../../../utils/pinBinding");
 const { maskEmail } = require("../../../../utils/maskPhoneAndEmail");
 const { isValidPhone } = require("../../../../utils/validators");
 
@@ -433,7 +434,7 @@ const merchantTransactionService = {
   },
 
   // OTP đúng thì trả về otp_token (purpose: transaction_otp), giống verifyLoginOtp
-  async verifyTransactionOtp({ userId, phone, otp, idempotencyKey }) {
+  async verifyTransactionOtp({ userId, phone, otp, idempotencyKey, action, params }) {
     if (
       typeof idempotencyKey !== "string" ||
       !idempotencyKey ||
@@ -441,6 +442,8 @@ const merchantTransactionService = {
     ) {
       throw httpError(400, "Thiếu hoặc sai idempotency key của giao dịch");
     }
+    // Tính trước khi kiểm tra OTP để dữ liệu sai không bị tính vào số lần nhập sai OTP.
+    const binding = computePinBinding(action, params);
 
     const user = await getOtpMerchant({ userId, phone });
 
@@ -451,7 +454,12 @@ const merchantTransactionService = {
     }
 
     return {
-      otp_token: tokenUtil.generateTransactionOtpToken({ user, idempotencyKey }),
+      otp_token: tokenUtil.generateTransactionOtpToken({
+        user,
+        idempotencyKey,
+        action,
+        binding,
+      }),
     };
   },
 

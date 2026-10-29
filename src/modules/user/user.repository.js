@@ -85,10 +85,25 @@ const userRepository = {
   },
 
   async updateFmcToken({ userId, fcmToken }) {
-    await pool.query(`UPDATE users SET fcm_token = $1 WHERE id = $2`, [
-      fcmToken,
-      userId,
-    ]);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE users SET fcm_token = null WHERE fcm_token = $1`,
+        [fcmToken],
+      );
+      await client.query(`UPDATE users SET fcm_token = $1 WHERE id = $2`, [
+        fcmToken,
+        userId,
+      ]);
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   },
 
   async getFcmToken(userId) {
@@ -127,7 +142,6 @@ const userRepository = {
     );
     return result.rows[0] ?? null;
   },
-
 
   async resetPassword({ userId, passwordHash, oldPasswordHash }) {
     const result = await pool.query(

@@ -280,6 +280,31 @@ const authService = {
     };
   },
 
+  // Lấy lại mã QR đã liên kết (lỡ xoá mã trong Google Authenticator).
+  // Cần đúng mật khẩu; trả về đúng khoá cũ, không tạo khoá mới.
+  async recoverTotp({ phone, password }) {
+    const user = await checkCredentials(phone, password);
+
+    if (!user.totp_enabled) {
+      throw httpError(400, "Tài khoản chưa bật Google Authenticator");
+    }
+
+    const state = await authRepository.getTotpState(user.id);
+    if (!state || !state.totp_secret) {
+      throw httpError(404, "Không tìm thấy khoá Google Authenticator");
+    }
+
+    const secret = totpUtil.decryptSecret(state.totp_secret);
+    return {
+      otpauth_uri: totpUtil.buildOtpAuthUri({
+        secret,
+        account: user.phone,
+        issuer: TOTP_ISSUER,
+      }),
+      secret,
+    };
+  },
+
   // Gọi khi đã đăng nhập (OTP email xong): nhập mã đầu tiên để bật
   async enableTotp({ userId, code }) {
     if (!userId) {

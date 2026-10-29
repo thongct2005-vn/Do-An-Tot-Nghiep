@@ -23,6 +23,7 @@ router.post(
 router.post("/logout", authMiddleware.verifyAccessToken, authController.logout);
 
 router.post("/totp/setup", loginLimiter, authController.setupTotp);
+router.post("/totp/recover", loginLimiter, authController.recoverTotp);
 router.post(
   "/totp/enable",
   otpLimiter,

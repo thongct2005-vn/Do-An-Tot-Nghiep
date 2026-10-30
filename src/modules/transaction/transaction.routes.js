@@ -3,7 +3,9 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
-const { transactionLimiter } = require("../../middlewares/ratelimit.middleware");
+const {
+  transactionLimiter,
+} = require("../../middlewares/ratelimit.middleware");
 
 router.post(
   "/transfer",
@@ -29,7 +31,7 @@ router.post(
   transactionLimiter,
   authMiddleware.requirePinToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
-  transactionController.withdrawnMoney,
+  transactionController.withdrawMoney,
 );
 
 router.post(

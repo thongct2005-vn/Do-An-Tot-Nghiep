@@ -1,7 +1,9 @@
 const { successResponse } = require("../../../../utils/apiResponse");
 const merchantTransactionService = require("./transaction.service");
 const { emitToUser } = require("../../../../utils/socket");
-const { sendPushNotification } = require("../../../../utils/fireBaseNotification");
+const {
+  sendPushNotification,
+} = require("../../../../utils/firebaseNotification");
 const merchantTransactionController = {
   async transferMoney(req, res, next) {
     try {
@@ -89,12 +91,12 @@ const merchantTransactionController = {
     }
   },
 
-  async withdrawnMoney(req, res, next) {
+  async withdrawMoney(req, res, next) {
     try {
       const { user_id: sourceUserId } = req.user;
       const idempotencyKey = req.idempotencyKey;
       const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
-      const result = await merchantTransactionService.withdrawnMoney({
+      const result = await merchantTransactionService.withdrawMoney({
         sourceUserId,
         amount,
         idempotencyKey,
@@ -186,14 +188,17 @@ const merchantTransactionController = {
         end_date: endDate,
       } = req.query;
 
-      const result = await merchantTransactionService.getTransferHistory(userId, {
-        cursorId,
-        limit,
-        keyword,
-        type,
-        startDate,
-        endDate,
-      });
+      const result = await merchantTransactionService.getTransferHistory(
+        userId,
+        {
+          cursorId,
+          limit,
+          keyword,
+          type,
+          startDate,
+          endDate,
+        },
+      );
 
       return successResponse(
         res,
@@ -231,7 +236,8 @@ const merchantTransactionController = {
     try {
       const { user_id: userId } = req.user;
 
-      const result = await merchantTransactionService.getCurrentMonthSummary(userId);
+      const result =
+        await merchantTransactionService.getCurrentMonthSummary(userId);
       return successResponse(
         res,
         200,
@@ -250,7 +256,12 @@ const merchantTransactionController = {
         userId,
         phone,
       });
-      return successResponse(res, 200, "Đã gửi mã OTP xác thực giao dịch", result);
+      return successResponse(
+        res,
+        200,
+        "Đã gửi mã OTP xác thực giao dịch",
+        result,
+      );
     } catch (e) {
       next(e);
     }
@@ -295,7 +306,12 @@ const merchantTransactionController = {
         userId,
         phone,
       );
-      return successResponse(res, 200, "Lấy thông tin người nhận thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Lấy thông tin người nhận thành công",
+        result,
+      );
     } catch (e) {
       next(e);
     }

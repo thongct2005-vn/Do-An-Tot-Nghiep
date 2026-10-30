@@ -11,7 +11,8 @@ const { uuidv7 } = require("uuidv7");
 const QRCode = require("qrcode");
 const { httpError } = require("../../../../utils/httpError");
 const MAX_ITEMS = 100;
-
+const { AMOUNT } = require("../../../../config/limits");
+const { parseAmountInRange } = require("../../../../utils/amount");
 function normalizeItems(items) {
   if (items === undefined || items === null) return [];
   if (!Array.isArray(items) || items.length > MAX_ITEMS) {
@@ -118,17 +119,12 @@ const paymentMerchantRequestService = {
     if (!userId || !amount || !orderId) {
       throw httpError(400, "Thiếu thông tin để tạo mã QR");
     }
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa 50 triệu");
-    }
+
+    const numAmount = parseAmountInRange(amount, AMOUNT.QR_PAYMENT, "chuyển");
+
     if (description !== undefined && description !== null) {
       if (typeof description !== "string" || description.length > 50) {
-        throw httpError(400, "Mô tả tối đa 50 ký tự");
+        throw httpError(400, "Mô tả quá dài");
       }
     }
     const normalizedItems = normalizeItems(items);

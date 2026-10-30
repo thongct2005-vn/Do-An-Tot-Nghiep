@@ -14,6 +14,9 @@ const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
 } = require("../../../../utils/generateApikeySecretkey");
+const { validateCallbackUrlForSave } = require("../../../../utils/urlGuard");
+
+
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
@@ -188,11 +191,7 @@ const merchantAuthService = {
     if (!callbackUrl) {
       throw httpError(400, "Thiếu callback");
     }
-    try {
-      validateCallbackUrlSyntax(callbackUrl);
-    } catch (e) {
-      throw httpError(400, e.message);
-    }
+    const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
     if (!storeName) {
       throw httpError(400, "Thiếu tên cửa hàng");
     }
@@ -223,7 +222,7 @@ const merchantAuthService = {
       email,
       passwordHash,
       storeName,
-      callbackUrl,
+      callbackUrl: safeCallbackUrl,
       apiKey,
       secretKey,
     });

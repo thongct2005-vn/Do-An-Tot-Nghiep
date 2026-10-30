@@ -8,12 +8,13 @@ const bcrypt = require("bcrypt");
 const {
   isValidPasswordOrPin,
   isValidPhone,
+  isValidPhonesHash
 } = require("../../utils/validators");
 const { httpError } = require("../../utils/httpError");
 const tokenUtil = require("../../utils/jwt");
 const { emitToUser } = require("../../utils/socket");
 const { maskPhone, maskEmail } = require("../../utils/mask");
-const { isValidPhonesHash } = require("../../utils/validators");
+const { CONTACT_CHECK_MAX_PHONES } = require("../../config/limits");
 
 async function getResettableUser(userId) {
   const user = await userRepository.getCredentialState(userId);
@@ -95,7 +96,7 @@ const userService = {
       throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
-    if (phones.length > 500) {
+    if (phones.length > CONTACT_CHECK_MAX_PHONES) {
       throw httpError(413, "Danh bạ quá lớn, vui lòng đồng bộ từng phần");
     }
 

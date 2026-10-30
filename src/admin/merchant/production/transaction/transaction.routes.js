@@ -60,7 +60,7 @@ router.post(
   transactionLimiter,
   authMiddleware.verifyTransactionOtpToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
-  transactionController.withdrawnMoney,
+  transactionController.withdrawMoney,
 );
 
 router.post(

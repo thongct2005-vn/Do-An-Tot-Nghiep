@@ -3,7 +3,7 @@ const transactionRepository = require("../modules/transaction/transaction.reposi
 
 // Hash gồm method + path để cùng key + cùng body nhưng khác endpoint
 // (vd /transfer và /topup) không bị coi là một request.
-function hashResquestBody(req) {
+function hashRequestBody(req) {
   return crypto
     .createHash("sha256")
     .update(
@@ -44,7 +44,7 @@ const idempotencyMiddleware = {
         throw err;
       }
 
-      const requestHash = hashResquestBody(req);
+      const requestHash = hashRequestBody(req);
       const actor = req.user ?? req.merchant;
       const actorId = actor?.user_id ?? actor?.id;
       const existing =
@@ -57,9 +57,7 @@ const idempotencyMiddleware = {
           throw err;
         }
         if (existing.request_hash !== requestHash) {
-          const err = new Error(
-            "Mã đã được sử dụng với dữ liệu khác",
-          );
+          const err = new Error("Mã đã được sử dụng với dữ liệu khác");
           err.statusCode = 422;
           throw err;
         }
@@ -121,7 +119,10 @@ const idempotencyMiddleware = {
             responseStatusCode: res.statusCode,
           })
           .catch((updateErr) => {
-            console.error("Cập nhật idempotency key thất bại:", updateErr.message);
+            console.error(
+              "Cập nhật idempotency key thất bại:",
+              updateErr.message,
+            );
           });
         return originalJson(body);
       };

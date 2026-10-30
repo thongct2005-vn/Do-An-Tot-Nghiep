@@ -1,7 +1,3 @@
-const {
-  validateCallbackUrlSyntax,
-  validateReturnUrlForSave,
-} = require("../../../../utils/urlGuard");
 const paymentMerchantRequestRepository = require("./paymentRequest.repository");
 const walletRepository = require("../../../../modules/wallet/wallet.repository");
 const {
@@ -11,6 +7,12 @@ const { uuidv7 } = require("uuidv7");
 const QRCode = require("qrcode");
 const { httpError } = require("../../../../utils/httpError");
 const MAX_ITEMS = 100;
+const { parseAmountInRange } = require("../../../../utils/amount");
+const { AMOUNT } = require("../../../../config/limits");
+const {
+  validateCallbackUrlForSave,
+  validateReturnUrlForSave,
+} = require("../../../../utils/urlGuard");
 
 function normalizeItems(items) {
   if (items === undefined || items === null) return [];
@@ -74,7 +76,7 @@ function normalizeItems(items) {
   });
 }
 
-function normalizeCallbackUrl(callbackUrl) {
+async function normalizeCallbackUrl(callbackUrl) {
   if (callbackUrl === undefined || callbackUrl === null) return null;
   if (typeof callbackUrl !== "string") {
     throw httpError(400, "Callback URL không hợp lệ");
@@ -84,16 +86,7 @@ function normalizeCallbackUrl(callbackUrl) {
   if (trimmed.length > 100) {
     throw httpError(400, "Callback URL tối đa 100 ký tự");
   }
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch (_) {
-    throw httpError(400, "Callback URL không hợp lệ");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw httpError(400, "Callback URL phải bắt đầu bằng http hoặc https");
-  }
-  return trimmed;
+  return validateCallbackUrlForSave(trimmed);
 }
 
 async function normalizeReturnUrl(returnUrl) {
@@ -103,8 +96,6 @@ async function normalizeReturnUrl(returnUrl) {
   }
   const trimmed = returnUrl.trim();
   if (!trimmed) return null;
-  // ALLOW_PRIVATE_RETURN_URL != "true": http/https, production bắt buộc https,
-  // không user:pass, không localhost / IP nội bộ, tên miền phải ra IP công khai.
   return validateReturnUrlForSave(trimmed);
 }
 
@@ -122,21 +113,16 @@ const paymentMerchantRequestService = {
     if (!userId || !amount || !orderId) {
       throw httpError(400, "Thiếu thông tin để tạo mã QR");
     }
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa 50 triệu");
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.QR_PAYMENT, "nhận");
+
     if (description !== undefined && description !== null) {
       if (typeof description !== "string" || description.length > 50) {
-        throw httpError(400, "Mô tả tối đa 50 ký tự");
+        throw httpError(400, "Mô tả quá dài");
       }
     }
+
     const normalizedItems = normalizeItems(items);
-    const normalizedCallbackUrl = normalizeCallbackUrl(callbackUrl);
+    const normalizedCallbackUrl = await normalizeCallbackUrl(callbackUrl);
     const normalizedReturnUrl = await normalizeReturnUrl(returnUrl);
     const { id: destinationUserId } =
       await walletRepository.getWalletBalanceByUserId(userId);

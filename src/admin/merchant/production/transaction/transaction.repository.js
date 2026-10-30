@@ -101,7 +101,10 @@ const merchantTransactionRepository = {
     const destUser = sourceIsFirst ? secondUser : firstUser;
 
     if (sourceUser.status !== "ACTIVE") {
-      throw httpError(403, "Tài khoản của bạn đang bị khoá hoặc không khả dụng");
+      throw httpError(
+        403,
+        "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
+      );
     }
     if (destUser.status !== "ACTIVE") {
       throw httpError(422, "Tài khoản người nhận không khả dụng");
@@ -219,7 +222,10 @@ const merchantTransactionRepository = {
         throw httpError(404, "Không tìm thấy thông tin người dùng");
       }
       if (sourceUser.status !== "ACTIVE") {
-        throw httpError(403, "Tài khoản của bạn đang bị khoá hoặc không khả dụng");
+        throw httpError(
+          403,
+          "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
+        );
       }
 
       const bankResult = await client.query(
@@ -353,7 +359,7 @@ const merchantTransactionRepository = {
     });
   },
 
-  async withdrawnMoney({
+  async withdrawMoney({
     sourceUserId,
     amount,
     fee = 0,
@@ -474,7 +480,7 @@ const merchantTransactionRepository = {
     userId,
     {
       cursorId = null,
-      limit = 20,
+      limit,
       keyword = null,
       type = null,
       startDate = null,
@@ -714,7 +720,7 @@ const merchantTransactionRepository = {
           OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
         )
       `,
-      [userId, hasStartDate, startDate, hasEndDate, endDate]
+      [userId, hasStartDate, startDate, hasEndDate, endDate],
     );
     const dailyResult = await pool.query(
       `
@@ -737,12 +743,12 @@ const merchantTransactionRepository = {
       GROUP BY date_str
       ORDER BY date_str ASC
       `,
-      [userId, hasStartDate, startDate, hasEndDate, endDate]
+      [userId, hasStartDate, startDate, hasEndDate, endDate],
     );
 
     return {
       summary: result.rows[0],
-      daily_stats: dailyResult.rows
+      daily_stats: dailyResult.rows,
     };
   },
 };

@@ -2,8 +2,8 @@ const userRepository = require("../../../../modules/user/user.repository");
 const walletRepository = require("./wallet.repository");
 const bcrypt = require("bcrypt");
 const { httpError } = require("../../../../utils/httpError");
-const { parseAmount } = require("../../../../utils/amount");
-
+const { parseAmount, parseAmountInRange } = require("../../../../utils/amount");
+const { AMOUNT } = require("../../../../config/limits");
 const walletService = {
   async getWalletByUserId(userId) {
     if (!userId) {
@@ -51,15 +51,7 @@ const walletService = {
       throw httpError(400, "Thiếu số điện thoại hoặc số tiền");
     }
 
-    const numAmount = Number(amount);
-
-    if (isNaN(numAmount) || !isFinite(numAmount)) {
-      throw httpError(400, "Số tiền không hợp lệ");
-    }
-
-    if (numAmount < 1 || numAmount > 50000000) {
-      throw httpError(400, "Số tiền phải từ 1 đến 50.000.000đ");
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.SANDBOX_TOPUP, "cập nhật");
 
     const user = await userRepository.findUserByPhone(phone);
     if (!user) {

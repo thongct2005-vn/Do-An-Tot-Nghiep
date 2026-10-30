@@ -18,7 +18,6 @@ const LOGIN_LOCK_MINUTES = 30;
 const TOTP_MAX_ATTEMPTS = 5;
 const TOTP_LOCK_MINUTES = 5;
 const TOTP_ISSUER = process.env.TOTP_ISSUER;
-
 const { maskEmail } = require("../../utils/mask");
 
 async function checkCredentials(phone, password) {

@@ -14,10 +14,14 @@ const {
   isValidPhone,
   isValidDateOnly,
 } = require("../../../../utils/validators");
-const kycRepository = require("../../../../modules/kyc/kyc.repository");
 const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
+const { parseAmountInRange } = require("../../../../utils/amount");
+const { AMOUNT, HISTORY_PAGE_LIMIT } = require("../../../../config/limits");
+const {
+  assertKyc,
+  assertKycBoth,
+} = require("../../../../modules/kyc/kyc.guard");
 
-// Giờ Việt Nam (UTC+7, không có DST) để so sánh giới hạn 1 năm theo ngày
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 function toNumberOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -61,27 +65,9 @@ const merchantTransactionService = {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
-    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
-    if (!sourceUserKYC.is_kyc) {
-      throw httpError(403, "Tài khoản chưa xác thực danh tính");
-    }
+    await assertKycBoth(sourceUserId, destinationUserId);
 
-    const destUserKYC = await kycRepository.checkUserKYC(destinationUserId);
-    if (!destUserKYC.is_kyc) {
-      throw httpError(403, "Người nhận chưa xác thực danh tính");
-    }
-
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(
-        400,
-        "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu",
-      );
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "chuyển");
 
     return await merchantTransactionRepository.transferMoney({
       sourceUserId,
@@ -105,19 +91,10 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
-    if (!sourceUserKYC.is_kyc) {
-      throw httpError(403, "Tài khoản chưa xác thực danh tính");
-    }
+    await assertKyc(sourceUserId);
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền nạp phải từ 1 nghìn và tối đa là 50 triệu");
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.TOPUP, "nạp");
+
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
@@ -133,7 +110,7 @@ const merchantTransactionService = {
     });
   },
 
-  async withdrawnMoney({
+  async withdrawMoney({
     sourceUserId,
     amount,
     idempotencyKey,
@@ -143,28 +120,15 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
-    if (!sourceUserKYC.is_kyc) {
-      throw httpError(403, "Tài khoản chưa xác thực danh tính");
-    }
+    await assertKyc(sourceUserId);
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 10000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(
-        400,
-        "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu",
-      );
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.WITHDRAW, "rút");
 
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
-    return await merchantTransactionRepository.withdrawnMoney({
+    return await merchantTransactionRepository.withdrawMoney({
       sourceUserId,
       amount: numAmount,
       fee: 0,
@@ -180,10 +144,7 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin người gửi");
     }
 
-    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
-    if (!sourceUserKYC.is_kyc) {
-      throw httpError(403, "Tài khoản chưa xác thực danh tính");
-    }
+    await assertKyc(sourceUserId);
 
     if (!referenceCode) {
       throw httpError(400, "Thiếu thông tin của mã QR");
@@ -206,8 +167,10 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
-    const maxLimit = Math.min(Number(limit) || 20, 20);
-
+    const maxLimit = Math.min(
+      Number(limit) || HISTORY_PAGE_LIMIT,
+      HISTORY_PAGE_LIMIT,
+    );
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
 
     const normalizedType =

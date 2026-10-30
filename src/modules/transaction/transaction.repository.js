@@ -307,7 +307,7 @@ const TransactionRepository = {
           );
         }
         sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
-        linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
+        linkedBankBalanceAfter = linkedBankBalanceBefore + amountNum;
       }
 
       await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
@@ -400,7 +400,7 @@ const TransactionRepository = {
     });
   },
 
-  async withdrawnMoney({
+  async withdrawMoney({
     sourceUserId,
     amount,
     fee = 0,
@@ -518,7 +518,7 @@ const TransactionRepository = {
     userId,
     {
       cursorId = null,
-      limit = 20,
+      limit,
       keyword = null,
       startDate = null,
       endDate = null,
@@ -532,11 +532,6 @@ const TransactionRepository = {
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
-
-    const endDateOnly =
-      hasEndDate &&
-      typeof endDate === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim());
 
     const result = await pool.query(
       `
@@ -583,12 +578,14 @@ const TransactionRepository = {
             OR pr.order_id ILIKE '%' || $6 || '%'
           )
         )
-        AND ($7::boolean = false OR t.created_at >= $8)
+        AND (
+       $7::boolean = false
+         OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        )
         AND (
           $9::boolean = false
-          OR ($11::boolean AND t.created_at < ($10::text)::date + 1)
-          OR (NOT $11::boolean AND t.created_at <= ($10::text)::timestamptz)
-        )
+          OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+         )
       ORDER BY t.id DESC
       LIMIT $4
       `,
@@ -603,7 +600,6 @@ const TransactionRepository = {
         startDate,
         hasEndDate,
         endDate,
-        endDateOnly,
       ],
     );
 

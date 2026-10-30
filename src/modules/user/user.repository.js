@@ -7,7 +7,7 @@ const userRepository = {
       `SELECT id, phone, full_name FROM users WHERE phone = $1 AND status = 'ACTIVE'`,
       [phone],
     );
-    return result.rows[0];
+    return result.rows[0]?? null;
   },
 
   async getUserByUserId(userId) {

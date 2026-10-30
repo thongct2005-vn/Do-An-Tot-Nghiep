@@ -55,6 +55,7 @@ const authMiddleware = {
     }
   },
 
+  
   verifyRefreshTokenCookie: createRefreshCookieVerifier(
     tokenUtil.MERCHANT_REFRESH_COOKIE,
   ),
@@ -243,29 +244,14 @@ const authMiddleware = {
         timestamp,
         buildMerchantSignedPayload(req),
       );
-      let signatureOk = isSameSignature(signature, expected);
-      // Chỉ bật tạm khi merchant chưa kịp cập nhật cách ký: ALLOW_LEGACY_MERCHANT_SIGNATURE=true
-      if (
-        !signatureOk &&
-        process.env.ALLOW_LEGACY_MERCHANT_SIGNATURE === "true"
-      ) {
-        const legacy = computeSignature(
-          merchant.secret_key,
-          timestamp,
-          req.rawBody ?? "",
-        );
-        signatureOk = isSameSignature(signature, legacy);
-      }
-      if (!signatureOk) {
+      // Chỉ chấp nhận chữ ký kiểu mới (ký cả method, đường dẫn, Idempotency-Key và body)
+      if (!isSameSignature(signature, expected)) {
         throw httpError(401, "Chữ ký không hợp lệ");
       }
 
       // Kiểm tra sau khi chữ ký đúng để người lạ không dò được trạng thái tài khoản.
       if (merchant.role !== "MERCHANT" || merchant.status !== "ACTIVE") {
-        throw httpError(
-          403,
-          "Tài khoản merchant đang bị khoá hoặc không khả dụng",
-        );
+        throw httpError(403, "Tài khoản merchant đang bị khoá hoặc không khả dụng");
       }
 
       const { secret_key: _secretKey, ...safeMerchant } = merchant;
@@ -291,8 +277,7 @@ const authMiddleware = {
 function createRefreshCookieVerifier(cookieName) {
   return (req, res, next) => {
     try {
-      const dashboardOrigins = String(process.env.DASHBOARD_ORIGINS || "")
-        .split(",")
+      const dashboardOrigins = process.env.DASHBOARD_ORIGINS.split(",")
         .map((origin) => origin.trim())
         .filter(Boolean);
       if (!dashboardOrigins.includes(req.headers.origin)) {

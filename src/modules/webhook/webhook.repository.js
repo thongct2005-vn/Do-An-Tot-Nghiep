@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const { uuidv7 } = require("uuidv7");
 
 // Thời gian chờ trước lần thử tiếp theo (giây), theo số lần đã thử.
 // 8 lần tổng cộng: ngay lập tức, 1p, 5p, 30p, 2h, 6h, 12h, 24h.
@@ -21,8 +22,8 @@ const webhookRepository = {
     const status = EVENT_STATUS[eventType];
     if (!status) throw new Error(`Sự kiện webhook không hợp lệ: ${eventType}`);
     const result = await client.query(
-      `INSERT INTO webhook_deliveries (payment_request_id, merchant_id, event_type, payload)
-       SELECT pr.id, pr.destination_user_id, $2::varchar,
+      `INSERT INTO webhook_deliveries (id, payment_request_id, merchant_id, event_type, payload)
+       SELECT $4::uuid, pr.id, pr.destination_user_id, $2::varchar,
               jsonb_build_object(
                 'payment_id', pr.id,
                 'order_id',   pr.order_id,
@@ -37,7 +38,7 @@ const webhookRepository = {
        WHERE pr.id = $1 AND u.role = 'MERCHANT'
        ON CONFLICT (payment_request_id, event_type) DO NOTHING
        RETURNING id`,
-      [paymentRequestId, eventType, status],
+      [paymentRequestId, eventType, status, uuidv7()],
     );
     return result.rows[0]?.id ?? null;
   },
@@ -50,6 +51,9 @@ const webhookRepository = {
    * câu UPDATE này chờ rồi thấy status đã là PAID nên bỏ qua.
    */
   async expireDuePayments(db, { orderId = null, merchantId = null, limit = 500 } = {}) {
+    // Mỗi webhook cần một id uuidv7 sinh từ app; câu lệnh có thể xếp tối đa `limit` webhook
+    // nên sinh sẵn `limit` id rồi ghép theo số thứ tự dòng.
+    const webhookIds = Array.from({ length: limit }, () => uuidv7());
     const result = await db.query(
       `WITH due AS (
          SELECT id FROM payment_requests
@@ -70,8 +74,8 @@ const webhookRepository = {
          RETURNING pr.id, pr.destination_user_id, pr.order_id, pr.amount
        ),
        queued AS (
-         INSERT INTO webhook_deliveries (payment_request_id, merchant_id, event_type, payload)
-         SELECT e.id, e.destination_user_id, 'payment.failed',
+         INSERT INTO webhook_deliveries (id, payment_request_id, merchant_id, event_type, payload)
+         SELECT ids.id, e.id, e.destination_user_id, 'payment.failed',
                 jsonb_build_object(
                   'payment_id', e.id,
                   'order_id',   e.order_id,
@@ -79,14 +83,15 @@ const webhookRepository = {
                   'status',     'failed',
                   'paid_at',    NULL
                 )
-         FROM expired e
+         FROM (SELECT x.*, row_number() OVER () AS rn FROM expired x) e
+         JOIN unnest($4::uuid[]) WITH ORDINALITY AS ids(id, rn) ON ids.rn = e.rn
          JOIN users u ON u.id = e.destination_user_id
          WHERE u.role = 'MERCHANT'
          ON CONFLICT (payment_request_id, event_type) DO NOTHING
          RETURNING id
        )
        SELECT (SELECT count(*) FROM expired)::int AS expired_count`,
-      [orderId, merchantId, limit],
+      [orderId, merchantId, limit, webhookIds],
     );
     return result.rows[0].expired_count;
   },

@@ -6,6 +6,7 @@ const {
   isValidPhone,
   isValidPasswordOrPin,
   isValidEmail,
+  isValidOtp
 } = require("../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../utils/jwt");
@@ -18,7 +19,7 @@ const TOTP_MAX_ATTEMPTS = 5;
 const TOTP_LOCK_MINUTES = 5;
 const TOTP_ISSUER = process.env.TOTP_ISSUER;
 
-const { maskEmail} = require("../../utils/maskPhoneAndEmail");
+const { maskEmail } = require("../../utils/mask");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -80,7 +81,7 @@ async function checkCredentials(phone, password) {
 // Kiểm tra mã 6 số của Google Authenticator.
 // requireEnabled = true: đăng nhập; false: bước xác nhận bật lần đầu.
 async function verifyTotpCode({ userId, code, requireEnabled }) {
-  if (!/^\d{6}$/.test(String(code ?? ""))) {
+  if(!isValidOtp(code)){
     throw httpError(400, "Mã xác thực phải gồm 6 chữ số");
   }
 
@@ -227,7 +228,11 @@ const authService = {
     const user = await getOtpUser({ userId, phone });
 
     if (user.totp_enabled) {
-      await verifyTotpCode({ userId: user.id, code: otp, requireEnabled: true });
+      await verifyTotpCode({
+        userId: user.id,
+        code: otp,
+        requireEnabled: true,
+      });
     } else {
       await otpService.verifyOtp({ email: user.email, otp });
     }
@@ -313,7 +318,10 @@ const authService = {
     await verifyTotpCode({ userId, code, requireEnabled: false });
     const enabled = await authRepository.enableTotp(userId);
     if (!enabled) {
-      throw httpError(409, "Không thể bật Google Authenticator, vui lòng thử lại");
+      throw httpError(
+        409,
+        "Không thể bật Google Authenticator, vui lòng thử lại",
+      );
     }
   },
 

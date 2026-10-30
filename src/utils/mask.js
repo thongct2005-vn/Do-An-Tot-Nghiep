@@ -16,4 +16,10 @@ function maskPhone(phone) {
   return phone.length >= 3 ? `*********${phone.slice(-3)}` : phone;
 }
 
-module.exports = { maskEmail, maskPhone };
+function maskAccountNumber(accountNumber) {
+  if (!accountNumber) return null;
+  const str = String(accountNumber);
+  return str.length > 4 ? `${"*".repeat(str.length - 4)}${str.slice(-4)}` : str;
+}
+
+module.exports = { maskEmail, maskPhone, maskAccountNumber };

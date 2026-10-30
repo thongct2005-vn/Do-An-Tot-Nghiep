@@ -4,6 +4,9 @@ const {
   generateUniqueMerchantSecretKey,
 } = require("../../../../utils/generateApikeySecretkey");
 const { httpError } = require("../../../../utils/httpError");
+const {
+  validateCallbackUrlForSave,
+} = require("../../../../utils/urlGuard");
 
 const dashboardService = {
   async getMerchantInfoById(userId) {
@@ -20,7 +23,11 @@ const dashboardService = {
     if (!callbackUrl) {
       throw httpError(400, "Thiếu callback");
     }
-    await dashboardRepository.updateCallBackUrl({ userId, callbackUrl });
+    const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
+    await dashboardRepository.updateCallBackUrl({
+      userId,
+      callbackUrl: safeCallbackUrl,
+    });
   },
 
   async resetApiKey(userId) {

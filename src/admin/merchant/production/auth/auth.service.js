@@ -12,6 +12,7 @@ const tokenUtil = require("../../../../utils/jwt");
 const totpUtil = require("../../../../utils/totp");
 const { emitToUser } = require("../../../../utils/socket");
 const { httpError } = require("../../../../utils/httpError");
+const { validateCallbackUrlForSave } = require("../../../../utils/urlGuard");
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
@@ -22,7 +23,7 @@ const TOTP_MAX_ATTEMPTS = 5;
 const TOTP_LOCK_MINUTES = 5;
 const TOTP_ISSUER = process.env.TOTP_MERCHANT_ISSUER;
 
-const { maskEmail } = require("../../../../utils/maskPhoneAndEmail");
+const { maskEmail } = require("../../../../utils/mask");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -425,6 +426,7 @@ const merchantAuthService = {
     if (!storeName) {
       throw httpError(400, "Thiếu tên cửa hàng");
     }
+    const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
 
     await otpService.verifyOtp({ email, phone, otp });
 
@@ -447,7 +449,7 @@ const merchantAuthService = {
       passwordHash,
       storeName,
       taxCode,
-      callbackUrl,
+      callbackUrl: safeCallbackUrl,
       apiKey,
       secretKey,
     });

@@ -1,4 +1,7 @@
-const { validateCallbackUrlSyntax } = require("../../../../utils/urlGuard");
+const {
+  validateCallbackUrlSyntax,
+  validateReturnUrlForSave,
+} = require("../../../../utils/urlGuard");
 const paymentMerchantRequestRepository = require("./paymentRequest.repository");
 const walletRepository = require("../../../../modules/wallet/wallet.repository");
 const {
@@ -93,24 +96,16 @@ function normalizeCallbackUrl(callbackUrl) {
   return trimmed;
 }
 
-function normalizeReturnUrl(returnUrl) {
+async function normalizeReturnUrl(returnUrl) {
   if (returnUrl === undefined || returnUrl === null) return null;
   if (typeof returnUrl !== "string") {
     throw httpError(400, "Return URL không hợp lệ");
   }
   const trimmed = returnUrl.trim();
   if (!trimmed) return null;
-  if (trimmed.length > 255) {
-    throw httpError(400, "Return URL tối đa 255 ký tự");
-  }
-  // Chỉ http/https, production bắt buộc https, không chứa user:pass,
-  // không trỏ về localhost / IP nội bộ.
-  try {
-    validateCallbackUrlSyntax(trimmed, "Return URL");
-  } catch (e) {
-    throw httpError(400, e.message);
-  }
-  return trimmed;
+  // ALLOW_PRIVATE_RETURN_URL != "true": http/https, production bắt buộc https,
+  // không user:pass, không localhost / IP nội bộ, tên miền phải ra IP công khai.
+  return validateReturnUrlForSave(trimmed);
 }
 
 const paymentMerchantRequestService = {
@@ -142,7 +137,7 @@ const paymentMerchantRequestService = {
     }
     const normalizedItems = normalizeItems(items);
     const normalizedCallbackUrl = normalizeCallbackUrl(callbackUrl);
-    const normalizedReturnUrl = normalizeReturnUrl(returnUrl);
+    const normalizedReturnUrl = await normalizeReturnUrl(returnUrl);
     const { id: destinationUserId } =
       await walletRepository.getWalletBalanceByUserId(userId);
     if (!destinationUserId) {

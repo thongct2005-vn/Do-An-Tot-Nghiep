@@ -1,6 +1,6 @@
 const transactionRepository = require("./transaction.repository");
 const { httpError } = require("../../utils/httpError");
-
+const kycRepository = require("../kyc/kyc.repository");
 const TransactionService = {
   async transferMoney({
     sourceUserId,
@@ -17,13 +17,26 @@ const TransactionService = {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
+    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
+    const destUserKYC = await kycRepository.checkUserKYC(destinationUserId);
+    if (!sourceUserKYC.is_kyc) {
+      throw httpError(403, "Tài khoản chưa xác thực danh tính");
+    }
+
+    if (!destUserKYC.is_kyc) {
+      throw httpError(403, "Người nhận chưa xác thực danh tính");
+    }
+
     const numAmount = Number(amount);
     if (
       !Number.isInteger(numAmount) ||
       numAmount < 1000 ||
       numAmount > 50000000
     ) {
-      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu");
+      throw httpError(
+        400,
+        "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu",
+      );
     }
 
     return await transactionRepository.transferMoney({
@@ -60,6 +73,11 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
+    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
+    if (!sourceUserKYC.is_kyc) {
+      throw httpError(403, "Tài khoản chưa xác thực danh tính");
+    }
+
     return await transactionRepository.topupMoney({
       sourceUserId,
       amount: numAmount,
@@ -87,10 +105,18 @@ const TransactionService = {
       numAmount < 10000 ||
       numAmount > 50000000
     ) {
-      throw httpError(400, "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu");
+      throw httpError(
+        400,
+        "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu",
+      );
     }
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
+    }
+
+    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
+    if (!sourceUserKYC.is_kyc) {
+      throw httpError(403, "Tài khoản chưa xác thực danh tính");
     }
 
     return await transactionRepository.withdrawnMoney({
@@ -107,6 +133,11 @@ const TransactionService = {
   async processQRPayment({ sourceUserId, idempotencyKey, referenceCode }) {
     if (!sourceUserId) {
       throw httpError(400, "Thiếu thông tin người gửi");
+    }
+
+    const sourceUserKYC = await kycRepository.checkUserKYC(sourceUserId);
+    if (!sourceUserKYC.is_kyc) {
+      throw httpError(403, "Tài khoản chưa xác thực danh tính");
     }
 
     if (!referenceCode) {

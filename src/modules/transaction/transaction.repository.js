@@ -2,6 +2,7 @@ const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
+const { uuidv7 } = require("uuidv7");
 
 const TransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
@@ -52,8 +53,8 @@ const TransactionRepository = {
    */
   async recordAudit(db, { eventType, payload }) {
     await db.query(
-      `INSERT INTO audit_outbox (event_type, payload) VALUES ($1, $2::jsonb)`,
-      [eventType, JSON.stringify(payload)],
+      `INSERT INTO audit_outbox (id, event_type, payload) VALUES ($1::uuid, $2, $3::jsonb)`,
+      [uuidv7(), eventType, JSON.stringify(payload)],
     );
   },
 
@@ -67,9 +68,9 @@ const TransactionRepository = {
   },
 
   /**
-   * Giành lại một key đang kẹt để xử lý lại (một câu lệnh nguyên tử, chỉ một request thắng):
+   * Giành lại một key đang kẹt để xử lý lại:
    *  - FAILED: lần trước lỗi, cho phép thử lại.
-   *  - PENDING quá `staleSeconds`: tiến trình trước có thể đã chết giữa chừng.
+   *  - PENDING quá `staleSeconds (60s)`: tiến trình trước có thể đã chết giữa chừng.
    * An toàn tiền bạc vì transactions.idempotency_key là UNIQUE.
    */
   async reclaimIdempotencyKey({ idempotencyKey, staleSeconds = 60 }) {
@@ -141,7 +142,10 @@ const TransactionRepository = {
     const destUser = sourceIsFirst ? secondUser : firstUser;
 
     if (sourceUser.status !== "ACTIVE") {
-      throw httpError(403, "Tài khoản của bạn đang bị khoá hoặc không khả dụng");
+      throw httpError(
+        403,
+        "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
+      );
     }
     if (destUser.status !== "ACTIVE") {
       throw httpError(422, "Tài khoản người nhận không khả dụng");
@@ -259,7 +263,10 @@ const TransactionRepository = {
         throw httpError(404, "Không tìm thấy thông tin người dùng");
       }
       if (sourceUser.status !== "ACTIVE") {
-        throw httpError(403, "Tài khoản của bạn đang bị khoá hoặc không khả dụng");
+        throw httpError(
+          403,
+          "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
+        );
       }
 
       const bankResult = await client.query(

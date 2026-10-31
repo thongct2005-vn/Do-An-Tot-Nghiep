@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hạt & Lá – Cà phê và trà</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #eef1ec;
+  --surface: #ffffff;
+  --ink: #10231e;
+  --muted: #5c6b66;
+  --line: #d5dcd6;
+  --brand: #14463a;
+  --brand-dark: #0d3128;
+  --accent: #f0b429;
+  --ok: #1f8a4c;
+  --bad: #c0392b;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "Be Vietnam Pro", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.5;
+}
+button { font: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+.top {
+  background: var(--brand);
+  color: #fff;
+}
+.top-inner {
+  max-width: 1180px; margin: 0 auto; padding: 18px 24px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.brand { font-weight: 800; font-size: 22px; letter-spacing: -0.02em; }
+.brand span { color: var(--accent); }
+.tagline { font-size: 14px; opacity: .75; margin-left: 14px; }
+/* Layout */
+.wrap {
+  max-width: 1180px; margin: 0 auto; padding: 28px 24px 64px;
+  display: grid; grid-template-columns: 1fr 340px; gap: 28px; align-items: start;
+}
+h2 { margin: 0 0 16px; font-size: 20px; letter-spacing: -0.01em; }
+
+/* Products */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.thumb { height: 120px; display: grid; place-items: center; font-size: 52px; }
+.card-body { padding: 14px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.name { font-weight: 600; font-size: 15px; line-height: 1.35; }
+.meta { font-size: 13px; color: var(--muted); }
+.card-foot { margin-top: auto; padding-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.price { font-weight: 800; font-size: 16px; }
+.add {
+  background: var(--brand); color: #fff; border: 0; border-radius: 8px;
+  padding: 8px 12px; font-size: 14px; font-weight: 600;
+}
+.add:hover { background: var(--brand-dark); }
+
+/* Cart */
+.cart {
+  position: sticky; top: 20px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+}
+.cart-empty { color: var(--muted); font-size: 14px; padding: 8px 0 4px; }
+.line { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.line .n { font-size: 14px; font-weight: 500; }
+.line .p { font-size: 14px; font-weight: 600; text-align: right; }
+.qty { display: inline-flex; align-items: center; gap: 4px; }
+.qty button {
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line);
+  background: #fff; line-height: 1; font-size: 16px;
+}
+.qty button:hover { background: var(--bg); }
+.qty b { min-width: 22px; text-align: center; font-size: 14px; }
+.total { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 0 14px; }
+.total b { font-size: 22px; font-weight: 800; }
+.pay {
+  width: 100%; background: var(--accent); color: var(--ink); border: 0;
+  border-radius: 10px; padding: 14px; font-weight: 800; font-size: 16px;
+}
+.pay:hover { filter: brightness(.95); }
+.pay:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; filter: none; }
+/* Nút thanh toán qua trang của cổng (Redirect flow) */
+.pay-alt {
+  width: 100%; margin-top: 10px; background: #fff; color: var(--brand);
+  border: 2px solid var(--brand); border-radius: 10px; padding: 12px;
+  font-weight: 800; font-size: 16px;
+}
+.pay-alt:hover { background: var(--bg); }
+.pay-alt:disabled { border-color: var(--line); color: var(--muted); background: #fff; cursor: not-allowed; }
+
+/* Modal */
+dialog {
+  border: 0; border-radius: 18px; padding: 0; width: min(420px, calc(100vw - 32px));
+  box-shadow: 0 24px 60px rgba(16,35,30,.35); color: var(--ink);
+}
+dialog::backdrop { background: rgba(16,35,30,.55); }
+.m-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+.m-head h3 { margin: 0; font-size: 17px; }
+.x { background: none; border: 0; font-size: 22px; line-height: 1; color: var(--muted); }
+.m-body { padding: 22px; text-align: center; }
+.qr-box { display: inline-block; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.qr-box img, .qr-box canvas { display: block; }
+.amount { font-size: 28px; font-weight: 800; margin: 16px 0 2px; }
+.order { font-size: 13px; color: var(--muted); }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 16px;
+  padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600;
+  background: #fff6dc; color: #7a5a00;
+}
+.chip.ok { background: #dff3e6; color: var(--ok); }
+.chip.bad { background: #fbe3df; color: var(--bad); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.chip:not(.ok):not(.bad) .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.countdown { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.check-msg { margin: 10px 0 0; font-size: 13px; color: var(--muted); min-height: 20px; }
+.check-msg.bad { color: var(--bad); }
+.big-icon { font-size: 56px; margin-bottom: 4px; }
+.err { color: var(--bad); font-size: 14px; margin: 8px 0 0; word-break: break-word; }
+.m-actions { display: flex; gap: 10px; margin-top: 20px; }
+.m-actions button { flex: 1; padding: 11px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-weight: 600; }
+.m-actions button:disabled { opacity: .6; cursor: not-allowed; }
+.m-actions .primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+
+@media (max-width: 860px) {
+  .wrap { grid-template-columns: 1fr; padding: 20px 16px 48px; }
+  .cart { position: static; }
+  .tagline { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div><span class="brand">Hạt <span>&</span> Lá</span><span class="tagline">Cà phê và trà rang xay tại Việt Nam</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>Sản phẩm</h2>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <aside class="cart" aria-label="Giỏ hàng">
+    <h2>Giỏ hàng</h2>
+    <div id="cartLines"></div>
+    <div class="total"><span>Tổng cộng</span><b id="cartTotal">0đ</b></div>
+    <button class="pay" id="payBtn" disabled>Thanh toán bằng QR</button>
+    <button class="pay-alt" id="payRedirectBtn" disabled>Thanh toán qua cổng (chuyển trang)</button>
+  </aside>
+</main>
+
+<!-- Modal thanh toán -->
+<dialog id="payModal">
+  <div class="m-head"><h3 id="mTitle">Thanh toán</h3><button class="x" id="mClose" aria-label="Đóng">×</button></div>
+  <div class="m-body" id="mBody"></div>
+</dialog>
+
+<script>
+/* ---------- Dữ liệu sản phẩm ---------- */
+const PRODUCTS = [
+  { id: 1,  name: "Cà phê Robusta Đắk Lắk",   meta: "Gói 250g · rang vừa",     price: 95000,  icon: "🫘", tint: "#e4d9c8" },
+  { id: 2,  name: "Cà phê Arabica Cầu Đất",   meta: "Gói 250g · rang nhạt",    price: 135000, icon: "☕", tint: "#dfe6d3" },
+  { id: 3,  name: "Cold brew đóng chai",      meta: "Chai 330ml",              price: 45000,  icon: "🧊", tint: "#d6e6ea" },
+  { id: 4,  name: "Trà ô long Tứ Quý",        meta: "Hộp 100g",                price: 120000, icon: "🍵", tint: "#d9e8d5" },
+  { id: 5,  name: "Trà shan tuyết cổ thụ",    meta: "Hộp 100g · Hà Giang",     price: 165000, icon: "🌿", tint: "#cfe3d2" },
+  { id: 6,  name: "Trà sen Tây Hồ",           meta: "Hộp 50g",                 price: 210000, icon: "🌸", tint: "#f0dde0" },
+  { id: 7,  name: "Phin nhôm size 8",         meta: "Phin pha cà phê",         price: 38000,  icon: "⚙️", tint: "#e3e5e6" },
+  { id: 8,  name: "Ly thủy tinh hai lớp",     meta: "Dung tích 250ml",         price: 89000,  icon: "🥛", tint: "#e0e9ef" },
+  { id: 9,  name: "Bột matcha Uji",           meta: "Hũ 50g",                  price: 175000, icon: "🍃", tint: "#d3e6c4" },
+  { id: 10, name: "Hộp quà cà phê và trà",    meta: "Gồm 3 món chọn sẵn",      price: 399000, icon: "🎁", tint: "#f5e4b8" },
+];
+
+/* ---------- Tiện ích ---------- */
+const $ = (id) => document.getElementById(id);
+const vnd = (n) => n.toLocaleString("vi-VN") + "đ";
+const cart = {};
+/* ---------- Sản phẩm + giỏ hàng ---------- */
+function renderProducts() {
+  $("grid").innerHTML = "";
+  PRODUCTS.forEach((p) => {
+    const el = document.createElement("article");
+    el.className = "card";
+    el.innerHTML = `
+      <div class="thumb" style="background:${p.tint}" aria-hidden="true">${p.icon}</div>
+      <div class="card-body">
+        <div class="name"></div><div class="meta"></div>
+        <div class="card-foot"><span class="price"></span><button class="add">Thêm</button></div>
+      </div>`;
+    el.querySelector(".name").textContent = p.name;
+    el.querySelector(".meta").textContent = p.meta;
+    el.querySelector(".price").textContent = vnd(p.price);
+    el.querySelector(".add").onclick = () => { cart[p.id] = (cart[p.id] || 0) + 1; renderCart(); };
+    $("grid").appendChild(el);
+  });
+}
+
+function cartItems() {
+  return PRODUCTS.filter((p) => cart[p.id]).map((p) => ({ id: p.id, name: p.name, description: p.meta, price: p.price, qty: cart[p.id] }));
+}
+function cartTotal() { return cartItems().reduce((s, i) => s + i.price * i.qty, 0); }
+
+function renderCart() {
+  const box = $("cartLines");
+  box.innerHTML = "";
+  const items = cartItems();
+  if (!items.length) {
+    box.innerHTML = '<div class="cart-empty">Chưa có sản phẩm nào. Chọn sản phẩm bên trái để bắt đầu.</div>';
+  }
+  items.forEach((i) => {
+    const row = document.createElement("div");
+    row.className = "line";
+    row.innerHTML = `<div class="n"></div><div class="p"></div>
+      <div class="qty"><button aria-label="Giảm">−</button><b></b><button aria-label="Tăng">+</button></div>`;
+    row.querySelector(".n").textContent = i.name;
+    row.querySelector(".p").textContent = vnd(i.price * i.qty);
+    row.querySelector("b").textContent = i.qty;
+    const [minus, plus] = row.querySelectorAll("button");
+    minus.onclick = () => { cart[i.id]--; if (cart[i.id] <= 0) delete cart[i.id]; renderCart(); };
+    plus.onclick = () => { cart[i.id]++; renderCart(); };
+    box.appendChild(row);
+  });
+  const total = cartTotal();
+  $("cartTotal").textContent = vnd(total);
+  const invalid = total < 1000 || total > 50000000;
+  $("payBtn").disabled = invalid;
+  $("payRedirectBtn").disabled = invalid;
+}
+
+/* ---------- Gọi API (backend shop cùng origin) ---------- */
+async function readJson(res) {
+  let json = null;
+  try { json = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error((json && json.message) || `Lỗi ${res.status}`);
+  return json && json.data !== undefined ? json.data : json;
+}
+
+async function createShopOrder(items) {
+  const res = await fetch("/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  return readJson(res);
+}
+
+async function fetchOrderStatus(orderId) {
+  const res = await fetch("/orders/" + encodeURIComponent(orderId));
+  const data = await readJson(res);
+  return String(data.status || "").toUpperCase();
+}
+
+// Nhờ backend shop hỏi cổng thanh toán trạng thái đơn rồi trả về đơn với trạng thái mới
+async function syncOrder(orderId) {
+  const res = await fetch("/orders/" + encodeURIComponent(orderId) + "/sync", { method: "POST" });
+  return readJson(res);
+}
+async function syncOrderStatus(orderId) {
+  const data = await syncOrder(orderId);
+  return String(data.status || "").toUpperCase();
+}
+
+/* ---------- Modal thanh toán ---------- */
+let pollTimer = null, countdownTimer = null;
+function stopTimers() { clearInterval(pollTimer); clearInterval(countdownTimer); pollTimer = countdownTimer = null; }
+function closePay() { stopTimers(); $("payModal").close(); }
+
+// retry: true => thử lại luồng QR; hoặc truyền một hàm để chạy khi bấm "Thử lại"
+function showMessage({ icon, title, text, error, retry }) {
+  $("mTitle").textContent = title;
+  $("mBody").innerHTML = `<div class="big-icon">${icon}</div><div class="order"></div><p class="err" hidden></p>
+    <div class="m-actions"><button id="mOk" class="primary">${retry ? "Thử lại" : "Đóng"}</button></div>`;
+  $("mBody").querySelector(".order").textContent = text || "";
+  if (error) { const e = $("mBody").querySelector(".err"); e.hidden = false; e.textContent = error; }
+  $("mOk").onclick = typeof retry === "function" ? retry : retry ? checkout : closePay;
+}
+
+async function checkout() {
+  stopTimers();
+  const items = cartItems();
+
+  if (!$("payModal").open) $("payModal").showModal();
+  $("mTitle").textContent = "Đang tạo đơn";
+  $("mBody").innerHTML = '<div class="big-icon">⏳</div><div class="order">Đang tạo mã QR…</div>';
+
+  try {
+    const order = await createShopOrder(items);
+    showQr({ orderId: order.order_id, amount: order.amount, payment: order.payment });
+  } catch (e) {
+    showMessage({ icon: "⚠️", title: "Không tạo được thanh toán", text: "Kiểm tra backend shop và backend ví rồi thử lại.", error: e.message, retry: true });
+  }
+}
+
+/* ---------- Redirect flow: chuyển sang trang thanh toán của cổng ---------- */
+const REDIRECT_BTN_TEXT = "Chuyển sang trang thanh toán";
+
+async function checkoutRedirect() {
+  const items = cartItems();
+  const btn = $("payRedirectBtn");
+  btn.disabled = true;
+  btn.textContent = "Đang chuyển đến cổng thanh toán…";
+
+  try {
+    const order = await createShopOrder(items);
+    const url = order.payment && order.payment.payment_url;
+    if (!url) throw new Error("Cổng thanh toán chưa trả về payment_url");
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("payment_url không hợp lệ");
+    window.location.href = parsed.toString();
+  } catch (e) {
+    btn.textContent = REDIRECT_BTN_TEXT;
+    renderCart();
+    if (!$("payModal").open) $("payModal").showModal();
+    showMessage({
+      icon: "⚠️",
+      title: "Không chuyển được sang cổng thanh toán",
+      text: "Kiểm tra backend shop và backend ví rồi thử lại.",
+      error: e.message,
+      retry: () => { closePay(); checkoutRedirect(); },
+    });
+  }
+}
+
+// Khách bấm Back từ trang cổng thanh toán: trình duyệt có thể khôi phục trang cũ, trả nút về bình thường
+window.addEventListener("pageshow", (ev) => {
+  if (ev.persisted) {
+    $("payRedirectBtn").textContent = REDIRECT_BTN_TEXT;
+    renderCart();
+  }
+});
+
+// Khách bấm "Quay lại cửa hàng" trên trang cổng sẽ vào /checkout/result của backend shop.
+// Backend kiểm tra chữ ký (signature) rồi mới chuyển về đây:
+//   /?order_id=...        -> chữ ký hợp lệ, trang này chỉ hiển thị trạng thái đơn do backend giữ
+//   /?return_error=...    -> chữ ký sai/hết hạn/không khớp đơn, KHÔNG cập nhật đơn
+// Trình duyệt không bao giờ được tin status trên URL; mọi quyết định nằm ở backend.
+const RETURN_ERRORS = {
+  invalid_signature: "Kết quả quay về thiếu chữ ký hoặc chữ ký không hợp lệ nên shop không tin kết quả này.",
+  expired: "Liên kết quay về đã quá cũ. Hãy kiểm tra lại đơn hàng.",
+  order_not_found: "Không tìm thấy đơn hàng tương ứng trong shop.",
+  mismatch: "Thông tin đơn hàng không khớp với dữ liệu của shop.",
+};
+
+async function handleGatewayReturn() {
+  const params = new URLSearchParams(location.search);
+  const returnError = params.get("return_error");
+  const orderId = params.get("order_id");
+  if (!orderId && !returnError) return;
+  // Dọn URL để tải lại trang không chạy lại bước này
+  history.replaceState(null, "", location.pathname);
+  if (!$("payModal").open) $("payModal").showModal();
+
+  if (returnError) {
+    showMessage({
+      icon: "⚠️",
+      title: "Không xác thực được kết quả thanh toán",
+      text: RETURN_ERRORS[returnError] || "Kết quả quay về không hợp lệ.",
+    });
+    return;
+  }
+
+  const verify = async () => {
+    $("mTitle").textContent = "Đang xác nhận thanh toán";
+    $("mBody").innerHTML = '<div class="big-icon">⏳</div><div class="order">Đang xác nhận kết quả với cổng thanh toán…</div>';
+    try {
+      const order = await syncOrder(orderId);
+      const status = String(order.status || "").toUpperCase();
+      if (status === "PAID" || status === "SUCCESS") {
+        showMessage({ icon: "✅", title: "Thanh toán thành công", text: `Đơn ${orderId} · ${vnd(Number(order.amount))}` });
+      } else if (status === "FAILED") {
+        showMessage({ icon: "❌", title: "Thanh toán thất bại", text: `Đơn ${orderId} chưa được thanh toán hoặc đã hết hạn.` });
+      } else {
+        showMessage({ icon: "⏳", title: "Đơn đang chờ thanh toán", text: `Đơn ${orderId} chưa nhận được kết quả thanh toán.`, retry: verify });
+      }
+    } catch (e) {
+      showMessage({ icon: "⚠️", title: "Không xác nhận được kết quả", text: `Đơn ${orderId}`, error: e.message, retry: verify });
+    }
+  };
+  verify();
+}
+
+function showQr({ orderId, amount, payment }) {
+  if (!payment || !payment.qr_image) throw new Error("Cổng thanh toán không trả về mã QR");
+  $("mTitle").textContent = "Quét mã để thanh toán";
+  $("mBody").innerHTML = `
+    <div class="qr-box" id="qr"></div>
+    <div class="amount"></div>
+    <div class="order"></div>
+    <div class="chip" id="chip"><span class="dot"></span><span>Đang chờ thanh toán</span></div>
+    <div class="countdown" id="cd"></div>
+    <p class="check-msg" id="checkMsg" role="status"></p>
+    <div class="m-actions"><button type="button" id="checkBtn">Kiểm tra trạng thái</button></div>`;
+  $("mBody").querySelector(".amount").textContent = vnd(amount);
+  $("mBody").querySelector(".order").textContent = "Mã đơn " + orderId;
+  const img = document.createElement("img");
+  img.src = payment.qr_image;
+  img.alt = "Mã QR thanh toán";
+  img.width = 220;
+  img.height = 220;
+  $("qr").appendChild(img);
+
+  const expiresAt = payment.expires_at ? new Date(payment.expires_at).getTime() : null;
+  if (expiresAt) {
+    const tick = () => {
+      const left = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+      $("cd").textContent = left > 0
+        ? `Mã hết hạn sau ${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`
+        : "Mã đã hết hạn";
+      if (left === 0) {
+        stopTimers();
+        const chip = $("chip");
+        chip.className = "chip bad";
+        chip.lastElementChild.textContent = "Mã QR đã hết hạn";
+      }
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  // Xử lý trạng thái nhận được (từ poll hoặc từ nút kiểm tra). Trả về true nếu đơn đã có kết quả.
+  const handleStatus = (status) => {
+    if (status === "PAID" || status === "SUCCESS") {
+      stopTimers();
+      for (const k in cart) delete cart[k];
+      renderCart();
+      showMessage({ icon: "✅", title: "Thanh toán thành công", text: `Đơn ${orderId} · ${vnd(amount)}` });
+      return true;
+    }
+    if (status === "FAILED") {
+      stopTimers();
+      showMessage({ icon: "❌", title: "Thanh toán thất bại", text: `Đơn ${orderId} chưa được thanh toán.`, retry: true });
+      return true;
+    }
+    return false;
+  };
+
+  pollTimer = setInterval(async () => {
+    try {
+      handleStatus(await fetchOrderStatus(orderId));
+    } catch (_) { /* lỗi mạng tạm thời, thử lại ở lần poll sau */ }
+  }, 2000);
+
+  // Nút kiểm tra: hỏi thẳng cổng thanh toán qua backend shop
+  $("checkBtn").onclick = async () => {
+    const btn = $("checkBtn");
+    const msg = $("checkMsg");
+    btn.disabled = true;
+    btn.textContent = "Đang kiểm tra…";
+    msg.className = "check-msg";
+    msg.textContent = "";
+    try {
+      const status = await syncOrderStatus(orderId);
+      if (!handleStatus(status)) {
+        msg.textContent = "Đơn vẫn đang chờ thanh toán.";
+      }
+    } catch (e) {
+      msg.className = "check-msg bad";
+      msg.textContent = e.message;
+    } finally {
+      const still = $("checkBtn");
+      if (still) { still.disabled = false; still.textContent = "Kiểm tra trạng thái"; }
+    }
+  };
+}
+
+$("payBtn").onclick = checkout;
+$("payRedirectBtn").onclick = checkoutRedirect;
+$("mClose").onclick = closePay;
+$("payModal").addEventListener("cancel", stopTimers);
+
+renderProducts();
+renderCart();
+handleGatewayReturn();
+</script>
+</body>
+</html>

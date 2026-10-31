@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Merchant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="../config.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        html { scroll-behavior: smooth; }
+        .tab-btn.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+        .guide-link.active { background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .code-block { background: #111827; color: #e5e7eb; font-size: 0.8rem; line-height: 1.5; }
+        .guide-section { scroll-margin-top: 6rem; }
+        .skeleton { color: transparent !important; background: #e5e7eb !important; border-radius: 0.375rem; animation: skel-pulse 1.2s ease-in-out infinite; }
+        span.skeleton { display: inline-block; min-width: 5rem; }
+        p.skeleton { width: 10rem; }
+        input.skeleton::placeholder { color: transparent; }
+        @keyframes skel-pulse { 50% { opacity: 0.5; } }
+        @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .skeleton { animation: none; } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+
+    <header class="bg-white shadow-sm sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                    <i class="fa-solid fa-store"></i>
+                </div>
+                <h1 class="text-lg font-bold">Merchant</h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <span class="hidden sm:inline text-gray-700 text-sm">Xin chào, <span id="full-name" class="font-semibold">...</span></span>
+                <button onclick="openLogoutModal()"
+                    class="bg-gray-800 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-900 transition duration-200">
+                    <i class="fa-solid fa-right-from-bracket mr-1"></i> Đăng xuất
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8">
+        <div id="error-alert" class="hidden mb-6 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm"></div>
+        <div id="success-alert" class="hidden mb-6 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-[16rem_minmax(0,1fr)] gap-6 items-start">
+            <aside class="lg:sticky lg:top-20 space-y-4">
+                <nav class="bg-white rounded-2xl shadow p-3 space-y-1 lg:max-h-[calc(100vh-7rem)] overflow-y-auto">
+                    <button type="button" id="tab-overview" onclick="switchTab('overview')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition active">
+                        <i class="fa-solid fa-gauge w-5 text-center"></i> Tổng quan
+                    </button>
+                    <button type="button" id="tab-transactions" onclick="switchTab('transactions')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-money-bill-transfer w-5 text-center"></i> Giao dịch
+                    </button>
+                    <button type="button" id="tab-history" onclick="switchTab('history')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i> Lịch sử giao dịch
+                    </button>
+                    <button type="button" id="tab-stats" onclick="switchTab('stats')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Thống kê doanh thu
+                    </button>
+                    <button type="button" id="tab-product-stats" onclick="switchTab('product-stats')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-box-archive w-5 text-center"></i> Thống kê sản phẩm
+                    </button>
+                    <button type="button" id="tab-security" onclick="switchTab('security')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Bảo mật
+                    </button>
+                    <button type="button" id="tab-guide" onclick="switchTab('guide')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-book w-5 text-center"></i> Hướng dẫn tích hợp
+                    </button>
+                    <div id="guide-toc" class="hidden ml-5 pl-3 border-l border-gray-200 space-y-0.5 pb-1">
+                        <a href="#g-flow" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Luồng thanh toán</a>
+                        <a href="#g-prepare" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Chuẩn bị</a>
+                        <a href="#g-auth" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Xác thực và chữ ký</a>
+                        <a href="#g-create" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Tạo thanh toán</a>
+                        <a href="#g-redirect" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Luồng Redirect</a>
+                        <a href="#g-callback" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Nhận callback</a>
+                        <a href="#g-status" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Kiểm tra trạng thái</a>
+                        <a href="#g-notes" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Lưu ý quan trọng</a>
+                    </div>
+                </nav>
+            </aside>
+
+            <!-- Nội dung các tab được dashboard/core.js dựng vào đây -->
+            <div id="tab-container" class="min-w-0"></div>
+        </div>
+    </main>
+
+    <!-- Modal / drawer của từng tab được thêm vào đây -->
+    <div id="modal-root"></div>
+
+    <!-- Logout Modal -->
+    <div id="logout-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/50"
+        onclick="if (event.target === this) closeLogoutModal()">
+        <div class="bg-white max-w-sm w-full p-6 rounded-2xl shadow-xl text-center">
+            <div class="mx-auto mb-4 w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+                <i class="fa-solid fa-right-from-bracket text-xl"></i>
+            </div>
+            <h3 class="text-lg font-bold text-gray-800 mb-1">Đăng xuất?</h3>
+            <p class="text-sm text-gray-600 mb-6">Bạn có chắc chắn muốn đăng xuất khỏi tài khoản không?</p>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeLogoutModal()"
+                    class="flex-1 bg-gray-200 text-gray-800 font-semibold py-2 rounded-lg hover:bg-gray-300 transition duration-200">
+                    Hủy
+                </button>
+                <button type="button" id="confirm-logout-btn" onclick="handleLogout()"
+                    class="flex-1 bg-red-600 text-white font-semibold py-2 rounded-lg hover:bg-red-700 transition duration-200 disabled:opacity-60">
+                    Đăng xuất
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="dashboard/core.js"></script>
+    <script src="dashboard/overview.js"></script>
+    <script src="dashboard/transactions.js"></script>
+    <script src="dashboard/history.js"></script>
+    <script src="dashboard/stats.js"></script>
+    <script src="dashboard/product-stats.js"></script>
+    <script src="dashboard/security.js"></script>
+    <script src="dashboard/guide.js"></script>
+</body>
+</html>

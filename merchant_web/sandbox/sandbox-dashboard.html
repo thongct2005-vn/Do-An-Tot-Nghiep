@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sandbox Dashboard Merchant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="../config.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        html { scroll-behavior: smooth; }
+        .tab-btn.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+        .guide-link.active { background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .code-block { background: #111827; color: #e5e7eb; font-size: 0.8rem; line-height: 1.5; }
+        .guide-section { scroll-margin-top: 6rem; }
+        .skeleton { color: transparent !important; background: #e5e7eb !important; border-radius: 0.375rem; animation: skel-pulse 1.2s ease-in-out infinite; }
+        span.skeleton { display: inline-block; min-width: 5rem; }
+        p.skeleton { width: 10rem; }
+        input.skeleton::placeholder { color: transparent; }
+        @keyframes skel-pulse { 50% { opacity: 0.5; } }
+        @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .skeleton { animation: none; } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+
+    <header class="bg-white shadow-sm sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center">
+                    <i class="fa-solid fa-flask"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold leading-tight">Merchant Sandbox</h1>
+                    <span class="text-xs text-emerald-600 font-semibold uppercase tracking-wider">Môi trường thử nghiệm</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <span class="hidden sm:inline text-gray-700 text-sm">Xin chào, <span id="full-name" class="font-semibold">...</span></span>
+                <button onclick="openLogoutModal()"
+                    class="bg-gray-800 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-900 transition duration-200">
+                    <i class="fa-solid fa-right-from-bracket mr-1"></i> Đăng xuất
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8">
+        <div id="error-alert" class="hidden mb-6 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm"></div>
+        <div id="success-alert" class="hidden mb-6 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-[16rem_minmax(0,1fr)] gap-6 items-start">
+            <aside class="lg:sticky lg:top-20 space-y-4">
+                <nav class="bg-white rounded-2xl shadow p-3 space-y-1 lg:max-h-[calc(100vh-7rem)] overflow-y-auto">
+                    <button type="button" id="tab-overview" onclick="switchTab('overview')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition active">
+                        <i class="fa-solid fa-gauge w-5 text-center"></i> Tổng quan
+                    </button>
+                    <button type="button" id="tab-balance" onclick="switchTab('balance')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-wallet w-5 text-center"></i> Cập nhật số dư
+                    </button>
+                    <button type="button" id="tab-guide" onclick="switchTab('guide')" class="tab-btn w-full text-left px-4 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3 transition">
+                        <i class="fa-solid fa-book w-5 text-center"></i> Hướng dẫn tích hợp
+                    </button>
+                    <div id="guide-toc" class="hidden ml-5 pl-3 border-l border-gray-200 space-y-0.5 pb-1">
+                            <a href="#g-flow" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Luồng thanh toán</a>
+                            <a href="#g-prepare" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Chuẩn bị</a>
+                            <a href="#g-auth" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Xác thực và chữ ký</a>
+                            <a href="#g-create" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Tạo thanh toán</a>
+                            <a href="#g-redirect" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Luồng Redirect</a>
+                            <a href="#g-callback" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Nhận callback</a>
+                            <a href="#g-status" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Kiểm tra trạng thái</a>
+                            <a href="#g-notes" class="guide-link block px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Lưu ý quan trọng</a>
+                    </div>
+                </nav>
+                <a id="download-apk-btn" href="#" target="_blank"
+                    class="flex items-center gap-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl shadow p-4 transition">
+                    <i class="fa-solid fa-download text-xl"></i>
+                    <span>
+                        <span class="block text-sm font-semibold">Tải App Ví Test</span>
+                        <span class="block text-xs text-emerald-100">File APK dùng cho Sandbox</span>
+                    </span>
+                </a>
+            </aside>
+
+            <div class="min-w-0">
+                <div id="panel-overview" class="space-y-6">
+                    <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white rounded-2xl shadow p-6">
+                            <p class="text-sm text-gray-500 mb-1">Số dư</p>
+                            <p id="balance" class="text-3xl font-bold text-blue-600">---</p>
+                        </div>
+                        <div id="revenue-slot" class="md:col-span-2"></div>
+                    </section>
+
+                    <section class="bg-white rounded-2xl shadow p-6 space-y-6">
+                        <div>
+                            <h2 class="text-base font-bold">Thông tin tích hợp</h2>
+                            <p class="text-sm text-gray-500">Dùng API Key, Secret Key và Callback URL bên dưới để kết nối hệ thống của bạn với cổng thanh toán. Xem cách làm ở tab
+                                <button type="button" onclick="switchTab('guide')" class="text-blue-600 font-semibold hover:underline">Hướng dẫn tích hợp</button>.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                            <div class="flex gap-2">
+                                <div class="relative flex-1">
+                                    <input type="password" id="api-key" readonly
+                                        class="w-full px-4 py-2 border rounded-lg bg-gray-50 font-mono text-sm pr-10 focus:outline-none" />
+                                    <button type="button" onclick="toggleKey('api-key', 'eye-icon')"
+                                        class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700 focus:outline-none">
+                                        <i id="eye-icon" class="fa-solid fa-eye-slash"></i>
+                                    </button>
+                                </div>
+                                <button type="button" id="copy-btn" onclick="copyKey('api-key', 'copy-btn')"
+                                    class="bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-200 whitespace-nowrap">
+                                    <i class="fa-regular fa-copy mr-1"></i> Copy
+                                </button>
+                                <button type="button" onclick="openResetModal('apiKey')"
+                                    class="bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-amber-700 transition duration-200 whitespace-nowrap">
+                                    <i class="fa-solid fa-rotate mr-1"></i> Reset
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Dùng để định danh merchant, gửi trong header <code>X-API-Key</code> mỗi request. Không đưa vào code chạy trên trình duyệt hay app của khách hàng.</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Secret Key</label>
+                            <div class="flex gap-2">
+                                <div class="relative flex-1">
+                                    <input type="password" id="secret-key" readonly
+                                        class="w-full px-4 py-2 border rounded-lg bg-gray-50 font-mono text-sm pr-10 focus:outline-none" />
+                                    <button type="button" onclick="toggleKey('secret-key', 'secret-eye-icon')"
+                                        class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700 focus:outline-none">
+                                        <i id="secret-eye-icon" class="fa-solid fa-eye-slash"></i>
+                                    </button>
+                                </div>
+                                <button type="button" id="secret-copy-btn" onclick="copyKey('secret-key', 'secret-copy-btn')"
+                                    class="bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-200 whitespace-nowrap">
+                                    <i class="fa-regular fa-copy mr-1"></i> Copy
+                                </button>
+                                <button type="button" onclick="openResetModal('secretKey')"
+                                    class="bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-amber-700 transition duration-200 whitespace-nowrap">
+                                    <i class="fa-solid fa-rotate mr-1"></i> Reset
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Dùng để ký request và xác minh callback. <b>Không bao giờ gửi đi</b> trong request, chỉ lưu trong biến môi trường trên server của bạn.</p>
+                        </div>
+
+                        <hr class="border-gray-200">
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Callback URL (Webhook)</label>
+                            <div class="flex gap-2">
+                                <input type="url" id="callback-url" maxlength="100"
+                                    placeholder="https://yourdomain.com/api/payment/callback"
+                                    class="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                <button type="button" id="update-btn" onclick="handleUpdateCallback()"
+                                    class="bg-green-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-green-700 transition duration-200 whitespace-nowrap disabled:opacity-60">
+                                    Cập nhật
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Cổng thanh toán gửi kết quả giao dịch (thành công / thất bại) về địa chỉ này.</p>
+                        </div>
+                    </section>
+                </div>
+
+                <div id="panel-balance" class="hidden space-y-6">
+                    <section class="bg-white rounded-2xl shadow p-6 space-y-4">
+                        <div>
+                            <h2 class="text-base font-bold">Cập nhật số dư ví theo số điện thoại</h2>
+                            <p class="text-sm text-gray-500">Công cụ dùng trong môi trường Sandbox để giả lập số dư cho tài khoản ví khách hàng.</p>
+                        </div>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Số điện thoại người dùng</label>
+                                <input type="text" id="update-phone" maxlength="10" placeholder="Nhập số điện thoại (ví dụ: 0999999999)" 
+                                    class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền muốn đặt lại (VND)</label>
+                               <input type="text" id="update-amount" inputmode="numeric" autocomplete="off" maxlength="10" oninput="formatAmountInput(this)" placeholder="Nhập số tiền mới (1 - 50.000.000)" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                            </div>
+                            <button type="button" id="btn-submit-balance" onclick="handleUpdateWalletBalance()"
+                                class="bg-blue-600 text-white font-semibold px-5 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
+                                Cập nhật số dư
+                            </button>
+                        </div>
+                    </section>
+                </div>
+
+                <div id="panel-guide" class="hidden space-y-6">
+                    <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 text-sm flex gap-3">
+                        <i class="fa-solid fa-flask mt-0.5"></i>
+                        <div>Đây là môi trường <b>Sandbox</b>, chỉ để thử nghiệm. Cài app ví test (nút tải APK ở cột bên trái) và dùng tab <b>Cập nhật số dư</b> để đặt số dư giả lập cho tài khoản ví, rồi quét QR để thanh toán thử.</div>
+                    </div>
+
+                    <section id="g-flow" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-1">Luồng thanh toán QR</h2>
+                        <p class="text-sm text-gray-600 mb-4">Hệ thống của bạn chỉ làm việc với cổng thanh toán. Việc trừ tiền ví người dùng do backend ví xử lý.</p>
+                        <p class="text-sm text-gray-600 mb-4">Ngoài cách tự hiển thị QR trên website của bạn, bạn có thể chuyển khách sang trang thanh toán do cổng cung cấp. Xem mục <a href="#g-redirect" class="text-blue-600 hover:underline">Luồng Redirect</a>.</p>
+                        <ol class="space-y-3 text-sm">
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">1</span>
+                                <span>Khách đặt hàng. Server của bạn gọi API <b>tạo thanh toán</b> với <code class="text-blue-700">order_id</code> và <code class="text-blue-700">amount</code>.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">2</span>
+                                <span>Cổng thanh toán trả về <b>mã QR</b> (trường <code class="text-blue-700">qr_image</code>). Bạn hiển thị QR này cho khách.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">3</span>
+                                <span>Khách mở app ví, quét QR, xem số tiền và nội dung, rồi xác nhận thanh toán.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">4</span>
+                                <span>Backend ví kiểm tra số dư, trừ tiền và ghi giao dịch.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">5</span>
+                                <span>Cổng thanh toán gửi <b>callback</b> (có chữ ký) về Callback URL của bạn.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">6</span>
+                                <span>Bạn xác minh chữ ký, cập nhật trạng thái đơn hàng và trả về HTTP 2xx (ví dụ 200).</span></li>
+                        </ol>
+                    </section>
+
+                    <section id="g-prepare" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-3">Chuẩn bị</h2>
+                        <ul class="list-disc pl-5 space-y-2 text-sm text-gray-700">
+                            <li>Lấy <b>API Key</b> và <b>Secret Key</b> ở tab Tổng quan, lưu vào biến môi trường trên server của bạn (<code>WALLET_API_KEY</code>, <code>WALLET_SECRET_KEY</code>).</li>
+                            <li>Đặt <b>Callback URL</b> là địa chỉ công khai, chạy HTTPS, nhận được request POST.</li>
+                            <li>Base URL của API: <code id="guide-base-url" class="bg-gray-100 px-2 py-0.5 rounded text-xs break-all"></code></li>
+                            <li>Mọi lời gọi API phải chạy từ <b>server</b> của bạn, không gọi trực tiếp từ trình duyệt hay app.</li>
+                        </ul>
+                    </section>
+
+                    <section id="g-auth" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-1">Xác thực và chữ ký</h2>
+                        <p class="text-sm text-gray-600 mb-4">Mỗi request gửi lên cổng thanh toán cần các header sau:</p>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left">
+                                <thead class="text-gray-500 border-b">
+                                    <tr><th class="py-2 pr-4 font-medium">Header</th><th class="py-2 font-medium">Ý nghĩa</th></tr>
+                                </thead>
+                                <tbody class="divide-y">
+                                    <tr><td class="py-2 pr-4 font-mono text-xs text-blue-700 whitespace-nowrap">X-API-Key</td><td class="py-2">API Key của merchant, dùng để định danh.</td></tr>
+                                    <tr><td class="py-2 pr-4 font-mono text-xs text-blue-700 whitespace-nowrap">X-Timestamp</td><td class="py-2">Thời gian gửi (Unix giây). Request quá cũ sẽ bị từ chối.</td></tr>
+                                    <tr><td class="py-2 pr-4 font-mono text-xs text-blue-700 whitespace-nowrap">X-Signature</td><td class="py-2">Chữ ký HMAC-SHA256 (hex) của <code>timestamp + "." + body</code>, ký bằng <b>Secret Key</b>. Secret Key không được gửi đi.</td></tr>
+                                    <tr><td class="py-2 pr-4 font-mono text-xs text-blue-700 whitespace-nowrap">Idempotency-Key</td><td class="py-2">Chuỗi duy nhất cho mỗi lần tạo thanh toán. Gửi lại cùng key sẽ không tạo giao dịch thứ hai.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="text-sm text-gray-600 mt-4 mb-2">Ví dụ tạo chữ ký (Node.js):</p>
+                        <div class="relative">
+                            <button type="button" onclick="copyCode('code-sign', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-sign"></code></pre>
+                        </div>
+                    </section>
+
+                    <section id="g-create" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-1">Tạo thanh toán</h2>
+                        <p class="text-sm text-gray-600 mb-4">
+                            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded">POST</span>
+                            <code id="ep-create" class="ml-1 text-xs break-all"></code>
+                        </p>
+                        <p class="text-sm text-gray-600 mb-2">Body:</p>
+                        <div class="relative mb-4">
+                            <button type="button" onclick="copyCode('code-create-body', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-create-body"></code></pre>
+                        </div>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li><code class="text-blue-700">amount</code> (bắt buộc): số tiền (VND, số nguyên) từ 1.000 đến 50.000.000.</li>
+                            <li><code class="text-blue-700">order_id</code> (bắt buộc): mã đơn hàng của bạn, mỗi đơn dùng một mã riêng, không trùng trong cùng merchant.</li>
+                            <li><code class="text-blue-700">description</code> (không bắt buộc): nội dung thanh toán, tối đa 50 ký tự.</li>
+                            <li><code class="text-blue-700">items</code> (không bắt buộc): danh sách sản phẩm của đơn hàng, tối đa 100 phần tử. Mỗi phần tử gồm:
+                                <ul class="list-disc pl-5 mt-1 space-y-1">
+                                    <li><code class="text-blue-700">product_id</code>: mã sản phẩm (chuỗi, tối đa 100 ký tự).</li>
+                                    <li><code class="text-blue-700">name</code>: tên sản phẩm (tối đa 255 ký tự).</li>
+                                    <li><code class="text-blue-700">quantity</code>: số lượng (số nguyên từ 1 đến 100000).</li>
+                                    <li><code class="text-blue-700">unit_price</code>: đơn giá (VND, số nguyên không âm).</li>
+                                    <li><code class="text-blue-700">description</code> (không bắt buộc): mô tả sản phẩm (tối đa 255 ký tự).</li>
+                                </ul>
+                            </li>
+                            <li><code class="text-blue-700">callback_url</code>: nơi nhận kết quả (tối đa 100 ký tự). Nếu bỏ trống sẽ dùng Callback URL đã lưu ở tab Tổng quan. Yêu cầu của URL xem ở mục <b>Nhận callback</b>.</li>
+                            <li><code class="text-blue-700">return_url</code> (không bắt buộc): trang của bạn để đưa khách quay lại sau khi thanh toán xong, dùng cho <a href="#g-redirect" class="text-blue-600 hover:underline">Luồng Redirect</a> (https, tối đa 255 ký tự, xem <b>Quy định của return_url</b>).</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Phản hồi thành công:</p>
+                        <div class="relative mb-4">
+                            <button type="button" onclick="copyCode('code-create-res', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-create-res"></code></pre>
+                        </div>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li><code class="text-blue-700">id</code>: mã thanh toán. Chính là <code>payment_id</code> trong callback và trong API kiểm tra trạng thái.</li>
+                            <li><code class="text-blue-700">qr_image</code>: ảnh QR dạng data URL (PNG base64), gán thẳng vào <code>&lt;img src&gt;</code> để khách quét.</li>
+                            <li><code class="text-blue-700">payment_url</code>: địa chỉ trang thanh toán của cổng. Chuyển hướng khách tới đây nếu bạn dùng <a href="#g-redirect" class="text-blue-600 hover:underline">Luồng Redirect</a>.</li>
+                            <li><code class="text-blue-700">return_url</code>: giá trị bạn đã gửi khi tạo (không gửi thì là <code>null</code>).</li>
+                            <li><code class="text-blue-700">reference_code</code>: mã tham chiếu được mã hóa trong QR.</li>
+                            <li><code class="text-blue-700">status</code>: trạng thái ban đầu của đơn, luôn là <code>PENDING</code>.</li>
+                            <li><code class="text-blue-700">expires_at</code>: thời điểm mã QR hết hạn (mặc định 15 phút sau khi tạo).</li>
+                            <li><code class="text-blue-700">items</code>: danh sách sản phẩm đã lưu cho đơn, là mảng rỗng nếu bạn không gửi <code>items</code>.</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Ví dụ gọi từ server (Node.js):</p>
+                        <div class="relative">
+                            <button type="button" onclick="copyCode('code-create-js', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-create-js"></code></pre>
+                        </div>
+                    </section>
+
+                    <section id="g-redirect" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-1">Luồng Redirect</h2>
+                        <p class="text-sm text-gray-600 mb-4">Thay vì tự hiển thị mã QR, bạn chuyển khách sang <b>trang thanh toán do cổng cung cấp</b>. Trang này hiển thị tên cửa hàng, số tiền, nội dung, mã QR và đồng hồ đếm ngược, tự cập nhật khi khách thanh toán xong rồi cho khách bấm quay về website của bạn. Bạn không cần dựng giao diện thanh toán.</p>
+                        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-3 text-sm mb-4">
+                        <b>Trong Sandbox:</b> <code>payment_url</code> trỏ tới máy chủ Sandbox. Khách (là bạn khi thử) thanh toán bằng <b>app ví test</b> (nút tải APK ở cột bên trái) với số dư giả lập, không trừ tiền thật. Dùng tab <b>Cập nhật số dư</b> để nạp tiền cho ví test trước khi thử. Chữ ký của <code>return_url</code> trong Sandbox dùng <b>Secret Key của Sandbox</b>, khác với Secret Key production.
+                    </div>
+                        <ol class="space-y-3 text-sm mb-5">
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">1</span>
+                                <span>Khách bấm <b>Thanh toán</b> trên website. Server của bạn gọi API <b>tạo thanh toán</b>, gửi thêm <code class="text-blue-700">return_url</code> là trang của bạn để đón khách quay lại.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">2</span>
+                                <span>Cổng trả về <code class="text-blue-700">payment_url</code>. Bạn lưu <code class="text-blue-700">id</code> cùng <code class="text-blue-700">order_id</code>, rồi <b>chuyển hướng</b> khách (HTTP 302 hoặc 303) tới <code class="text-blue-700">payment_url</code>.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">3</span>
+                                <span>Khách xem số tiền trên trang của cổng, quét QR bằng app ví và xác nhận thanh toán. Mở trang trên máy tính rồi quét bằng điện thoại cũng được. Trang tự cập nhật, không cần tải lại.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">4</span>
+                                <span>Backend ví trừ tiền và ghi giao dịch. Cổng gửi <b>callback</b> (có chữ ký) về Callback URL của bạn. Đây là nguồn xác nhận đáng tin cậy.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">5</span>
+                                <span>Trang của cổng báo <b>thành công</b> hoặc <b>thất bại</b>, rồi hiện nút <b>Quay lại cửa hàng</b> cùng tên miền sẽ được mở. Cổng <b>không tự chuyển trang</b>, khách phải bấm nút. Khi bấm, khách được đưa về <code class="text-blue-700">return_url</code> kèm <code class="text-blue-700">order_id</code>, <code class="text-blue-700">payment_id</code>, <code class="text-blue-700">amount</code>, <code class="text-blue-700">status</code>, <code class="text-blue-700">paid_at</code>, <code class="text-blue-700">timestamp</code> và <code class="text-blue-700">signature</code>.</span></li>
+                            <li class="flex gap-3"><span class="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">6</span>
+                                <span>Trang kết quả của bạn <b>kiểm tra chữ ký</b>, đối chiếu <code class="text-blue-700">order_id</code>, <code class="text-blue-700">payment_id</code> và <code class="text-blue-700">amount</code> với đơn trong hệ thống, rồi mới hiển thị kết quả cho khách. Nếu chữ ký sai, bỏ qua toàn bộ tham số.</span></li>
+                        </ol>
+
+                        <h3 class="text-sm font-bold mb-2">Quy định của return_url</h3>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li>Không bắt buộc. Bỏ trống thì sau khi có kết quả, trang của cổng chỉ báo &quot;Bạn có thể đóng trang này&quot; và không có nút quay về website của bạn.</li>
+                            <li>Phải bắt đầu bằng <code>https://</code> (máy chủ chạy thật không nhận <code>http://</code>), tối đa 255 ký tự, không chứa tên đăng nhập hay mật khẩu, không trỏ về <code>localhost</code> hoặc địa chỉ IP nội bộ. Đơn vi phạm bị từ chối với lỗi 400.</li>
+                            <li>Không đặt token, mã nội bộ hay thông tin nhạy cảm trong <code>return_url</code>. Cổng không trả lại URL gốc cho trình duyệt của khách trước khi có kết quả, nhưng URL sẽ xuất hiện trong lịch sử trình duyệt và log của bạn khi khách quay về.</li>
+                            <li>Cổng thêm <code class="text-blue-700">order_id</code>, <code class="text-blue-700">payment_id</code>, <code class="text-blue-700">amount</code>, <code class="text-blue-700">status</code>, <code class="text-blue-700">paid_at</code> (chỉ khi đã thanh toán), <code class="text-blue-700">timestamp</code> và <code class="text-blue-700">signature</code> vào cuối URL. Các tham số khác của bạn được giữ nguyên, tham số trùng tên bị ghi đè. Ví dụ: <code class="break-all">https://yourdomain.com/checkout/result?order_id=ORD-20261017-001&amp;payment_id=0197a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b&amp;amount=150000&amp;status=success&amp;paid_at=2026-10-17T03:04:05.678Z&amp;timestamp=1792209845&amp;signature=9f2c...e1</code></li>
+                        </ul>
+                        <div class="overflow-x-auto mb-4">
+                            <table class="w-full text-sm text-left">
+                                <thead class="text-gray-500 border-b">
+                                    <tr><th class="py-2 pr-4 font-medium">Giá trị status trên URL</th><th class="py-2 font-medium">Ý nghĩa</th></tr>
+                                </thead>
+                                <tbody class="divide-y">
+                                    <tr><td class="py-2 pr-4"><span class="bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded">success</span></td><td class="py-2">Khách đã thanh toán thành công.</td></tr>
+                                    <tr><td class="py-2 pr-4"><span class="bg-red-100 text-red-700 text-xs font-semibold px-2 py-0.5 rounded">failed</span></td><td class="py-2">Thanh toán thất bại, hoặc đơn hết hạn (mặc định 15 phút) mà khách chưa thanh toán.</td></tr>
+                                </tbody>
+                            </table>
+                            <p class="text-xs text-gray-500 mt-2">Khi đơn còn <code>pending</code>, khách chưa bị chuyển đi, vẫn ở trang của cổng để thanh toán.</p>
+                        </div>
+
+                        <div class="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg p-3 text-sm space-y-1 mb-4">
+                            <p><b>Phải kiểm tra <code>signature</code> trước khi tin các tham số trên URL.</b> Ai cũng có thể tự gõ <code>return_url?order_id=...&amp;status=success</code>, nhưng không ai ký giả được nếu không có Secret Key của bạn. Thiếu hoặc sai chữ ký thì bỏ qua toàn bộ request, không giao hàng.</p>
+                            <p><b>Cách tính chữ ký</b> (cùng thuật toán với callback và hàm <code>sign</code> ở mục Ký request): <code class="break-all">signature = HMAC_SHA256_hex(secret_key, timestamp + &quot;.&quot; + data)</code>, trong đó <code class="break-all">data = payment_id|amount|status|paid_at|order_id</code>. Nếu URL không có <code>paid_at</code> thì dùng chuỗi rỗng. So sánh bằng hàm so sánh thời gian cố định (<code>timingSafeEqual</code>).</p>
+                            <p>Sau khi chữ ký đúng, vẫn phải đối chiếu <code>order_id</code>, <code>payment_id</code> và <code>amount</code> với đơn của bạn, và kiểm tra <code>timestamp</code> còn mới.</p>
+                            <p>Khách có thể đóng trình duyệt hoặc không bấm nút quay lại. Vì vậy vẫn phải cập nhật đơn bằng <b>callback</b>, đừng chỉ dựa vào trang <code>return_url</code>.</p>
+                        </div>
+
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li>Chuyển hướng <b>cả trang</b>. Trang thanh toán của cổng không cho nhúng trong <code>&lt;iframe&gt;</code>.</li>
+                            <li>Mỗi <code>payment_url</code> ứng với một đơn và hết hạn theo <code>expires_at</code>. Khách làm trễ thì hãy tạo thanh toán mới.</li>
+                            <li><code>payment_url</code> và <code>qr_image</code> cùng nằm trong một phản hồi, bạn chọn cách nào cũng được: tự hiển thị QR hoặc chuyển hướng sang <code>payment_url</code>.</li>
+                        </ul>
+
+                        <p class="text-sm text-gray-600 mb-2">Ví dụ phía server của bạn (Node.js, Express):</p>
+                        <div class="relative">
+                            <button type="button" onclick="copyCode('code-redirect-js', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-redirect-js"></code></pre>
+                        </div>
+                    </section>
+
+                    <section id="g-callback" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-1">Nhận callback</h2>
+                        <p class="text-sm text-gray-600 mb-4">
+                            Khi giao dịch kết thúc, cổng thanh toán gửi
+                            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded">POST</span>
+                            tới Callback URL của bạn. Có hai trường hợp:
+                        </p>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li><span class="bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded">success</span> khi khách đã thanh toán và ví đã bị trừ tiền.</li>
+                            <li><span class="bg-red-100 text-red-700 text-xs font-semibold px-2 py-0.5 rounded">failed</span> khi đơn quá <code>expires_at</code> mà khách chưa thanh toán. Callback này có thể đến chậm tối đa khoảng 30 giây sau <code>expires_at</code>.</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Các header:</p>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li><code class="text-blue-700">X-Signature</code>: chữ ký HMAC-SHA256 của <code>timestamp + "." + rawBody</code>, ký bằng Secret Key của bạn.</li>
+                            <li><code class="text-blue-700">X-Timestamp</code>: thời điểm gửi (giây Unix). Mỗi lần gửi lại có giá trị mới, nên bạn có thể từ chối callback lệch quá 5 phút.</li>
+                            <li><code class="text-blue-700">X-Delivery-Id</code>: mã của lần gửi, <b>giữ nguyên qua các lần gửi lại</b>. Dùng để nhận biết callback trùng.</li>
+                            <li><code class="text-blue-700">X-Delivery-Attempt</code>: lần gửi thứ mấy (1, 2, 3...).</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Body (JSON):</p>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li><code class="text-blue-700">payment_id</code>, <code class="text-blue-700">order_id</code>: mã thanh toán và mã đơn của bạn.</li>
+                            <li><code class="text-blue-700">amount</code>: số tiền (VND), là <b>số nguyên</b>.</li>
+                            <li><code class="text-blue-700">status</code>: <code>success</code> hoặc <code>failed</code>.</li>
+                            <li><code class="text-blue-700">paid_at</code>: thời điểm thanh toán (ISO 8601, UTC). Là <code>null</code> khi <code>failed</code>.</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Ví dụ callback <code>success</code>:</p>
+                        <div class="relative mb-4">
+                            <button type="button" onclick="copyCode('code-callback-body', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-callback-body"></code></pre>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-2">Ví dụ callback <code>failed</code>:</p>
+                        <div class="relative mb-4">
+                            <button type="button" onclick="copyCode('code-callback-body-failed', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-callback-body-failed"></code></pre>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-2">Phản hồi và gửi lại:</p>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li>Trả về <b>HTTP 2xx</b> trong vòng vài giây (tối đa 8 giây) để báo đã nhận. Hãy xử lý nặng ở nền, đừng bắt cổng thanh toán chờ.</li>
+                            <li>Mã khác 2xx, quá thời gian chờ, lỗi kết nối hoặc <b>redirect (3xx)</b> đều tính là gửi lỗi và sẽ được gửi lại. Cổng thanh toán không đi theo redirect.</li>
+                            <li>Tối đa <b>8 lần gửi</b>: ngay lập tức, rồi sau 1 phút, 5 phút, 30 phút, 2 giờ, 6 giờ, 12 giờ và 24 giờ. Hết lượt mà vẫn lỗi thì dừng, hãy dùng API <b>Kiểm tra trạng thái</b> để đối soát.</li>
+                            <li>Callback có thể đến <b>trùng</b> hoặc đến sau khi bạn đã tự tra cứu trạng thái. Xử lý phải idempotent (xem ví dụ bên dưới).</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Yêu cầu với Callback URL:</p>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li>Dùng <b>https</b> (môi trường production không chấp nhận http).</li>
+                            <li>Tối đa 100 ký tự, không chứa tên đăng nhập và mật khẩu (<code>user:pass@</code>).</li>
+                            <li>Phải là địa chỉ công khai. Không chấp nhận <code>localhost</code> hay IP nội bộ (<code>10.x</code>, <code>192.168.x</code>, <code>127.x</code>...). Khi phát triển trên máy cá nhân, hãy dùng dịch vụ tạo tunnel (ngrok, cloudflared...).</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Ví dụ xử lý (Node.js / Express):</p>
+                        <div class="relative">
+                            <button type="button" onclick="copyCode('code-callback-js', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-callback-js"></code></pre>
+                        </div>
+                    </section>
+
+                    <section id="g-status" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-1">Kiểm tra trạng thái</h2>
+                        <p class="text-sm text-gray-600 mb-2">
+                            Dùng khi chưa nhận được callback hoặc cần đối soát.
+                            <span class="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded ml-1">GET</span>
+                            <code id="ep-status" class="ml-1 text-xs break-all"></code>
+                        </p>
+                        <p class="text-sm text-gray-600 mb-4">
+                            Request GET không có body: vẫn gửi đủ <code class="text-blue-700">X-API-Key</code>, <code class="text-blue-700">X-Timestamp</code>, <code class="text-blue-700">X-Signature</code>, và ký với body rỗng, tức là <code>timestamp + "." + ""</code>. Không cần <code>Idempotency-Key</code>. Chỉ tra được đơn của chính merchant đang gọi.
+                        </p>
+                        <p class="text-sm text-gray-600 mb-2">Phản hồi thành công:</p>
+                        <div class="relative mb-4">
+                            <button type="button" onclick="copyCode('code-status-res', this)" class="absolute top-2 right-2 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Copy</button>
+                            <pre class="code-block rounded-lg p-4 overflow-x-auto"><code id="code-status-res"></code></pre>
+                        </div>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700 mb-4">
+                            <li><code class="text-blue-700">amount</code>: số tiền (VND, số nguyên).</li>
+                            <li><code class="text-blue-700">transaction_id</code>, <code class="text-blue-700">paid_at</code>: chỉ có giá trị khi đơn đã thanh toán. Chưa thanh toán thì là <code>null</code>.</li>
+                            <li><code class="text-blue-700">created_at</code>, <code class="text-blue-700">expires_at</code>: thời điểm tạo và thời điểm hết hạn của đơn (định dạng ISO 8601). Quá <code>expires_at</code> mà chưa thanh toán thì đơn chuyển sang <code>failed</code>.</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mb-2">Lỗi trả về dạng <code>{ "message": "..." }</code>. Không tìm thấy đơn (hoặc đơn không thuộc merchant) trả về HTTP 404.</p>
+                        <div class="overflow-x-auto mt-4">
+                            <table class="w-full text-sm text-left">
+                                <thead class="text-gray-500 border-b">
+                                    <tr><th class="py-2 pr-4 font-medium">Trạng thái</th><th class="py-2 font-medium">Ý nghĩa</th></tr>
+                                </thead>
+                                <tbody class="divide-y">
+                                    <tr><td class="py-2 pr-4"><span class="bg-yellow-100 text-yellow-700 text-xs font-semibold px-2 py-0.5 rounded">pending</span></td><td class="py-2">Đã tạo, đang chờ khách thanh toán.</td></tr>
+                                    <tr><td class="py-2 pr-4"><span class="bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded">success</span></td><td class="py-2">Đã trừ tiền ví khách. Có thể giao hàng.</td></tr>
+                                    <tr><td class="py-2 pr-4"><span class="bg-red-100 text-red-700 text-xs font-semibold px-2 py-0.5 rounded">failed</span></td><td class="py-2">Thanh toán thất bại hoặc đơn đã hết hạn mà khách chưa thanh toán.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="g-notes" class="guide-section bg-white rounded-2xl shadow p-6">
+                        <h2 class="text-lg font-bold mb-3">Lưu ý quan trọng</h2>
+                        <ul class="list-disc pl-5 space-y-2 text-sm text-gray-700">
+                            <li><b>Luôn xác minh chữ ký</b> của callback trước khi cập nhật đơn. Chữ ký sai thì bỏ qua request.</li>
+                            <li><b>Xử lý callback idempotent</b>: cùng một đơn có thể nhận callback nhiều lần. Đơn đã <code>success</code> thì không xử lý lại.</li>
+                            <li>Trả về <b>HTTP 2xx</b> khi đã xử lý xong. Nếu hệ thống của bạn gặp lỗi tạm thời (ví dụ mất kết nối database), hãy trả <b>5xx</b> để cổng thanh toán gửi lại theo lịch ở mục Nhận callback. Đừng trả 2xx khi chưa lưu được kết quả.</li>
+                            <li>Callback có hai loại: <code>success</code> và <code>failed</code>. Chỉ giao hàng khi nhận <code>success</code>, và hãy đối chiếu thêm bằng API <b>Kiểm tra trạng thái</b> nếu cần chắc chắn.</li>
+                            <li>Đối chiếu <code>amount</code> (số nguyên) và <code>order_id</code> trong callback với đơn trong hệ thống của bạn. Dùng so sánh bằng (<code>===</code>) với số, đừng so với chuỗi.</li>
+                            <li>Với <b>Luồng Redirect</b>, chỉ tin các tham số trên <code>return_url</code> sau khi <b>xác minh <code>signature</code></b> và đối chiếu <code>order_id</code>, <code>payment_id</code>, <code>amount</code> với đơn của bạn. Không có chữ ký hợp lệ thì dựa vào callback hoặc API Kiểm tra trạng thái.</li>
+                            <li>Dùng <code>Idempotency-Key</code> khi tạo thanh toán để tránh tạo trùng nếu phải gửi lại do timeout.</li>
+                            <li>Không để lộ API Key và Secret Key ở phía client. Lộ Secret Key thì người khác ký giả được request, hãy liên hệ để cấp lại.</li>
+                        </ul>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="logout-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/50"
+        onclick="if (event.target === this) closeLogoutModal()">
+        <div class="bg-white max-w-sm w-full p-6 rounded-2xl shadow-xl text-center">
+            <div class="mx-auto mb-4 w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+                <i class="fa-solid fa-right-from-bracket text-xl"></i>
+            </div>
+            <h3 class="text-lg font-bold text-gray-800 mb-1">Đăng xuất?</h3>
+            <p class="text-sm text-gray-600 mb-6">Bạn có chắc chắn muốn đăng xuất khỏi tài khoản không?</p>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeLogoutModal()"
+                    class="flex-1 bg-gray-200 text-gray-800 font-semibold py-2 rounded-lg hover:bg-gray-300 transition duration-200">
+                    Hủy
+                </button>
+                <button type="button" id="confirm-logout-btn" onclick="handleLogout()"
+                    class="flex-1 bg-red-600 text-white font-semibold py-2 rounded-lg hover:bg-red-700 transition duration-200 disabled:opacity-60">
+                    Đăng xuất
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="reset-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/50"
+        onclick="if (event.target === this) closeResetModal()">
+        <div class="bg-white max-w-md w-full p-6 rounded-2xl shadow-xl text-center">
+            <div class="mx-auto mb-4 w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center">
+                <i class="fa-solid fa-triangle-exclamation text-xl"></i>
+            </div>
+            <h3 id="reset-modal-title" class="text-lg font-bold text-gray-800 mb-1">Xác nhận làm mới</h3>
+            <p id="reset-modal-desc" class="text-sm text-gray-600 mb-6"></p>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeResetModal()"
+                    class="flex-1 bg-gray-200 text-gray-800 font-semibold py-2 rounded-lg hover:bg-gray-300 transition duration-200">
+                    Hủy
+                </button>
+                <button type="button" id="confirm-reset-btn" onclick="handleResetKey()"
+                    class="flex-1 bg-amber-600 text-white font-semibold py-2 rounded-lg hover:bg-amber-700 transition duration-200 disabled:opacity-60">
+                    Xác nhận
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_ROOT = APP_CONFIG.sandbox.API_ROOT;
+        const AUTH_BASE = API_ROOT + '/auth';
+        const DASHBOARD_BASE = API_ROOT + '/dashboard';
+        const WALLET_API_URL = APP_CONFIG.sandbox.WALLET_API_URL;
+
+        document.getElementById('download-apk-btn').href = APP_CONFIG.sandbox.APK_URL;
+
+        const GATEWAY_BASE = API_ROOT;
+        const EP_CREATE_PAYMENT = GATEWAY_BASE + '/payments';
+        const EP_PAYMENT_STATUS = GATEWAY_BASE + '/payments/{order_id}';
+
+        let resetTypeTarget = null;
+
+        // Địa chỉ trang thanh toán của cổng (cùng máy chủ với API), dùng cho ví dụ Redirect
+        const PAY_PAGE_BASE = new URL(GATEWAY_BASE).origin + '/pay/';
+
+        const SAMPLES = {
+            'code-sign':
+"const crypto = require('crypto');\n" +
+"\n" +
+"const SECRET_KEY = process.env.WALLET_SECRET_KEY;\n" +
+"\n" +
+"function sign(timestamp, rawBody) {\n" +
+"  return crypto\n" +
+"    .createHmac('sha256', SECRET_KEY)\n" +
+"    .update(timestamp + '.' + rawBody)\n" +
+"    .digest('hex');\n" +
+"}",
+
+            'code-create-body':
+'{\n' +
+'  "amount": 150000,\n' +
+'  "order_id": "ORD-20261017-001",\n' +
+'  "description": "Thanh toan don ORD-20261017-001",\n' +
+'  "items": [\n' +
+'    {\n' +
+'      "product_id": "SP001",\n' +
+'      "name": "Áo thun nam",\n' +
+'      "quantity": 2,\n' +
+'      "unit_price": 50000,\n' +
+'      "description": "Size L, màu đen"\n' +
+'    },\n' +
+'    {\n' +
+'      "product_id": "SP002",\n' +
+'      "name": "Quần jean",\n' +
+'      "quantity": 1,\n' +
+'      "unit_price": 50000,\n' +
+'      "description": "Size 32"\n' +
+'    }\n' +
+'  ],\n' +
+'  "callback_url": "https://yourdomain.com/api/payment/callback",\n' +
+'  "return_url": "https://yourdomain.com/checkout/result"\n' +
+'}',
+
+            'code-create-res':
+'{\n' +
+'  "data": {\n' +
+'    "id": "0193a1b2-7c4d-7e5f-8a9b-0c1d2e3f4a5b",\n' +
+'    "reference_code": "A1B2C3D4E5F6G7H8",\n' +
+'    "order_id": "ORD-20261017-001",\n' +
+'    "amount": 150000,\n' +
+'    "description": "Thanh toan don ORD-20261017-001",\n' +
+'    "status": "PENDING",\n' +
+'    "expires_at": "2026-10-17T09:43:00Z",\n' +
+'    "created_at": "2026-10-17T09:28:00Z",\n' +
+'    "items": [\n' +
+'      {\n' +
+'        "product_id": "SP001",\n' +
+'        "name": "Áo thun nam",\n' +
+'        "quantity": 2,\n' +
+'        "unit_price": 50000,\n' +
+'        "description": "Size L, màu đen"\n' +
+'      },\n' +
+'      {\n' +
+'        "product_id": "SP002",\n' +
+'        "name": "Quần jean",\n' +
+'        "quantity": 1,\n' +
+'        "unit_price": 50000,\n' +
+'        "description": "Size 32"\n' +
+'      }\n' +
+'    ],\n' +
+'    "qr_image": "data:image/png;base64,...",\n' +
+'    "payment_url": "' + PAY_PAGE_BASE + 'A1B2C3D4E5F6G7H8",\n' +
+'    "return_url": "https://yourdomain.com/checkout/result"\n' +
+'  }\n' +
+'}',
+
+            'code-create-js':
+"const crypto = require('crypto');\n" +
+"\n" +
+"async function createPayment(order) {\n" +
+"  const body = JSON.stringify({\n" +
+"    amount: order.amount,\n" +
+"    order_id: order.id,\n" +
+"    description: 'Thanh toan don ' + order.id,\n" +
+"    items: order.items.map((i) => ({\n" +
+"      product_id: String(i.id),\n" +
+"      name: i.name,\n" +
+"      quantity: i.qty,\n" +
+"      unit_price: i.price,\n" +
+"      description: i.description,\n" +
+"    })),\n" +
+"    callback_url: 'https://yourdomain.com/api/payment/callback',\n" +
+"    return_url: 'https://yourdomain.com/checkout/result',\n" +
+"  });\n" +
+"  const timestamp = Math.floor(Date.now() / 1000).toString();\n" +
+"\n" +
+"  const res = await fetch('" + EP_CREATE_PAYMENT + "', {\n" +
+"    method: 'POST',\n" +
+"    headers: {\n" +
+"      'Content-Type': 'application/json',\n" +
+"      'X-API-Key': process.env.WALLET_API_KEY,\n" +
+"      'X-Timestamp': timestamp,\n" +
+"      'X-Signature': sign(timestamp, body),\n" +
+"      'Idempotency-Key': 'create-' + order.id,\n" +
+"    },\n" +
+"    body,\n" +
+"  });\n" +
+"  const json = await res.json();\n" +
+"  if (!res.ok) throw new Error(json.message);\n" +
+"\n" +
+"  return json.data;\n" +
+"}",
+
+            'code-redirect-js':
+"// 1) Khách bấm \"Thanh toán\": tạo thanh toán rồi chuyển khách sang trang của cổng\n" +
+"app.post('/checkout', async (req, res) => {\n" +
+"  const order = await createOrder(req);           // lưu đơn của bạn, trạng thái 'pending'\n" +
+"  const payment = await createPayment(order);     // hàm ở mục \"Tạo thanh toán\" (có gửi return_url)\n" +
+"  await savePaymentId(order.id, payment.id);      // lưu payment.id để đối soát\n" +
+"  res.redirect(303, payment.payment_url);         // chuyển hướng cả trang, không nhúng iframe\n" +
+"});\n" +
+"\n" +
+"// 2) Khách bấm \"Quay lại cửa hàng\" trên trang của cổng, được đưa về:\n" +
+"//    GET /checkout/result?order_id=...&payment_id=...&amount=...&status=...&paid_at=...&timestamp=...&signature=...\n" +
+"app.get('/checkout/result', async (req, res) => {\n" +
+"  // Mỗi tham số phải là chuỗi (chặn ?status=a&status=b thành mảng)\n" +
+"  const q = Object.fromEntries(\n" +
+"    Object.entries(req.query).map(([k, v]) => [k, typeof v === 'string' ? v : ''])\n" +
+"  );\n" +
+"\n" +
+"  // a) KIỂM TRA CHỮ KÝ TRƯỚC TIÊN. Sai hoặc thiếu thì bỏ qua mọi tham số còn lại.\n" +
+"  if (!verifyReturnSignature(q)) return res.status(400).send('Kết quả không hợp lệ');\n" +
+"\n" +
+"  // b) Dấu thời gian còn mới (ví dụ trong 1 giờ)\n" +
+"  const age = Math.abs(Math.floor(Date.now() / 1000) - Number(q.timestamp));\n" +
+"  if (!Number.isInteger(Number(q.timestamp)) || age > 3600) return res.status(400).send('Liên kết đã quá cũ');\n" +
+"\n" +
+"  // c) Đối chiếu với đơn trong hệ thống của bạn, đừng tin số tiền trên URL\n" +
+"  const order = await findOrder(q.order_id);\n" +
+"  if (!order) return res.status(404).send('Không tìm thấy đơn hàng');\n" +
+"  if (order.paymentId !== q.payment_id || order.amount !== Number(q.amount)) {\n" +
+"    return res.status(400).send('Thông tin đơn hàng không khớp');\n" +
+"  }\n" +
+"\n" +
+"  // d) Trạng thái đã được ký nên dùng được. Cập nhật phải idempotent như khi nhận callback.\n" +
+"  if (order.status === 'pending') {\n" +
+"    if (q.status === 'success') await markOrderPaid(order.id, q.paid_at);\n" +
+"    else if (q.status === 'failed') await markOrderFailed(order.id);\n" +
+"    order.status = q.status === 'success' ? 'paid' : 'failed';\n" +
+"  }\n" +
+"  res.render('result', { order });  // paid | failed\n" +
+"});\n" +
+"\n" +
+"// Chữ ký dùng cùng hàm sign() ở mục \"Ký request\".\n" +
+"// data = payment_id|amount|status|paid_at|order_id   (paid_at rỗng nếu không có)\n" +
+"function verifyReturnSignature(q) {\n" +
+"  if (!q.timestamp || !q.signature) return false;\n" +
+"  const data = [q.payment_id, q.amount, q.status, q.paid_at || '', q.order_id].join('|');\n" +
+"  const expected = Buffer.from(sign(q.timestamp, data));\n" +
+"  const received = Buffer.from(q.signature);\n" +
+"  return expected.length === received.length && crypto.timingSafeEqual(expected, received);\n" +
+"}\n" +
+"\n" +
+"// Gọi API \"Kiểm tra trạng thái\" (request GET, ký với body rỗng)\n" +
+"async function getPaymentStatus(orderId) {\n" +
+"  const timestamp = Math.floor(Date.now() / 1000).toString();\n" +
+"  const url = '" + EP_PAYMENT_STATUS + "'.replace('{order_id}', encodeURIComponent(orderId));\n" +
+"  const res = await fetch(url, {\n" +
+"    headers: {\n" +
+"      'X-API-Key': process.env.WALLET_API_KEY,\n" +
+"      'X-Timestamp': timestamp,\n" +
+"      'X-Signature': sign(timestamp, ''),\n" +
+"    },\n" +
+"  });\n" +
+"  const json = await res.json();\n" +
+"  if (!res.ok) throw new Error(json.message);\n" +
+"  return json.data;\n" +
+"}",
+
+            'code-callback-body':
+'{\n' +
+'  "payment_id": "pay_8f3a2c...",\n' +
+'  "order_id": "ORD-20261017-001",\n' +
+'  "amount": 150000,\n' +
+'  "status": "success",\n' +
+'  "paid_at": "2026-10-17T09:30:12Z"\n' +
+'}',
+
+            'code-callback-js':
+"const express = require('express');\n" +
+"const crypto = require('crypto');\n" +
+"const app = express();\n" +
+"\n" +
+"app.post('/api/payment/callback',\n" +
+"  express.raw({ type: 'application/json' }),\n" +
+"  async (req, res) => {\n" +
+"    const rawBody = req.body.toString('utf8');\n" +
+"    const timestamp = req.header('X-Timestamp') || '';\n" +
+"    const signature = req.header('X-Signature') || '';\n" +
+"\n" +
+"    // 1. Từ chối callback quá cũ (mỗi lần gửi đều có timestamp mới)\n" +
+"    if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {\n" +
+"      return res.status(401).end();\n" +
+"    }\n" +
+"\n" +
+"    // 2. Xác minh chữ ký\n" +
+"    const expected = crypto\n" +
+"      .createHmac('sha256', process.env.WALLET_SECRET_KEY)\n" +
+"      .update(timestamp + '.' + rawBody)\n" +
+"      .digest('hex');\n" +
+"\n" +
+"    const ok = signature.length === expected.length &&\n" +
+"      crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));\n" +
+"    if (!ok) return res.status(401).end();\n" +
+"\n" +
+"    // 3. Xử lý idempotent: callback có thể đến trùng\n" +
+"    const event = JSON.parse(rawBody);\n" +
+"    const order = await findOrder(event.order_id);\n" +
+"    if (!order || order.status === 'success') {\n" +
+"      return res.status(200).json({ received: true });\n" +
+"    }\n" +
+"    if (event.amount !== order.amount) {\n" +
+"      console.error('Sai số tiền', event); // ghi log để kiểm tra\n" +
+"      return res.status(200).json({ received: true });\n" +
+"    }\n" +
+"\n" +
+"    // Nếu lưu DB lỗi, để lỗi nổi lên (5xx) để cổng thanh toán gửi lại\n" +
+"    if (event.status === 'success') {\n" +
+"      await updateOrderStatus(order.id, 'success');\n" +
+"    } else if (event.status === 'failed') {\n" +
+"      await updateOrderStatus(order.id, 'failed');\n" +
+"    }\n" +
+"    res.status(200).json({ received: true });\n" +
+"  }\n" +
+");",
+
+            'code-callback-body-failed':
+'{\n' +
+'  "payment_id": "pay_8f3a2c...",\n' +
+'  "order_id": "ORD-20261017-002",\n' +
+'  "amount": 150000,\n' +
+'  "status": "failed",\n' +
+'  "paid_at": null\n' +
+'}',
+
+            'code-status-res':
+'{\n' +
+'  "data": {\n' +
+'    "payment_id": "pay_8f3a2c...",\n' +
+'    "order_id": "ORD-20261017-001",\n' +
+'    "amount": 150000,\n' +
+'    "status": "success",\n' +
+'    "transaction_id": "100000000073",\n' +
+'    "paid_at": "2026-10-17T09:30:12Z",\n' +
+'    "created_at": "2026-10-17T09:28:00Z",\n' +
+'    "expires_at": "2026-10-17T09:43:00Z"\n' +
+'  }\n' +
+'}'
+        };
+
+        function renderGuide() {
+            Object.keys(SAMPLES).forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = SAMPLES[id];
+            });
+            document.getElementById('guide-base-url').textContent = GATEWAY_BASE;
+            document.getElementById('ep-create').textContent = EP_CREATE_PAYMENT;
+            document.getElementById('ep-status').textContent = EP_PAYMENT_STATUS;
+        }
+
+        let alertTimeout = null;
+
+        function showError(msg) {
+            clearAlerts();
+            const el = document.getElementById('error-alert');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+            alertTimeout = setTimeout(() => { el.classList.add('hidden'); }, 5000);
+        }
+
+        function showSuccess(msg) {
+            clearAlerts();
+            const el = document.getElementById('success-alert');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+            alertTimeout = setTimeout(() => { el.classList.add('hidden'); }, 5000);
+        }
+
+        function clearAlerts() {
+            if (alertTimeout) {
+                clearTimeout(alertTimeout);
+                alertTimeout = null;
+            }
+            document.getElementById('error-alert').classList.add('hidden');
+            document.getElementById('success-alert').classList.add('hidden');
+        }
+
+        // access_token chỉ giữ trong bộ nhớ của trang (tải lại trang thì lấy lại bằng cookie refresh token).
+        // refresh_token nằm trong cookie httpOnly do server đặt, JavaScript không đọc được.
+        let memoryAccessToken = null;
+
+        function clearSession() {
+            memoryAccessToken = null;
+            // Chỉ xoá khoá của sandbox, không động tới localStorage của production
+            localStorage.removeItem('sandbox_user_phone');
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+        }
+
+        function goLogin() {
+            clearSession();
+            window.location.href = 'sandbox-login.html';
+        }
+
+        let refreshPromise = null;
+        function refreshAccessToken() {
+            if (refreshPromise) return refreshPromise;
+
+            refreshPromise = (async () => {
+                let res;
+                try {
+                    // Cookie refresh token tự được trình duyệt đính kèm nhờ credentials: 'include'
+                    res = await fetch(AUTH_BASE + '/refresh-token', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'ngrok-skip-browser-warning': 'true',
+                        },
+                        body: '{}',
+                    });
+                } catch (_) {
+                    throw new Error('Không kết nối được tới server');
+                }
+
+                const json = await res.json().catch(() => ({}));
+                const token = json.data && json.data.token;
+                if (!res.ok || !token || !token.access_token) {
+                    throw new Error(json.message || 'Không làm mới được phiên đăng nhập');
+                }
+                memoryAccessToken = token.access_token;
+            })().finally(() => { refreshPromise = null; });
+
+            return refreshPromise;
+        }
+
+        async function api(url, { method = 'GET', body } = {}, retried = false) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true',
+                'Authorization': 'Bearer ' + memoryAccessToken,
+            };
+            let res;
+            try {
+                res = await fetch(url, {
+                    method,
+                    credentials: 'include',
+                    headers,
+                    body: body ? JSON.stringify(body) : undefined,
+                });
+            } catch (_) {
+                throw new Error('Không kết nối được tới server');
+            }
+
+            const json = await res.json().catch(() => ({}));
+            if (res.status === 401) {
+                if (!retried) {
+                    try {
+                        await refreshAccessToken();
+                    } catch (_) {
+                        goLogin();
+                        throw new Error('Phiên đăng nhập hết hạn');
+                    }
+                    return api(url, { method, body }, true);
+                }
+                goLogin();
+                throw new Error('Phiên đăng nhập hết hạn');
+            }
+            if (!res.ok) throw new Error(json.message || `Lỗi xảy ra (HTTP ${res.status})`);
+            return json.data ?? {};
+        }
+
+        function setLoading(btnId, loading, text = 'Đang xử lý...') {
+            const btn = document.getElementById(btnId);
+            if (loading) {
+                if (btn.dataset.loading) return;
+                btn.dataset.loading = '1';
+                btn.dataset.html = btn.innerHTML;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>' + text;
+                btn.disabled = true;
+            } else {
+                if (!btn.dataset.loading) return;
+                delete btn.dataset.loading;
+                btn.innerHTML = btn.dataset.html;
+                btn.disabled = false;
+            }
+        }
+
+        function formatMoney(value) {
+            return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(Number(value) || 0);
+        }
+
+        function switchTab(name) {
+            ['overview', 'balance', 'guide'].forEach((t) => {
+                const panel = document.getElementById('panel-' + t);
+                const btn = document.getElementById('tab-' + t);
+                if (panel) panel.classList.toggle('hidden', t !== name);
+                if (btn) btn.classList.toggle('active', t === name);
+            });
+            document.getElementById('guide-toc').classList.toggle('hidden', name !== 'guide');
+            clearAlerts();
+            window.scrollTo({ top: 0 });
+            history.replaceState(null, '', '#' + name);
+        }
+
+        async function loadInfo() {
+            try {
+                const data = await api(DASHBOARD_BASE + '/info');
+                document.getElementById('full-name').textContent = data.full_name || '';
+                document.getElementById('balance').textContent = formatMoney(data.balance);
+                document.getElementById('api-key').value = data.api_key || '';
+                document.getElementById('secret-key').value = data.secret_key || '';
+                document.getElementById('callback-url').value = data.call_back_url || '';
+            } catch (e) {
+                showError(e.message);
+            }
+        }
+
+        async function handleUpdateCallback() {
+            clearAlerts();
+            const callbackUrl = document.getElementById('callback-url').value.trim();
+            if (!callbackUrl) return showError('Callback URL không được để trống!');
+            try {
+                await api(DASHBOARD_BASE + '/callback', { method: 'PATCH', body: { call_back_url: callbackUrl } });
+                showSuccess('Cập nhật callback thành công');
+            } catch (e) {
+                showError(e.message);
+            }
+        }
+
+        // Ô số tiền: chỉ giữ chữ số (tối đa 9), hiển thị có dấu chấm ngăn cách hàng nghìn
+        function formatAmountInput(input) {
+            const digits = input.value.replace(/\D/g, '').slice(0, 9);
+            input.value = digits ? Number(digits).toLocaleString('vi-VN') : '';
+        }
+
+        async function handleUpdateWalletBalance() {
+    clearAlerts();
+    const phone = document.getElementById('update-phone').value.trim();
+    const amountRaw = document.getElementById('update-amount').value.replace(/\D/g, '');
+    const amount = Number(amountRaw);
+
+    if (!phone || !amountRaw) {
+        return showError('Vui lòng nhập đầy đủ số điện thoại và số tiền!');
+    }
+
+    if (isNaN(amount) || !isFinite(amount)) {
+        return showError('Số tiền không hợp lệ');
+    }
+
+    if (amount < 1 || amount > 50000000) {
+        return showError('Số tiền phải từ 1 đến 50.000.000đ');
+    }
+
+    try {
+        await api(WALLET_API_URL, {
+            method: 'PATCH',
+            body: { phone, amount }
+        });
+        showSuccess(`Đã cập nhật số dư cho số điện thoại ${phone} thành công!`);
+        document.getElementById('update-phone').value = '';
+        document.getElementById('update-amount').value = '';
+    } catch (e) {
+        showError(e.message);
+    }
+}
+
+        async function copyText(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (_) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+            }
+        }
+
+        async function copyCode(id, btn) {
+            await copyText(document.getElementById(id).textContent);
+            const old = btn.textContent;
+            btn.textContent = 'Đã copy';
+            setTimeout(() => { btn.textContent = old; }, 1500);
+        }
+
+        function initGuideSpy() {
+            const links = Array.from(document.querySelectorAll('#guide-toc .guide-link'));
+            const sections = links.map((a) => document.querySelector(a.getAttribute('href')));
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach((entry) => {
+                    if (!entry.isIntersecting) return;
+                    links.forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + entry.target.id));
+                });
+            }, { rootMargin: '-90px 0px -60% 0px' });
+            sections.forEach((x) => x && observer.observe(x));
+        }
+
+        function toggleKey(inputId, iconId) {
+            const field = document.getElementById(inputId);
+            const icon = document.getElementById(iconId);
+            const isHidden = field.type === 'password';
+            field.type = isHidden ? 'text' : 'password';
+            icon.classList.toggle('fa-eye', isHidden);
+            icon.classList.toggle('fa-eye-slash', !isHidden);
+        }
+
+        async function copyKey(inputId, btnId) {
+            const value = document.getElementById(inputId).value;
+            if (!value) return;
+            await copyText(value);
+            const btn = document.getElementById(btnId);
+            btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i> Đã copy';
+            setTimeout(() => { btn.innerHTML = old; }, 1500);
+        }
+
+        function openResetModal(type) {
+            resetTypeTarget = type;
+            const titleEl = document.getElementById('reset-modal-title');
+            const descEl = document.getElementById('reset-modal-desc');
+
+            if (type === 'apiKey') {
+                titleEl.textContent = 'Xác nhận reset API Key?';
+                descEl.innerHTML = 'Bạn có chắc chắn muốn làm mới API Key không? Sau khi reset, API Key cũ sẽ không thể sử dụng. <b>Lưu ý: Thao tác này chỉ có thể thực hiện 1 lần trong 7 ngày.</b>';
+            } else if (type === 'secretKey') {
+                titleEl.textContent = 'Xác nhận reset Secret Key?';
+                descEl.innerHTML = 'Bạn có chắc chắn muốn làm mới Secret Key không? Sau khi reset, các kết nối đang chạy key cũ sẽ thất bại. <b>Lưu ý: Thao tác này chỉ có thể thực hiện 1 lần trong 7 ngày.</b>';
+            }
+            document.getElementById('reset-modal').classList.remove('hidden');
+        }
+
+        function closeResetModal() {
+            resetTypeTarget = null;
+            document.getElementById('reset-modal').classList.add('hidden');
+        }
+
+        async function handleResetKey() {
+            if (!resetTypeTarget) return;
+            clearAlerts();
+            const isApiKey = resetTypeTarget === 'apiKey';
+            const endpoint = DASHBOARD_BASE + (isApiKey ? '/reset-apikey' : '/reset-secretkey');
+
+            setLoading('confirm-reset-btn', true, 'Đang tạo mới...');
+            try {
+                const data = await api(endpoint, { method: 'POST' });
+                if (isApiKey && data.rows && data.rows[0]) {
+                    document.getElementById('api-key').value = data.rows[0].api_key;
+                } else if (!isApiKey && data.rows && data.rows[0]) {
+                    document.getElementById('secret-key').value = data.rows[0].secret_key;
+                } else {
+                    await loadInfo();
+                }
+                showSuccess(`Làm mới ${isApiKey ? 'API Key' : 'Secret Key'} thành công!`);
+                closeResetModal();
+            } catch (e) {
+                closeResetModal();
+                showError(e.message);
+            } finally {
+                setLoading('confirm-reset-btn', false);
+            }
+        }
+
+        function openLogoutModal() { document.getElementById('logout-modal').classList.remove('hidden'); }
+        function closeLogoutModal() { document.getElementById('logout-modal').classList.add('hidden'); }
+        async function handleLogout() {
+            setLoading('confirm-logout-btn', true, 'Đang đăng xuất...');
+            try {
+                await api(AUTH_BASE + '/logout', { method: 'POST' });
+            } catch (_) {}
+            goLogin();
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeLogoutModal();
+                closeResetModal();
+            }
+        });
+
+        window.addEventListener('load', async () => {
+            try {
+                await refreshAccessToken();
+            } catch (_) {
+                return goLogin();
+            }
+            renderGuide();
+            initGuideSpy();
+            const h = location.hash;
+            switchTab(h === '#balance' ? 'balance' : (h === '#guide' || h.startsWith('#g-')) ? 'guide' : 'overview');
+            if (h.startsWith('#g-')) { const t = document.querySelector(h); if (t) t.scrollIntoView(); }
+            loadInfo();
+        });
+    </script>
+</body>
+</html>

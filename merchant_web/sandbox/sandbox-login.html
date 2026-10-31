@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sandbox - Cổng Test Merchant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="../config.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .tab-btn { border-bottom: 2px solid transparent; }
+        .tab-btn.active { color: #059669; border-color: #059669; font-weight: 600; }
+    </style>
+</head>
+<body class="bg-emerald-50 min-h-screen flex items-center justify-center p-6">
+
+    <div class="bg-white max-w-md w-full p-8 rounded-2xl shadow-xl border border-emerald-100">
+        
+        <!-- Header cảnh báo môi trường Sandbox -->
+        <div class="flex items-center justify-between mb-6 pb-4 border-b border-gray-100">
+            <span class="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full uppercase tracking-wider">
+                <i class="fa-solid fa-flask mr-1"></i> Môi trường Sandbox
+            </span>
+            <a href="../production/login.html" class="text-xs text-gray-500 hover:text-gray-800 transition">
+                <i class="fa-solid fa-arrow-left mr-1"></i> Về Production
+            </a>
+        </div>
+
+        <div id="error-alert" class="hidden mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm"></div>
+        <div id="success-alert" class="hidden mb-4 p-3 bg-emerald-100 border border-emerald-400 text-emerald-800 rounded-lg text-sm"></div>
+
+        <!-- Tabs chuyển đổi: Đăng nhập test / Tạo tài khoản test -->
+        <div class="flex border-b mb-6 text-sm">
+            <button type="button" id="tab-login" onclick="switchTab('login')" class="tab-btn active flex-1 pb-3 text-center text-gray-600">
+                Đăng nhập Test
+            </button>
+            <button type="button" id="tab-register" onclick="switchTab('register')" class="tab-btn flex-1 pb-3 text-center text-gray-600">
+                Tạo tài khoản Test
+            </button>
+        </div>
+
+        <!-- ================= TAB 1: ĐĂNG NHẬP TEST ================= -->
+        <section id="panel-login" class="space-y-4">
+            <form onsubmit="handleSandboxLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Số điện thoại test</label>
+                    <input type="text" id="sb-phone" required maxlength="10" placeholder="0999999999" value="0999999999"
+                        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
+                    <input type="password" id="sb-password" required placeholder="••••••••" value="123456"
+                        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+                <button type="submit" id="sb-login-btn"
+                    class="w-full bg-emerald-600 text-white font-semibold py-3 rounded-lg hover:bg-emerald-700 transition duration-200">
+                    Truy cập Dashboard Sandbox
+                </button>
+            </form>
+        </section>
+
+        <!-- ================= TAB 2: TẠO TÀI KHOẢN TEST ================= -->
+        <section id="panel-register" class="hidden space-y-4">
+            <form onsubmit="handleSandboxRegister(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Tên cửa hàng</label>
+                    <input type="text" id="sb-store-name" required placeholder="Shop Test Nhanh"
+                        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Số điện thoại</label>
+                    <input type="text" id="sb-reg-phone" required maxlength="10" placeholder="0988888888"
+                        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
+                    <input type="password" id="sb-reg-password" required placeholder="••••••••"
+                        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+                <button type="submit" id="sb-reg-btn"
+                    class="w-full bg-emerald-600 text-white font-semibold py-3 rounded-lg hover:bg-emerald-700 transition duration-200">
+                    Tạo nhanh tài khoản Test
+                </button>
+            </form>
+        </section>
+
+    </div>
+
+    <script>
+        const API_BASE = APP_CONFIG.sandbox.API_ROOT + '/auth';
+
+        // Dọn token của phiên bản cũ; sandbox_user_phone chỉ là dấu hiệu "đã đăng nhập"
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        if (localStorage.getItem('sandbox_user_phone')) {
+            window.location.href = 'sandbox-dashboard.html';
+        }
+
+        function switchTab(tab) {
+            document.getElementById('panel-login').classList.toggle('hidden', tab !== 'login');
+            document.getElementById('panel-register').classList.toggle('hidden', tab !== 'register');
+            document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+            document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+            clearAlerts();
+        }
+
+        function showError(msg) {
+            document.getElementById('success-alert').classList.add('hidden');
+            const el = document.getElementById('error-alert');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+
+        function showSuccess(msg) {
+            document.getElementById('error-alert').classList.add('hidden');
+            const el = document.getElementById('success-alert');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+
+        function clearAlerts() {
+            document.getElementById('error-alert').classList.add('hidden');
+            document.getElementById('success-alert').classList.add('hidden');
+        }
+
+        // Xử lý đăng nhập sandbox
+        async function handleSandboxLogin(e) {
+            e.preventDefault();
+            clearAlerts();
+            const phone = document.getElementById('sb-phone').value;
+            const password = document.getElementById('sb-password').value;
+
+            try {
+                const res = await fetch(API_BASE + '/login', {
+                    method: 'POST',
+                    credentials: 'include', // để trình duyệt nhận cookie httpOnly chứa refresh token
+                    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+                    body: JSON.stringify({ phone, password })
+                });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.message || 'Đăng nhập thất bại');
+
+                // refresh_token do server đặt vào cookie httpOnly; dashboard tự lấy access_token từ cookie đó
+                if (json.data && json.data.user_info) {
+                    localStorage.setItem('sandbox_user_phone', json.data.user_info.phone);
+                    window.location.href = 'sandbox-dashboard.html';
+                }
+            } catch (err) {
+                showError(err.message);
+            }
+        }
+
+        // Xử lý tạo tài khoản test gọi trực tiếp vào API server
+        async function handleSandboxRegister(e) {
+            e.preventDefault();
+            clearAlerts();
+            const store_name = document.getElementById('sb-store-name').value;
+            const phone = document.getElementById('sb-reg-phone').value;
+            const password = document.getElementById('sb-reg-password').value;
+
+            const email = `merchant_${phone}@sandbox.test`;
+            const call_back_url = `https://webhook.site/sandbox-${phone}`;
+
+            try {
+                const res = await fetch(API_BASE + '/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+                    body: JSON.stringify({ phone, email, password, store_name, call_back_url })
+                });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.message || 'Tạo tài khoản thất bại');
+
+                showSuccess('Tạo tài khoản thành công! Đang chuyển sang tab đăng nhập...');
+                setTimeout(() => {
+                    switchTab('login');
+                    document.getElementById('sb-phone').value = phone;
+                    document.getElementById('sb-password').value = password;
+                }, 1000);
+            } catch (err) {
+                showError(err.message);
+            }
+        }
+    </script>
+</body>
+</html>

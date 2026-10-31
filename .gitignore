@@ -1,0 +1,16 @@
+# Node.js
+**/node_modules/
+
+# Environment / Secrets
+**/.env
+**/.env.*
+!**/.env.example
+**/private/
+
+# Flutter
+**/.dart_tool/
+**/build/
+
+# IDE
+.vscode/
+.idea/

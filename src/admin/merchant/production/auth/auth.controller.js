@@ -25,30 +25,7 @@ function publicToken(token) {
 }
 
 const merchantAuthController = {
-  async isPhoneExist(req, res, next) {
-    try {
-      const { phone } = req.body;
-      const result = await merchantAuthService.isPhoneExist(phone);
-      return successResponse(
-        res,
-        200,
-        "Kiểm tra số điện thoại thành công",
-        result,
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
-
-  async isEmailExist(req, res, next) {
-    try {
-      const { email } = req.body;
-      const result = await merchantAuthService.isEmailExist(email);
-      return successResponse(res, 200, "Kiểm tra email thành công", result);
-    } catch (e) {
-      next(e);
-    }
-  },
+  
 
   async login(req, res, next) {
     try {
@@ -121,26 +98,6 @@ const merchantAuthController = {
     }
   },
 
-  async getMe(req, res, next) {
-    try {
-      const { user_id: userId, phone, full_name: fullName } = req.user;
-      const result = {
-        user_info: {
-          user_id: userId,
-          phone: phone,
-          full_name: fullName,
-        },
-      };
-      return successResponse(
-        res,
-        200,
-        "Lấy thông tin người dùng thành công",
-        result,
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
 
   async register(req, res, next) {
     try {

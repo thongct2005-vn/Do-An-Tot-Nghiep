@@ -2,12 +2,9 @@ const tokenUtil = require("../utils/jwt");
 const { httpError } = require("../utils/httpError");
 const { computePinBinding } = require("../utils/pinBinding");
 const { computeSignature, isSameSignature } = require("../utils/hashSecretKey");
-const dashboardRepository = require("../admin/merchant/production/dashboard/dashboard.repository");
+const dashboardRepository = require("../admin/merchant/shared/dashboard/dashboard.repository");
 const MERCHANT_TIMESTAMP_TOLERANCE = 5 * 60;
 
-// Chuỗi được ký: METHOD \n PATH(+query) \n Idempotency-Key \n RAW_BODY
-// Ký thêm method/path/key để request đã bắt được không replay sang endpoint khác
-// và không thể đổi Idempotency-Key. Chữ ký = HMAC_SHA256(secret, `${timestamp}.${chuỗi trên}`).
 function buildMerchantSignedPayload(req) {
   return [
     req.method.toUpperCase(),

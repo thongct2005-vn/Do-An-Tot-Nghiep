@@ -12,18 +12,22 @@ const {
 } = require("../modules/paymentPage/paymentPage.routes");
 const kycRoutes = require("../modules/kyc/kyc.routes");
 const merchantAuthRoutes = require("../admin/merchant/production/auth/auth.routes");
-const merchantDashboardRoutes = require("../admin/merchant/production/dashboard/dashboard.routes");
-const merchantPaymentRequestRoutes = require("../admin/merchant/production/paymentRequest/paymentRequest.routes");
+const createMerchantDashboardRoutes = require("../admin/merchant/shared/dashboard");
+const createMerchantPaymentRequestRoutes = require("../admin/merchant/shared/paymentRequest");
 const merchantTransactionRoutes = require("../admin/merchant/production/transaction/transaction.routes");
 const merchantProductRoutes = require("../admin/merchant/production/product/product.routes");
 const merchantBankRoutes = require("../admin/merchant/production/bank/bank.routes");
-const merchantOtpRoutes = require("../admin/merchant/production/otp/otp.routes");
-const merchantWalletRoutes = require("../admin/merchant/production/wallet/wallet.routes");
+const createMerchantWalletModule = require("../admin/merchant/shared/wallet");
 const merchantSandboxAuthRoutes = require("../admin/merchant/sandbox/auth/auth.routes");
-const merchantSandboxDashboardRoutes = require("../admin/merchant/sandbox/dashboard/dashboard.routes");
-const merchantSandboxPaymentRoutes = require("../admin/merchant/sandbox/paymentRequest/paymentRequest.routes");
 const userSandboxAuthRoutes = require("../admin/merchant/sandbox/user/auth/auth.routes");
-const merchantSandboxWalletRoutes = require("../admin/merchant/sandbox/wallet/wallet.routes");
+const createMerchantSandboxWalletRoutes = require("../admin/merchant/sandbox/wallet");
+const merchantDashboardRoutes = createMerchantDashboardRoutes("production");
+const merchantPaymentRequestRoutes = createMerchantPaymentRequestRoutes("production");
+const merchantWalletRoutes = createMerchantWalletModule().router;
+const merchantSandboxDashboardRoutes = createMerchantDashboardRoutes("sandbox");
+const merchantSandboxPaymentRoutes = createMerchantPaymentRequestRoutes("sandbox");
+const merchantSandboxWalletRoutes = createMerchantSandboxWalletRoutes();
+
 router.use("/auth", authRoutes);
 router.use("/otp", otpRoutes);
 router.use("/wallet", walletRoutes);
@@ -39,13 +43,15 @@ router.use("/merchant", merchantPaymentRequestRoutes);
 router.use("/merchant/transaction", merchantTransactionRoutes);
 router.use("/merchant/product", merchantProductRoutes);
 router.use("/merchant/bank", merchantBankRoutes);
-router.use("/merchant/otp", merchantOtpRoutes);
 router.use("/merchant/wallet", merchantWalletRoutes);
 
-/*------ Api Sandbox ------- */
-router.use("/merchant/sandbox/auth", merchantSandboxAuthRoutes);
-router.use("/merchant/sandbox/wallet", merchantSandboxWalletRoutes);
-router.use("/merchant/sandbox/dashboard", merchantSandboxDashboardRoutes);
-router.use("/user/sandbox/auth", userSandboxAuthRoutes);
-router.use("/merchant/sandbox", merchantSandboxPaymentRoutes);
+
+if (process.env.NODE_ENV !== "production") {
+  router.use("/merchant/sandbox/auth", merchantSandboxAuthRoutes);
+  router.use("/merchant/sandbox/wallet", merchantSandboxWalletRoutes);
+  router.use("/merchant/sandbox/dashboard", merchantSandboxDashboardRoutes);
+  router.use("/user/sandbox/auth", userSandboxAuthRoutes);
+  router.use("/merchant/sandbox", merchantSandboxPaymentRoutes);
+}
+
 module.exports = router;

@@ -1,6 +1,6 @@
 const pool = require("../../../../config/database");
 
-const merchantWalletRepository = {
+const walletRepository = {
   async getWalletBalanceByUserId(userId) {
     const result = await pool.query(
       `SELECT u.balance, u.id
@@ -13,4 +13,4 @@ const merchantWalletRepository = {
   },
 };
 
-module.exports = merchantWalletRepository;
+module.exports = walletRepository;

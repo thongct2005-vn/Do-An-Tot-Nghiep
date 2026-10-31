@@ -35,8 +35,16 @@ const tokenUtil = {
       type: user.role,
     };
 
-    const accessToken = jwt.sign(payload, ACCESS_SECRET, { expiresIn: "15m" });
-    const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: "7d" });
+    const accessToken = jwt.sign(
+      payload,
+      requireSecret(ACCESS_SECRET, "ACCESS_SECRET"),
+      { expiresIn: "15m", algorithm: "HS256" },
+    );
+    const refreshToken = jwt.sign(
+      payload,
+      requireSecret(REFRESH_SECRET, "REFRESH_SECRET"),
+      { expiresIn: "7d", algorithm: "HS256" },
+    );
     return {
       accessToken,
       refreshToken,
@@ -44,11 +52,19 @@ const tokenUtil = {
   },
 
   verifyAccessToken(accessToken) {
-    return jwt.verify(accessToken, ACCESS_SECRET);
+    return jwt.verify(
+      accessToken,
+      requireSecret(ACCESS_SECRET, "ACCESS_SECRET"),
+      { algorithms: ["HS256"] },
+    );
   },
 
   verifyRefreshToken(refreshToken) {
-    return jwt.verify(refreshToken, REFRESH_SECRET);
+    return jwt.verify(
+      refreshToken,
+      requireSecret(REFRESH_SECRET, "REFRESH_SECRET"),
+      { algorithms: ["HS256"] },
+    );
   },
 
   generateOtpToken(user, purpose = LOGIN_OTP_PURPOSE, extra = {}) {

@@ -1,8 +1,3 @@
-const {
-  validateCallbackUrlSyntax,
-  validateReturnUrlForSave,
-} = require("../../../../utils/urlGuard");
-const paymentMerchantRequestRepository = require("./paymentRequest.repository");
 const walletRepository = require("../../../../modules/wallet/wallet.repository");
 const {
   generateReferenceCode,
@@ -11,8 +6,10 @@ const { uuidv7 } = require("uuidv7");
 const QRCode = require("qrcode");
 const { httpError } = require("../../../../utils/httpError");
 const MAX_ITEMS = 100;
-const { AMOUNT } = require("../../../../config/limits");
 const { parseAmountInRange } = require("../../../../utils/amount");
+const { AMOUNT } = require("../../../../config/limits");
+const { validateReturnUrlForSave } = require("../../../../utils/urlGuard");
+
 function normalizeItems(items) {
   if (items === undefined || items === null) return [];
   if (!Array.isArray(items) || items.length > MAX_ITEMS) {
@@ -75,7 +72,7 @@ function normalizeItems(items) {
   });
 }
 
-function normalizeCallbackUrl(callbackUrl) {
+async function normalizeCallbackUrl(callbackUrl, validateCallbackUrl) {
   if (callbackUrl === undefined || callbackUrl === null) return null;
   if (typeof callbackUrl !== "string") {
     throw httpError(400, "Callback URL không hợp lệ");
@@ -85,12 +82,7 @@ function normalizeCallbackUrl(callbackUrl) {
   if (trimmed.length > 100) {
     throw httpError(400, "Callback URL tối đa 100 ký tự");
   }
-  try {
-    validateCallbackUrlSyntax(trimmed);
-  } catch (e) {
-    throw httpError(400, e.message);
-  }
-  return trimmed;
+  return validateCallbackUrl(trimmed);
 }
 
 async function normalizeReturnUrl(returnUrl) {
@@ -105,81 +97,91 @@ async function normalizeReturnUrl(returnUrl) {
   return validateReturnUrlForSave(trimmed);
 }
 
-const paymentMerchantRequestService = {
-  async createDynamicQRToken({
-    userId,
-    amount,
-    description,
-    orderId,
-    items,
-    callbackUrl,
-    returnUrl,
-    baseUrl,
-  }) {
-    if (!userId || !amount || !orderId) {
-      throw httpError(400, "Thiếu thông tin để tạo mã QR");
-    }
-
-    const numAmount = parseAmountInRange(amount, AMOUNT.QR_PAYMENT, "chuyển");
-
-    if (description !== undefined && description !== null) {
-      if (typeof description !== "string" || description.length > 50) {
-        throw httpError(400, "Mô tả quá dài");
+function createPaymentRequestService({
+  paymentMerchantRequestRepository,
+  validateCallbackUrl,
+  paymentVerb,
+}) {
+  return {
+    async createDynamicQRToken({
+      userId,
+      amount,
+      description,
+      orderId,
+      items,
+      callbackUrl,
+      returnUrl,
+      baseUrl,
+    }) {
+      if (!userId || !amount || !orderId) {
+        throw httpError(400, "Thiếu thông tin để tạo mã QR");
       }
-    }
-    const normalizedItems = normalizeItems(items);
-    const normalizedCallbackUrl = normalizeCallbackUrl(callbackUrl);
-    const normalizedReturnUrl = await normalizeReturnUrl(returnUrl);
-    const { id: destinationUserId } =
-      await walletRepository.getWalletBalanceByUserId(userId);
-    if (!destinationUserId) {
-      throw httpError(404, "Không tìm thấy người dùng này");
-    }
-    const id = uuidv7();
-    const referenceCode = generateReferenceCode(16);
-    const qrImage = await QRCode.toDataURL(referenceCode, {
-      width: 300,
-      margin: 2,
-      errorCorrectionLevel: "M",
-    });
-    const result =
-      await paymentMerchantRequestRepository.insertMerchantPaymentRequest({
-        id,
-        referenceCode,
-        destinationUserId,
-        amount: numAmount,
-        description,
-        orderId,
-        items: normalizedItems,
-        callbackUrl: normalizedCallbackUrl,
-        returnUrl: normalizedReturnUrl,
+      const numAmount = parseAmountInRange(amount, AMOUNT.QR_PAYMENT, paymentVerb);
+
+      if (description !== undefined && description !== null) {
+        if (typeof description !== "string" || description.length > 50) {
+          throw httpError(400, "Mô tả quá dài");
+        }
+      }
+
+      const normalizedItems = normalizeItems(items);
+      const normalizedCallbackUrl = await normalizeCallbackUrl(
+        callbackUrl,
+        validateCallbackUrl,
+      );
+      const normalizedReturnUrl = await normalizeReturnUrl(returnUrl);
+      const { id: destinationUserId } =
+        await walletRepository.getWalletBalanceByUserId(userId);
+      if (!destinationUserId) {
+        throw httpError(404, "Không tìm thấy người dùng này");
+      }
+      const id = uuidv7();
+      const referenceCode = generateReferenceCode(16);
+      const qrImage = await QRCode.toDataURL(referenceCode, {
+        width: 300,
+        margin: 2,
+        errorCorrectionLevel: "M",
       });
-    // Redirect flow: merchant chuyển khách sang trang thanh toán của cổng
-    const paymentUrl = `${baseUrl}/pay/${referenceCode}`;
-    return { ...result, qr_image: qrImage, payment_url: paymentUrl };
-  },
+      const result =
+        await paymentMerchantRequestRepository.insertMerchantPaymentRequest({
+          id,
+          referenceCode,
+          destinationUserId,
+          amount: numAmount,
+          description,
+          orderId,
+          items: normalizedItems,
+          callbackUrl: normalizedCallbackUrl,
+          returnUrl: normalizedReturnUrl,
+        });
+      // Redirect flow: merchant chuyển khách sang trang thanh toán của cổng
+      const paymentUrl = `${baseUrl}/pay/${referenceCode}`;
+      return { ...result, qr_image: qrImage, payment_url: paymentUrl };
+    },
 
-  async findPaymentByOrderId({ orderId, merchantId }) {
-    if (!orderId || !merchantId) {
-      throw httpError(400, "Thiếu mã hóa đơn hoặc thông tin cửa hàng");
-    }
-    const payment = await paymentMerchantRequestRepository.findPaymentByOrderId(
-      { orderId, merchantId },
-    );
-    if (!payment) {
-      throw httpError(404, "Không tìm thấy đơn hàng");
-    }
+    async findPaymentByOrderId({ orderId, merchantId }) {
+      if (!orderId || !merchantId) {
+        throw httpError(400, "Thiếu mã hóa đơn hoặc thông tin cửa hàng");
+      }
+      const payment = await paymentMerchantRequestRepository.findPaymentByOrderId(
+        { orderId, merchantId },
+      );
+      if (!payment) {
+        throw httpError(404, "Không tìm thấy đơn hàng");
+      }
 
-    return {
-      payment_id: payment.id,
-      order_id: payment.order_id,
-      amount: Number(payment.amount),
-      status: payment.status.toLowerCase(),
-      transaction_id: payment.transaction_id ?? null,
-      paid_at: payment.paid_at ?? null,
-      created_at: payment.created_at,
-      expires_at: payment.expires_at,
-    };
-  },
-};
-module.exports = paymentMerchantRequestService;
+      return {
+        payment_id: payment.id,
+        order_id: payment.order_id,
+        amount: Number(payment.amount),
+        status: payment.status.toLowerCase(),
+        transaction_id: payment.transaction_id ?? null,
+        paid_at: payment.paid_at ?? null,
+        created_at: payment.created_at,
+        expires_at: payment.expires_at,
+      };
+    },
+  };
+}
+
+module.exports = createPaymentRequestService;

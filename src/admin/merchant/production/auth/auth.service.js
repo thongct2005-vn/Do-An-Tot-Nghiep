@@ -162,36 +162,6 @@ const merchantAuthService = {
     await verifyTotpCode({ userId, code, requireEnabled: true });
   },
 
-  async isPhoneExist(phone) {
-    if (!phone) {
-      throw httpError(400, "Thiếu số điện thoại");
-    }
-
-    if (!isValidPhone(phone)) {
-      throw httpError(400, "Số điện thoại không hợp lệ");
-    }
-
-    const user = await merchantAuthRepository.findMerchantByPhone(phone);
-    return {
-      is_phone_exists: user != null,
-    };
-  },
-
-  async isEmailExist(email) {
-    if (!email) {
-      throw httpError(400, "Thiếu email");
-    }
-
-    if (!isValidEmail(email)) {
-      throw httpError(400, "Email không hợp lệ");
-    }
-
-    const user = await merchantAuthRepository.findMerchantByEmail(email);
-    return {
-      is_email_exists: user != null,
-    };
-  },
-
   async login({ phone, password }) {
     const user = await checkCredentials(phone, password);
 

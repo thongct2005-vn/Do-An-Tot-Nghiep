@@ -59,22 +59,7 @@ router.post(
   authMiddleware.verifyRegisterOtpToken,
   merchantAuthController.verifyRegister,
 );
-router.post(
-  "/checkPhoneExists",
-  loginLimiter,
-  merchantAuthController.isPhoneExist,
-);
-router.post(
-  "/checkEmailExists",
-  loginLimiter,
-  merchantAuthController.isEmailExist,
-);
-router.get(
-  "/me",
-  authMiddleware.verifyAccessToken,
-  authMiddleware.requireRole("MERCHANT"),
-  merchantAuthController.getMe,
-);
+
 router.post(
   "/refresh-token",
   authMiddleware.verifyRefreshTokenCookie,

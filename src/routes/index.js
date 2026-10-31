@@ -46,7 +46,7 @@ router.use("/merchant/bank", merchantBankRoutes);
 router.use("/merchant/wallet", merchantWalletRoutes);
 
 
-if (process.env.NODE_ENV !== "production") {
+if (process.env.NODE_ENV === "sandbox") {
   router.use("/merchant/sandbox/auth", merchantSandboxAuthRoutes);
   router.use("/merchant/sandbox/wallet", merchantSandboxWalletRoutes);
   router.use("/merchant/sandbox/dashboard", merchantSandboxDashboardRoutes);

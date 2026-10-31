@@ -169,6 +169,44 @@ const TransactionService = {
     });
   },
 
+  // Response chuyển tiền / thanh toán QR: chỉ trả những gì người gửi cần thấy.
+  // Số dư người nhận (destBalanceAfter) không bao giờ được trả ra.
+  toTransferResponse(result) {
+    return {
+      transactionId: result.transactionId,
+      status: result.status,
+      createdAt: result.createdAt,
+      amount: result.amount,
+      fee: result.fee,
+      description: result.description,
+      sourceUserName: result.sourceUserName,
+      destinationUserName: result.destinationUserName,
+      sourceBalanceAfter: result.sourceBalanceAfter,
+    };
+  },
+
+  // Dành cho app: thêm id và SĐT người nhận để màn kết quả có nút "chuyển tiếp"
+  toTransferReceiptResponse(result) {
+    return {
+      ...TransactionService.toTransferResponse(result),
+      destinationId: result.destinationId,
+      destinationPhone: result.destinationPhone,
+    };
+  },
+
+  // Response nạp / rút tiền
+  toBankTransactionResponse(result) {
+    return {
+      transactionId: result.transactionId,
+      status: result.status,
+      createdAt: result.createdAt,
+      amount: result.amount,
+      fee: result.fee,
+      bankName: result.bankName,
+      sourceBalanceAfter: result.sourceBalanceAfter,
+    };
+  },
+
   async getCurrentMonthSummary(userId) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy tổng quan giao dịch");

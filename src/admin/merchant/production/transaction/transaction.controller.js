@@ -1,5 +1,6 @@
 const { successResponse } = require("../../../../utils/apiResponse");
 const merchantTransactionService = require("./transaction.service");
+const transactionService = require("../../../../modules/transaction/transaction.service");
 const { emitToUser } = require("../../../../utils/socket");
 const {
   sendPushNotification,
@@ -52,7 +53,12 @@ const merchantTransactionController = {
           balance: result.destBalanceAfter,
         },
       });
-      return successResponse(res, 200, "Chuyển tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Chuyển tiền thành công",
+        transactionService.toTransferResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -85,7 +91,12 @@ const merchantTransactionController = {
         },
       });
 
-      return successResponse(res, 200, "Nạp tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Nạp tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -119,7 +130,12 @@ const merchantTransactionController = {
         },
       });
 
-      return successResponse(res, 200, "Rút tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Rút tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -170,7 +186,12 @@ const merchantTransactionController = {
         },
       });
 
-      return successResponse(res, 200, "Thanh toán QR thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Thanh toán QR thành công",
+        transactionService.toTransferResponse(result),
+      );
     } catch (e) {
       next(e);
     }

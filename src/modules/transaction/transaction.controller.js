@@ -3,8 +3,6 @@ const transactionService = require("./transaction.service");
 const { emitToUser } = require("../../utils/socket");
 const { sendPushNotification } = require("../../utils/firebaseNotification");
 
-const toSenderResult = ({ destBalanceAfter, ...rest }) => rest;
-
 const transactionController = {
   async transferMoney(req, res, next) {
     try {
@@ -57,7 +55,7 @@ const transactionController = {
         res,
         200,
         "Chuyển tiền thành công",
-        toSenderResult(result),
+        transactionService.toTransferReceiptResponse(result),
       );
     } catch (e) {
       next(e);
@@ -91,7 +89,12 @@ const transactionController = {
         },
       });
 
-      return successResponse(res, 200, "Nạp tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Nạp tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -125,7 +128,12 @@ const transactionController = {
         },
       });
 
-      return successResponse(res, 200, "Rút tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Rút tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -180,7 +188,7 @@ const transactionController = {
         res,
         200,
         "Thanh toán QR thành công",
-        toSenderResult(result),
+        transactionService.toTransferReceiptResponse(result),
       );
     } catch (e) {
       next(e);

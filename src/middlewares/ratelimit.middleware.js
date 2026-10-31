@@ -18,9 +18,9 @@ const byUser = (req) => String(req.user?.user_id ?? "anonymous");
 const byForgotUser = (req) =>
   String(
     req.forgotUser?.user_id ??
-      req.resetUser?.user_id ??
-      req.otpUser?.user_id ??
-      "anonymous",
+    req.resetUser?.user_id ??
+    req.otpUser?.user_id ??
+    "anonymous",
   );
 
 const CONTACT_DAILY_LIMIT = 2000;
@@ -90,6 +90,11 @@ module.exports = {
     limit: 10,
     keyGenerator: byUser,
   }),
+  pinCheckLimiter: createLimiter({
+    windowMs: 60 * 1000,
+    limit: 10,
+    keyGenerator: byUser,
+  }),
   resetApiKey: createLimiter({
     windowMs: 7 * 24 * 60 * 60 * 1000,
     limit: 1,
@@ -101,7 +106,7 @@ module.exports = {
 
   forgotRequestLimiter: createLimiter({ windowMs: 15 * 60 * 1000, limit: 5 }),
   forgotKycLimiter: createLimiter({
-    windowMs:7 * 24 * 60 * 60 * 1000,
+    windowMs: 7 * 24 * 60 * 60 * 1000,
     limit: 1,
     keyGenerator: byForgotUser,
   }),

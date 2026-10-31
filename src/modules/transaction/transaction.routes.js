@@ -3,13 +3,15 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
-const { transactionLimiter } = require("../../middlewares/ratelimit.middleware");
+const {
+  transactionLimiter,
+} = require("../../middlewares/ratelimit.middleware");
 
 router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("TRANSFER"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
 );
@@ -18,7 +20,7 @@ router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("TOPUP"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
 );
@@ -27,16 +29,16 @@ router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
-  transactionController.withdrawnMoney,
+  transactionController.withdrawMoney,
 );
 
 router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyPinToken,
+  authMiddleware.requirePinToken("QR_PAYMENT"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.processQRPayment,
 );

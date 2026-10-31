@@ -1,7 +1,8 @@
 const { successResponse } = require("../../utils/apiResponse");
 const transactionService = require("./transaction.service");
 const { emitToUser } = require("../../utils/socket");
-const { sendPushNotification } = require("../../utils/fireBaseNotification");
+const { sendPushNotification } = require("../../utils/firebaseNotification");
+
 const transactionController = {
   async transferMoney(req, res, next) {
     try {
@@ -50,7 +51,12 @@ const transactionController = {
           balance: result.destBalanceAfter,
         },
       });
-      return successResponse(res, 200, "Chuyển tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Chuyển tiền thành công",
+        transactionService.toTransferReceiptResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -83,18 +89,23 @@ const transactionController = {
         },
       });
 
-      return successResponse(res, 200, "Nạp tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Nạp tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
   },
 
-  async withdrawnMoney(req, res, next) {
+  async withdrawMoney(req, res, next) {
     try {
       const { user_id: sourceUserId } = req.user;
       const idempotencyKey = req.idempotencyKey;
       const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
-      const result = await transactionService.withdrawnMoney({
+      const result = await transactionService.withdrawMoney({
         sourceUserId,
         amount,
         idempotencyKey,
@@ -117,7 +128,12 @@ const transactionController = {
         },
       });
 
-      return successResponse(res, 200, "Rút tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Rút tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -168,7 +184,12 @@ const transactionController = {
         },
       });
 
-      return successResponse(res, 200, "Thanh toán QR thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Thanh toán QR thành công",
+        transactionService.toTransferReceiptResponse(result),
+      );
     } catch (e) {
       next(e);
     }

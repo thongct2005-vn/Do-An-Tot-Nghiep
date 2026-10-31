@@ -3,6 +3,7 @@ const tokenUtil = require("../../../../utils/jwt");
 const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
 
 const merchantAuthRepository = {
+  // Lấy thông tin merchant theo phone
   async findMerchantByPhone(phone) {
     const result = await pool.query(
       `
@@ -17,11 +18,13 @@ const merchantAuthRepository = {
     return result.rows[0];
   },
 
+  // Lấy thông tin merchant theo email
   async findMerchantByEmail(email) {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key,
+             u.totp_enabled
       FROM users u
       WHERE u.email = $1
       `,
@@ -30,11 +33,13 @@ const merchantAuthRepository = {
     return result.rows[0];
   },
 
+  // Lấy thông tin merchant theo apiKey
   async findMerchantApiKey(apiKey) {
     const result = await pool.query(
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key,
+             u.totp_enabled
       FROM users u
       WHERE u.api_key = $1
       `,
@@ -43,6 +48,7 @@ const merchantAuthRepository = {
     return result.rows[0];
   },
 
+  // Làm mới số lần đăng nhập thất bại
   async resetFailedLogin(phone) {
     await pool.query(
       `
@@ -54,6 +60,7 @@ const merchantAuthRepository = {
     );
   },
 
+  // Tăng số lần đăng nhập thất bại thêm một, nếu lớn hơn số lần tối đa thì khóa
   async registerFailedLogin({ phone, maxAttempts, lockMinutes }) {
     const result = await pool.query(
       `
@@ -72,6 +79,7 @@ const merchantAuthRepository = {
     return result.rows[0];
   },
 
+  // Cập nhật lại refesh token
   async updateRefeshToken({ refreshToken, userId }) {
     await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
       tokenUtil.hashToken(refreshToken),
@@ -79,6 +87,7 @@ const merchantAuthRepository = {
     ]);
   },
 
+  // Lấy thông tin cơ bản của merchant từ refesh token
   async findMerchantByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
@@ -93,6 +102,7 @@ const merchantAuthRepository = {
     return result.rows[0];
   },
 
+  // Thêm một merchant + kyc cho merchant
   async addMerchant({
     userId,
     phone,
@@ -105,7 +115,7 @@ const merchantAuthRepository = {
     callbackUrl,
     apiKey,
     secretKey,
-    status = "APPPROVED"
+    status = "APPPROVED",
   }) {
     const client = await pool.connect();
 
@@ -148,6 +158,7 @@ const merchantAuthRepository = {
     }
   },
 
+  // Đăng xuất, xóa các token duy trì đăng nhập, thông báo
   async logout(userId) {
     await pool.query(
       "UPDATE users SET refresh_token = $1, fcm_token = $2 WHERE id = $3",
@@ -155,7 +166,7 @@ const merchantAuthRepository = {
     );
   },
 
-  // ===== Google Authenticator (TOTP) =====
+  // Lấy thông tin, trạng thái của mã google authenticator
   async getTotpState(userId) {
     const result = await pool.query(
       `
@@ -169,7 +180,7 @@ const merchantAuthRepository = {
     return result.rows[0] ?? null;
   },
 
-  // Chỉ ghi được khi chưa bật: đang bật thì không cho đè khoá
+  // Lưu secret tạo otp
   async saveTotpSecret({ userId, encryptedSecret }) {
     const result = await pool.query(
       `
@@ -184,6 +195,7 @@ const merchantAuthRepository = {
     return result.rows[0] ?? null;
   },
 
+  // Cập nhật đã bật totp (time base - one time password)
   async enableTotp(userId) {
     const result = await pool.query(
       `
@@ -197,6 +209,7 @@ const merchantAuthRepository = {
     return result.rows[0] ?? null;
   },
 
+  // Cập nhật tắt totp
   async disableTotp(userId) {
     await pool.query(
       `
@@ -209,7 +222,7 @@ const merchantAuthRepository = {
     );
   },
 
-  // Ghi nhận bước đã dùng (chặn dùng lại cùng một mã) và xoá bộ đếm sai
+  // Cập nhật mã vừa dùng thành công, tránh dùng lại khi vẫn còn thời gian sử dụng
   async consumeTotpStep({ userId, step }) {
     const result = await pool.query(
       `
@@ -223,6 +236,7 @@ const merchantAuthRepository = {
     return result.rowCount === 1;
   },
 
+  // Tăng số lần sai topt thêm một, nếu lớn hơn số lần tối đa thì khóa
   async registerTotpFailure({ userId, maxAttempts, lockMinutes }) {
     const result = await pool.query(
       `

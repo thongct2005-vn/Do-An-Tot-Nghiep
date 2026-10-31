@@ -40,7 +40,7 @@ router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyTransactionOtpToken,
+  authMiddleware.verifyTransactionOtpToken("TRANSFER"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
 );
@@ -49,7 +49,7 @@ router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyTransactionOtpToken,
+  authMiddleware.verifyTransactionOtpToken("TOPUP"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
 );
@@ -58,9 +58,9 @@ router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
   transactionLimiter,
-  authMiddleware.verifyTransactionOtpToken,
+  authMiddleware.verifyTransactionOtpToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
-  transactionController.withdrawnMoney,
+  transactionController.withdrawMoney,
 );
 
 router.post(

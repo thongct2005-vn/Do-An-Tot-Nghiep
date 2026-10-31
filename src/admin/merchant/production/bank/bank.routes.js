@@ -17,7 +17,7 @@ router.get(
 router.post(
   "/link",
   authMiddleware.verifyAccessToken,
-  authMiddleware.verifyTransactionOtpToken,
+  authMiddleware.verifyTransactionOtpToken("BANK_LINK"),
   idempotencyMiddleware.checkIdempotencyKey,
   merchantBankController.linkBankAccount,
 );

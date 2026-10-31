@@ -65,10 +65,11 @@ const totpUtil = {
   },
 
   /**
-   * Trả về số bước (step) khớp với mã, hoặc null nếu sai.
-   * Chỉ chấp nhận step lớn hơn lastStep để một mã không dùng được hai lần.
+   * Trả về bước thời gian (time step - ) nếu nhập đúng, null nếu sai.
+   * Chỉ chấp nhận mã code  lớn hơn lastStep để một mã không dùng được hai lần.
    */
   verifyCode(secretBase32, code, { lastStep = null, nowMs = Date.now() } = {}) {
+    // Buffer.from("123456") - <Buffer 31 32 33 34 35 36>
     const input = Buffer.from(String(code));
     const secret = base32Decode(secretBase32);
     const now = totpUtil.currentStep(nowMs);

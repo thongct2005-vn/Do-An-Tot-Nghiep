@@ -4,6 +4,10 @@ const { generateReferenceCode } = require("../../utils/generateReferenceCode");
 const { uuidv7 } = require("uuidv7");
 const userRepository = require("../user/user.repository");
 const { httpError } = require("../../utils/httpError");
+const { parseAmountInRange } = require("../../utils/amount");
+const { AMOUNT } = require("../../config/limits"); // đầu file
+
+
 const paymentRequestService = {
   async createStaticQRToken(userId) {
     if (!userId) {
@@ -52,26 +56,18 @@ const paymentRequestService = {
     if (!userId || !amount) {
       throw httpError(400, "Thiếu thông tin để tạo mã QR");
     }
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa 50 triệu");
-    }
+
+    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "nhận");
+
     if (description !== undefined && description !== null) {
       if (typeof description !== "string" || description.length > 50) {
-        throw httpError(400, "Mô tả tối đa 50 ký tự");
+        throw httpError(400, "Mô tả quá dài");
       }
     }
     const { id: destinationUserId } =
       await walletRepository.getWalletBalanceByUserId(userId);
     if (!destinationUserId) {
-      throw httpError(
-        404,
-        "Không tìm thấy người dùng này",
-      );
+      throw httpError(404, "Không tìm thấy người dùng này");
     }
     const id = uuidv7();
     const referenceCode = generateReferenceCode(16);
@@ -114,7 +110,22 @@ const paymentRequestService = {
     if (result.destination_user_id === requestingUserId) {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
-    return result;
+    return {
+      id: result.id,
+      reference_code: result.reference_code,
+      destination_user_id: result.destination_user_id,
+      destination_name: result.destination_name,
+      destination_phone: result.destination_phone,
+      role: result.role,
+      amount: result.amount,
+      description: result.description,
+      order_id: result.order_id,
+      status: result.status,
+      expires_at: result.expires_at,
+      is_expires: result.is_expires,
+      paid_at: result.paid_at,
+      created_at: result.created_at,
+    };
   },
 };
 module.exports = paymentRequestService;

@@ -1,4 +1,3 @@
-const { validateCallbackUrlSyntax } = require("../../../../utils/urlGuard");
 const merchantAuthRepository = require("./auth.repository");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
@@ -14,6 +13,9 @@ const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
 } = require("../../../../utils/generateApikeySecretkey");
+const { validateCallbackUrlForSave } = require("../../../../utils/urlGuard");
+
+
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 
@@ -75,36 +77,6 @@ async function checkCredentials(phone, password) {
 }
 
 const merchantAuthService = {
-  async isPhoneExist(phone) {
-    if (!phone) {
-      throw httpError(400, "Thiếu số điện thoại");
-    }
-
-    if (!isValidPhone(phone)) {
-      throw httpError(400, "Số điện thoại không hợp lệ");
-    }
-
-    const user = await merchantAuthRepository.findMerchantByPhone(phone);
-    return {
-      is_phone_exists: user != null,
-    };
-  },
-
-  async isEmailExist(email) {
-    if (!email) {
-      throw httpError(400, "Thiếu email");
-    }
-
-    if (!isValidEmail(email)) {
-      throw httpError(400, "Email không hợp lệ");
-    }
-
-    const user = await merchantAuthRepository.findMerchantByEmail(email);
-    return {
-      is_email_exists: user != null,
-    };
-  },
-
   async login({ phone, password }) {
     const user = await checkCredentials(phone, password);
 
@@ -188,11 +160,7 @@ const merchantAuthService = {
     if (!callbackUrl) {
       throw httpError(400, "Thiếu callback");
     }
-    try {
-      validateCallbackUrlSyntax(callbackUrl);
-    } catch (e) {
-      throw httpError(400, e.message);
-    }
+    const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
     if (!storeName) {
       throw httpError(400, "Thiếu tên cửa hàng");
     }
@@ -223,7 +191,7 @@ const merchantAuthService = {
       email,
       passwordHash,
       storeName,
-      callbackUrl,
+      callbackUrl: safeCallbackUrl,
       apiKey,
       secretKey,
     });

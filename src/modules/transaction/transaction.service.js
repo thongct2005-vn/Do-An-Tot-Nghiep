@@ -1,6 +1,10 @@
 const transactionRepository = require("./transaction.repository");
 const { httpError } = require("../../utils/httpError");
-
+const { parseAmountInRange } = require("../../utils/amount");
+const { AMOUNT, HISTORY_PAGE_LIMIT } = require("../../config/limits");
+const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
+const { isValidDateOnly } = require("../../utils/validators");
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const TransactionService = {
   async transferMoney({
     sourceUserId,
@@ -17,14 +21,9 @@ const TransactionService = {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu");
-    }
+    await assertKycBoth(sourceUserId, destinationUserId);
+
+    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "chuyển");
 
     return await transactionRepository.transferMoney({
       sourceUserId,
@@ -48,17 +47,13 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền nạp phải từ 1 nghìn và tối đa là 50 triệu");
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.TOPUP, "nạp");
+
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
+
+    await assertKyc(sourceUserId);
 
     return await transactionRepository.topupMoney({
       sourceUserId,
@@ -71,7 +66,7 @@ const TransactionService = {
     });
   },
 
-  async withdrawnMoney({
+  async withdrawMoney({
     sourceUserId,
     amount,
     idempotencyKey,
@@ -81,19 +76,15 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 10000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu");
-    }
+    const numAmount = parseAmountInRange(amount, AMOUNT.WITHDRAW, "rút");
+
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
-    return await transactionRepository.withdrawnMoney({
+    await assertKyc(sourceUserId);
+
+    return await transactionRepository.withdrawMoney({
       sourceUserId,
       amount: numAmount,
       fee: 0,
@@ -108,6 +99,8 @@ const TransactionService = {
     if (!sourceUserId) {
       throw httpError(400, "Thiếu thông tin người gửi");
     }
+
+    await assertKyc(sourceUserId);
 
     if (!referenceCode) {
       throw httpError(400, "Thiếu thông tin của mã QR");
@@ -130,35 +123,36 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
-    const maxLimit = Math.min(Number(limit) || 20, 20);
+    const maxLimit = Math.min(
+      Number(limit) || HISTORY_PAGE_LIMIT,
+      HISTORY_PAGE_LIMIT,
+    );
 
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
 
-    let parsedStartDate = null;
-    let parsedEndDate = null;
+    let startDay = null;
+    let endDay = null;
 
     if (startDate) {
-      parsedStartDate = new Date(startDate);
-      if (isNaN(parsedStartDate.getTime())) {
+      if (!isValidDateOnly(startDate)) {
         throw httpError(400, "Ngày bắt đầu không hợp lệ");
       }
+      startDay = startDate;
     }
-
     if (endDate) {
-      parsedEndDate = new Date(endDate);
-      if (isNaN(parsedEndDate.getTime())) {
+      if (!isValidDateOnly(endDate)) {
         throw httpError(400, "Ngày kết thúc không hợp lệ");
       }
-      parsedEndDate.setHours(23, 59, 59, 999);
+      endDay = endDate;
     }
 
-    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+    if (startDay && endDay && startDay > endDay) {
       throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
     }
-    if (parsedStartDate) {
-      const oneYearAgo = new Date();
-      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-      if (parsedStartDate < oneYearAgo) {
+    if (startDay) {
+      const oneYearAgo = new Date(Date.now() + VN_OFFSET_MS);
+      oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1);
+      if (startDay < oneYearAgo.toISOString().slice(0, 10)) {
         throw httpError(
           400,
           "Chỉ có thể xem lịch sử giao dịch trong vòng 1 năm gần nhất",
@@ -166,15 +160,51 @@ const TransactionService = {
       }
     }
 
-    const result = await transactionRepository.getTransferHistory(userId, {
+    return await transactionRepository.getTransferHistory(userId, {
       cursorId,
       limit: maxLimit,
       keyword: normalizedKeyword,
-      startDate: parsedStartDate,
-      endDate: parsedEndDate,
+      startDate: startDay,
+      endDate: endDay,
     });
+  },
 
-    return result;
+  // Response chuyển tiền / thanh toán QR: chỉ trả những gì người gửi cần thấy.
+  // Số dư người nhận (destBalanceAfter) không bao giờ được trả ra.
+  toTransferResponse(result) {
+    return {
+      transactionId: result.transactionId,
+      status: result.status,
+      createdAt: result.createdAt,
+      amount: result.amount,
+      fee: result.fee,
+      description: result.description,
+      sourceUserName: result.sourceUserName,
+      destinationUserName: result.destinationUserName,
+      sourceBalanceAfter: result.sourceBalanceAfter,
+    };
+  },
+
+  // Dành cho app: thêm id và SĐT người nhận để màn kết quả có nút "chuyển tiếp"
+  toTransferReceiptResponse(result) {
+    return {
+      ...TransactionService.toTransferResponse(result),
+      destinationId: result.destinationId,
+      destinationPhone: result.destinationPhone,
+    };
+  },
+
+  // Response nạp / rút tiền
+  toBankTransactionResponse(result) {
+    return {
+      transactionId: result.transactionId,
+      status: result.status,
+      createdAt: result.createdAt,
+      amount: result.amount,
+      fee: result.fee,
+      bankName: result.bankName,
+      sourceBalanceAfter: result.sourceBalanceAfter,
+    };
   },
 
   async getCurrentMonthSummary(userId) {

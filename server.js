@@ -31,9 +31,7 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 // Chỉ các web này được gọi API từ trình duyệt. Khai báo thêm trong .env:
 // CORS_ORIGINS=https://dashboard.tenmien.com,http://localhost:8080
 // (App Flutter và Postman không gửi header Origin nên không bị CORS chặn)
-const allowedOrigins = (
-  process.env.CORS_ORIGINS
-)
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);

@@ -21,12 +21,7 @@ const authController = {
     try {
       const { email } = req.body;
       const result = await authService.isEmailExist(email);
-      return successResponse(
-        res,
-        200,
-        "Kiểm tra email thành công",
-        result,
-      );
+      return successResponse(res, 200, "Kiểm tra email thành công", result);
     } catch (e) {
       next(e);
     }
@@ -147,6 +142,16 @@ const authController = {
       const { phone, password } = req.body;
       const result = await authService.setupTotp({ phone, password });
       return successResponse(res, 200, "Tạo mã QR thành công", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async recoverTotp(req, res, next) {
+    try {
+      const { phone, password } = req.body;
+      const result = await authService.recoverTotp({ phone, password });
+      return successResponse(res, 200, "Lấy lại mã QR thành công", result);
     } catch (e) {
       next(e);
     }

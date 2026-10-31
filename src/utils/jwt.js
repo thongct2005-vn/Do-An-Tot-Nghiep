@@ -35,8 +35,16 @@ const tokenUtil = {
       type: user.role,
     };
 
-    const accessToken = jwt.sign(payload, ACCESS_SECRET, { expiresIn: "15m" });
-    const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: "7d" });
+    const accessToken = jwt.sign(
+      payload,
+      requireSecret(ACCESS_SECRET, "ACCESS_SECRET"),
+      { expiresIn: "15m", algorithm: "HS256" },
+    );
+    const refreshToken = jwt.sign(
+      payload,
+      requireSecret(REFRESH_SECRET, "REFRESH_SECRET"),
+      { expiresIn: "7d", algorithm: "HS256" },
+    );
     return {
       accessToken,
       refreshToken,
@@ -44,11 +52,19 @@ const tokenUtil = {
   },
 
   verifyAccessToken(accessToken) {
-    return jwt.verify(accessToken, ACCESS_SECRET);
+    return jwt.verify(
+      accessToken,
+      requireSecret(ACCESS_SECRET, "ACCESS_SECRET"),
+      { algorithms: ["HS256"] },
+    );
   },
 
   verifyRefreshToken(refreshToken) {
-    return jwt.verify(refreshToken, REFRESH_SECRET);
+    return jwt.verify(
+      refreshToken,
+      requireSecret(REFRESH_SECRET, "REFRESH_SECRET"),
+      { algorithms: ["HS256"] },
+    );
   },
 
   generateOtpToken(user, purpose = LOGIN_OTP_PURPOSE, extra = {}) {
@@ -127,11 +143,15 @@ const tokenUtil = {
     return payload;
   },
 
-  generateTransactionOtpToken({ user, idempotencyKey }) {
+  // action + binding: OTP chỉ có giá trị cho đúng loại giao dịch và đúng nội dung
+  // (số tiền, người nhận...) đã được ký vào token lúc verify OTP, giống PIN token.
+  generateTransactionOtpToken({ user, idempotencyKey, action, binding }) {
     const payload = {
       user_id: user.id,
       phone: user.phone,
       idempotency_key: idempotencyKey,
+      action,
+      binding,
       purpose: TRANSACTION_OTP_PURPOSE,
     };
     return jwt.sign(
@@ -155,10 +175,12 @@ const tokenUtil = {
     return payload;
   },
 
-  generatePinToken({ userId, idempotencyKey }) {
+  generatePinToken({ userId, idempotencyKey, action, binding }) {
     const payload = {
       user_id: userId,
       idempotency_key: idempotencyKey,
+      action,
+      binding,
       purpose: PIN_VERIFIED_PURPOSE,
     };
     return jwt.sign(payload, requireSecret(PIN_SECRET, "PIN_SECRET"), {

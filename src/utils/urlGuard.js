@@ -1,8 +1,12 @@
 const dns = require("dns");
 const net = require("net");
+const { httpError } = require("./httpError");
 
 // Cho phép callback về localhost/IP nội bộ khi dev: ALLOW_PRIVATE_CALLBACKS=true
 const allowPrivate = () => process.env.ALLOW_PRIVATE_CALLBACKS === "true";
+// Cho phép return_url về localhost/IP nội bộ khi dev: ALLOW_PRIVATE_RETURN_URL=true
+// (khác "true" hoặc không đặt = chế độ chặt, kiểm tra giống Callback URL)
+const allowPrivateReturn = () => process.env.ALLOW_PRIVATE_RETURN_URL === "true";
 const isProduction = () => process.env.NODE_ENV === "production";
 
 function ipv4ToInt(ip) {
@@ -72,7 +76,12 @@ function isPrivateAddress(ip) {
 /**
  * Kiểm tra cú pháp URL, không cần DNS. Trả về URL đã parse hoặc ném Error có message tiếng Việt.
  */
-function validateCallbackUrlSyntax(raw, label = "Callback URL") {
+function validateCallbackUrlSyntax(
+  raw,
+  label = "Callback URL",
+  allowPrivateOverride,
+) {
+  const priv = allowPrivateOverride ?? allowPrivate();
   let parsed;
   try {
     parsed = new URL(String(raw).trim());
@@ -82,13 +91,13 @@ function validateCallbackUrlSyntax(raw, label = "Callback URL") {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error(`${label} phải bắt đầu bằng http hoặc https`);
   }
-  if (isProduction() && parsed.protocol !== "https:" && !allowPrivate()) {
+  if (isProduction() && parsed.protocol !== "https:" && !priv) {
     throw new Error(`${label} phải dùng https`);
   }
   if (parsed.username || parsed.password) {
     throw new Error(`${label} không được chứa thông tin đăng nhập`);
   }
-  if (!allowPrivate()) {
+  if (!priv) {
     const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
       throw new Error(`${label} không được trỏ về địa chỉ nội bộ`);
@@ -103,16 +112,81 @@ function validateCallbackUrlSyntax(raw, label = "Callback URL") {
 /**
  * Kiểm tra đầy đủ lúc gửi: cú pháp + DNS phải ra IP công khai.
  */
-async function assertSafeCallbackUrl(raw) {
-  const parsed = validateCallbackUrlSyntax(raw);
-  if (allowPrivate()) return parsed;
+async function assertSafeCallbackUrl(
+  raw,
+  label = "Callback URL",
+  allowPrivateOverride,
+) {
+  const priv = allowPrivateOverride ?? allowPrivate();
+  const parsed = validateCallbackUrlSyntax(raw, label, priv);
+  if (priv) return parsed;
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (net.isIP(host)) return parsed; // đã kiểm tra ở trên
   const addrs = await dns.promises.lookup(host, { all: true });
   if (!addrs.length || addrs.some((a) => isPrivateAddress(a.address))) {
-    throw new Error("Callback URL phân giải về địa chỉ nội bộ");
+    throw new Error(`${label} phân giải về địa chỉ nội bộ`);
   }
   return parsed;
+}
+
+/**
+ * Kiểm tra Callback URL ngay lúc lưu (đăng ký merchant, đổi callback).
+ * Hành vi theo ALLOW_PRIVATE_CALLBACKS (khác "true" hoặc không đặt = chế độ chặt):
+ *  - chặn localhost / IP nội bộ, production bắt buộc https, không chứa user:pass;
+ *  - tên miền phải phân giải về IP công khai.
+ * Đặt ALLOW_PRIVATE_CALLBACKS=true (máy dev) thì chỉ kiểm tra cú pháp.
+ * Trả về URL đã trim để lưu; lỗi ném httpError 400 (hoặc 503 khi DNS tạm thời lỗi).
+ */
+async function validateUrlForSave(
+  raw,
+  { label, maxLength, allowPrivate: priv },
+) {
+  const value = String(raw ?? "").trim();
+  if (value.length > maxLength) {
+    throw httpError(400, `${label} quá dài`);
+  }
+  try {
+    await assertSafeCallbackUrl(value, label, priv);
+  } catch (e) {
+    if (e.code === "ENOTFOUND" || e.code === "ENODATA") {
+      throw httpError(
+        400,
+        `Không tìm thấy tên miền của ${label}, vui lòng kiểm tra lại`,
+      );
+    }
+    if (e.syscall === "getaddrinfo") {
+      throw httpError(
+        503,
+        `Không kiểm tra được tên miền của ${label}, vui lòng thử lại sau`,
+      );
+    }
+    throw httpError(400, e.message);
+  }
+  return value;
+}
+
+async function validateCallbackUrlForSave(raw) {
+  return validateUrlForSave(raw, {
+    label: "Callback URL",
+    maxLength: 2048,
+    allowPrivate: allowPrivate(),
+  });
+}
+
+/**
+ * Kiểm tra Return URL lúc tạo thanh toán. Hành vi theo ALLOW_PRIVATE_RETURN_URL
+ * (khác "true" hoặc không đặt = chế độ chặt, giống Callback URL):
+ *  - chặn localhost / IP nội bộ, production bắt buộc https, không chứa user:pass;
+ *  - tên miền phải phân giải về IP công khai.
+ * Đặt ALLOW_PRIVATE_RETURN_URL=true (máy dev) thì chỉ kiểm tra cú pháp.
+ * Trả về URL đã trim; lỗi ném httpError 400 (hoặc 503 khi DNS tạm thời lỗi).
+ */
+async function validateReturnUrlForSave(raw) {
+  return validateUrlForSave(raw, {
+    label: "Return URL",
+    maxLength: 255,
+    allowPrivate: allowPrivateReturn(),
+  });
 }
 
 /**
@@ -135,6 +209,8 @@ function safeLookup(hostname, options, callback) {
 module.exports = {
   validateCallbackUrlSyntax,
   assertSafeCallbackUrl,
+  validateCallbackUrlForSave,
+  validateReturnUrlForSave,
   safeLookup,
   isPrivateAddress,
 };

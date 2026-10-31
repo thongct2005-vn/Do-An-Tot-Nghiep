@@ -4,47 +4,35 @@ const merchantAuthService = require("../auth/auth.service");
 const otpService = require("../../../../modules/otp/otp.service");
 const tokenUtil = require("../../../../utils/jwt");
 const { httpError } = require("../../../../utils/httpError");
-const { maskEmail } = require("../../../../utils/maskPhoneAndEmail");
-const { isValidPhone } = require("../../../../utils/validators");
+const { computePinBinding } = require("../../../../utils/pinBinding");
+const {
+  maskEmail,
+  maskPhone,
+  maskAccountNumber,
+} = require("../../../../utils/mask");
+const {
+  isValidPhone,
+  isValidDateOnly,
+} = require("../../../../utils/validators");
+const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
+const { parseAmountInRange } = require("../../../../utils/amount");
+const { AMOUNT, HISTORY_PAGE_LIMIT } = require("../../../../config/limits");
+const {
+  assertKyc,
+  assertKycBoth,
+} = require("../../../../modules/kyc/kyc.guard");
 
-const TRANSACTION_TYPES = [
-  "TRANSFER",
-  "TOPUP",
-  "WITHDRAW",
-  "PAYMENT",
-  "REFUND",
-  "REVERSAL",
-];
-
-// Giờ Việt Nam (UTC+7, không có DST) để so sánh giới hạn 1 năm theo ngày
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
-
-function isValidDateOnly(value) {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return false;
-  }
-  const d = new Date(`${value}T00:00:00Z`);
-  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-}
-
 function toNumberOrNull(value) {
-  return value === null || value === undefined ? null : Number(value);
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
-function maskPhone(phone) {
-  if (!phone) return null;
-  return phone.length >= 3 ? `*********${phone.slice(-3)}` : phone;
-}
-
-function maskAccountNumber(accountNumber) {
-  if (!accountNumber) return null;
-  const str = String(accountNumber);
-  return str.length > 4 ? `${"*".repeat(str.length - 4)}${str.slice(-4)}` : str;
-}
-
-// Lấy merchant đang đăng nhập (kèm email nhận OTP), giống getOtpMerchant bên auth.service
 async function getOtpMerchant({ userId, phone }) {
-  const user = phone ? await merchantAuthRepository.findMerchantByPhone(phone) : null;
+  const user = phone
+    ? await merchantAuthRepository.findMerchantByPhone(phone)
+    : null;
   if (
     !user ||
     user.id !== userId ||
@@ -77,14 +65,9 @@ const merchantTransactionService = {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền chuyển phải từ 1 nghìn và tối đa là 50 triệu");
-    }
+    await assertKycBoth(sourceUserId, destinationUserId);
+
+    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "chuyển");
 
     return await merchantTransactionRepository.transferMoney({
       sourceUserId,
@@ -108,14 +91,10 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 1000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền nạp phải từ 1 nghìn và tối đa là 50 triệu");
-    }
+    await assertKyc(sourceUserId);
+
+    const numAmount = parseAmountInRange(amount, AMOUNT.TOPUP, "nạp");
+
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
@@ -131,7 +110,7 @@ const merchantTransactionService = {
     });
   },
 
-  async withdrawnMoney({
+  async withdrawMoney({
     sourceUserId,
     amount,
     idempotencyKey,
@@ -141,19 +120,15 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const numAmount = Number(amount);
-    if (
-      !Number.isInteger(numAmount) ||
-      numAmount < 10000 ||
-      numAmount > 50000000
-    ) {
-      throw httpError(400, "Số tiền rút phải từ 10 nghìn và tối đa là 50 triệu");
-    }
+    await assertKyc(sourceUserId);
+
+    const numAmount = parseAmountInRange(amount, AMOUNT.WITHDRAW, "rút");
+
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
-    return await merchantTransactionRepository.withdrawnMoney({
+    return await merchantTransactionRepository.withdrawMoney({
       sourceUserId,
       amount: numAmount,
       fee: 0,
@@ -168,6 +143,8 @@ const merchantTransactionService = {
     if (!sourceUserId) {
       throw httpError(400, "Thiếu thông tin người gửi");
     }
+
+    await assertKyc(sourceUserId);
 
     if (!referenceCode) {
       throw httpError(400, "Thiếu thông tin của mã QR");
@@ -190,8 +167,10 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
-    const maxLimit = Math.min(Number(limit) || 20, 20);
-
+    const maxLimit = Math.min(
+      Number(limit) || HISTORY_PAGE_LIMIT,
+      HISTORY_PAGE_LIMIT,
+    );
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
 
     const normalizedType =
@@ -232,14 +211,17 @@ const merchantTransactionService = {
       }
     }
 
-    const result = await merchantTransactionRepository.getTransferHistory(userId, {
-      cursorId,
-      limit: maxLimit,
-      keyword: normalizedKeyword,
-      type: normalizedType,
-      startDate: startDay,
-      endDate: endDay,
-    });
+    const result = await merchantTransactionRepository.getTransferHistory(
+      userId,
+      {
+        cursorId,
+        limit: maxLimit,
+        keyword: normalizedKeyword,
+        type: normalizedType,
+        startDate: startDay,
+        endDate: endDay,
+      },
+    );
 
     return result;
   },
@@ -286,12 +268,12 @@ const merchantTransactionService = {
     if (isBankType) {
       detail.bank = row.bank_name
         ? {
-            bank_name: row.bank_name,
-            bank_code: row.bank_code,
-            logo_url: row.bank_logo_url,
-            account_holder_name: row.account_holder_name,
-            account_number: maskAccountNumber(row.account_number),
-          }
+          bank_name: row.bank_name,
+          bank_code: row.bank_code,
+          logo_url: row.bank_logo_url,
+          account_holder_name: row.account_holder_name,
+          account_number: maskAccountNumber(row.account_number),
+        }
         : null;
     } else {
       if (row.source_user_id) {
@@ -347,7 +329,8 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy tổng quan giao dịch");
     }
 
-    const result = await merchantTransactionRepository.getCurrentMonthSummary(userId);
+    const result =
+      await merchantTransactionRepository.getCurrentMonthSummary(userId);
 
     return {
       total_expense: result.total_expense,
@@ -390,11 +373,11 @@ const merchantTransactionService = {
       total_revenue: Number(data.summary.total_revenue),
       total_orders: Number(data.summary.total_orders),
       avg_order_value: Number(data.summary.avg_order_value),
-      daily_stats: data.daily_stats.map(row => ({
+      daily_stats: data.daily_stats.map((row) => ({
         date: row.date_str,
         revenue: Number(row.revenue),
-        order_count: Number(row.order_count)
-      }))
+        order_count: Number(row.order_count),
+      })),
     };
   },
 
@@ -432,8 +415,14 @@ const merchantTransactionService = {
     return { masked_email: maskEmail(user.email), otp_method: "email" };
   },
 
-  // OTP đúng thì trả về otp_token (purpose: transaction_otp), giống verifyLoginOtp
-  async verifyTransactionOtp({ userId, phone, otp, idempotencyKey }) {
+  async verifyTransactionOtp({
+    userId,
+    phone,
+    otp,
+    idempotencyKey,
+    action,
+    params,
+  }) {
     if (
       typeof idempotencyKey !== "string" ||
       !idempotencyKey ||
@@ -441,17 +430,27 @@ const merchantTransactionService = {
     ) {
       throw httpError(400, "Thiếu hoặc sai idempotency key của giao dịch");
     }
+    // Tính trước khi kiểm tra OTP để dữ liệu sai không bị tính vào số lần nhập sai OTP.
+    const binding = computePinBinding(action, params);
 
     const user = await getOtpMerchant({ userId, phone });
 
     if (user.totp_enabled) {
-      await merchantAuthService.verifyEnabledTotp({ userId: user.id, code: otp });
+      await merchantAuthService.verifyEnabledTotp({
+        userId: user.id,
+        code: otp,
+      });
     } else {
       await otpService.verifyOtp({ email: user.email, otp });
     }
 
     return {
-      otp_token: tokenUtil.generateTransactionOtpToken({ user, idempotencyKey }),
+      otp_token: tokenUtil.generateTransactionOtpToken({
+        user,
+        idempotencyKey,
+        action,
+        binding,
+      }),
     };
   },
 
@@ -466,7 +465,11 @@ const merchantTransactionService = {
     }
 
     const receiver = await merchantAuthRepository.findMerchantByPhone(phone);
-    if (!receiver || receiver.status !== "ACTIVE" || receiver.role === "MERCHANT") {
+    if (
+      !receiver ||
+      receiver.status !== "ACTIVE" ||
+      receiver.role === "MERCHANT"
+    ) {
       throw httpError(404, "Không tìm thấy người dùng nhận tiền");
     }
 

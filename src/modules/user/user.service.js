@@ -8,12 +8,13 @@ const bcrypt = require("bcrypt");
 const {
   isValidPasswordOrPin,
   isValidPhone,
+  isValidPhonesHash
 } = require("../../utils/validators");
 const { httpError } = require("../../utils/httpError");
 const tokenUtil = require("../../utils/jwt");
 const { emitToUser } = require("../../utils/socket");
-const { maskPhone, maskEmail } = require("../../utils/maskPhoneAndEmail");
-const { isValidPhonesHash } = require("../../utils/validators");
+const { maskPhone, maskEmail } = require("../../utils/mask");
+const { CONTACT_CHECK_MAX_PHONES } = require("../../config/limits");
 
 async function getResettableUser(userId) {
   const user = await userRepository.getCredentialState(userId);
@@ -57,7 +58,7 @@ function removeFiles(paths) {
   paths.forEach((p) => {
     try {
       if (p && fs.existsSync(p)) fs.unlinkSync(p);
-    } catch (_) {}
+    } catch (_) { }
   });
 }
 
@@ -95,7 +96,7 @@ const userService = {
       throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
-    if (phones.length > 500) {
+    if (phones.length > CONTACT_CHECK_MAX_PHONES) {
       throw httpError(413, "Danh bạ quá lớn, vui lòng đồng bộ từng phần");
     }
 
@@ -174,7 +175,10 @@ const userService = {
 
     // Token chỉ dùng được một lần: PIN đã đổi thì dấu vân tay hash không còn khớp
     if (tokenUtil.credentialVersion(user.pin_hash) !== version) {
-      throw httpError(401, "Phiên đặt lại mã PIN đã hết hiệu lực, vui lòng thực hiện lại");
+      throw httpError(
+        401,
+        "Phiên đặt lại mã PIN đã hết hiệu lực, vui lòng thực hiện lại",
+      );
     }
 
     if (user.pin_hash && (await bcrypt.compare(pin, user.pin_hash))) {
@@ -192,7 +196,10 @@ const userService = {
       oldPinHash: user.pin_hash,
     });
     if (!updated) {
-      throw httpError(401, "Phiên đặt lại mã PIN đã hết hiệu lực, vui lòng thực hiện lại");
+      throw httpError(
+        401,
+        "Phiên đặt lại mã PIN đã hết hiệu lực, vui lòng thực hiện lại",
+      );
     }
   },
 
@@ -210,10 +217,16 @@ const userService = {
     const user = await getResettableUser(userId);
 
     if (tokenUtil.credentialVersion(user.password_hash) !== version) {
-      throw httpError(401, "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại");
+      throw httpError(
+        401,
+        "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại",
+      );
     }
 
-    if (user.password_hash && (await bcrypt.compare(password, user.password_hash))) {
+    if (
+      user.password_hash &&
+      (await bcrypt.compare(password, user.password_hash))
+    ) {
       throw httpError(400, "Mật khẩu mới không được trùng mật khẩu hiện tại");
     }
     if (user.pin_hash && (await bcrypt.compare(password, user.pin_hash))) {
@@ -228,7 +241,10 @@ const userService = {
       oldPasswordHash: user.password_hash,
     });
     if (!updated) {
-      throw httpError(401, "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại");
+      throw httpError(
+        401,
+        "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại",
+      );
     }
 
     // Đã xoá refresh token trong DB; báo các thiết bị đang đăng nhập thoát ra
@@ -309,10 +325,7 @@ const userService = {
 
       if (approved) {
         if (String(ocrInfo.id) !== String(approved.id)) {
-          throw httpError(
-            403,
-            "Giấy tờ không khớp với tài khoản đã định danh",
-          );
+          throw httpError(403, "Giấy tờ không khớp với tài khoản đã định danh");
         }
 
         // So khuôn mặt vừa chụp với ảnh đã lưu khi KYC (ảnh khuôn mặt,
@@ -332,10 +345,7 @@ const userService = {
           facePath,
         );
         if (!sameFace.isMatch) {
-          throw httpError(
-            403,
-            "Khuôn mặt không khớp với dữ liệu đã đăng ký",
-          );
+          throw httpError(403, "Khuôn mặt không khớp với dữ liệu đã đăng ký");
         }
       } else {
         const exists = await kycRepository.checkIdExists(ocrInfo.id);

@@ -7,7 +7,7 @@ const userRepository = {
       `SELECT id, phone, full_name FROM users WHERE phone = $1 AND status = 'ACTIVE'`,
       [phone],
     );
-    return result.rows[0];
+    return result.rows[0] ?? null;
   },
 
   async getUserByUserId(userId) {
@@ -69,6 +69,30 @@ const userRepository = {
     return result.rows[0];
   },
 
+  async claimPinAttempt({ userId, maxAttempts, lockMinutes }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET pin_failed_attempts = CASE
+             WHEN pin_locked_until <= NOW() THEN 1
+             ELSE COALESCE(pin_failed_attempts, 0) + 1
+           END,
+           pin_locked_until = CASE
+             WHEN (CASE
+                     WHEN pin_locked_until <= NOW() THEN 1
+                     ELSE COALESCE(pin_failed_attempts, 0) + 1
+                   END) >= $2::INT
+             THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
+             ELSE NULL
+           END
+       WHERE id = $1
+         AND pin_hash IS NOT NULL
+         AND (pin_locked_until IS NULL OR pin_locked_until <= NOW())
+       RETURNING pin_hash, pin_failed_attempts`,
+      [userId, maxAttempts, lockMinutes],
+    );
+    return result.rows[0];
+  },
+
   async resetFailedPin(userId) {
     await pool.query(
       `UPDATE users SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE id = $1`,
@@ -85,10 +109,25 @@ const userRepository = {
   },
 
   async updateFmcToken({ userId, fcmToken }) {
-    await pool.query(`UPDATE users SET fcm_token = $1 WHERE id = $2`, [
-      fcmToken,
-      userId,
-    ]);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE users SET fcm_token = null WHERE fcm_token = $1`,
+        [fcmToken],
+      );
+      await client.query(`UPDATE users SET fcm_token = $1 WHERE id = $2`, [
+        fcmToken,
+        userId,
+      ]);
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   },
 
   async getFcmToken(userId) {
@@ -116,7 +155,6 @@ const userRepository = {
     return result.rows[0] ?? null;
   },
 
-  // Chỉ ghi khi pin_hash vẫn là giá trị lúc cấp token (chặn dùng lại token)
   async resetPin({ userId, pinHash, oldPinHash }) {
     const result = await pool.query(
       `UPDATE users
@@ -127,7 +165,6 @@ const userRepository = {
     );
     return result.rows[0] ?? null;
   },
-
 
   async resetPassword({ userId, passwordHash, oldPasswordHash }) {
     const result = await pool.query(

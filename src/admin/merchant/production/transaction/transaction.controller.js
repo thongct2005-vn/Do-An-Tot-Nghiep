@@ -1,7 +1,10 @@
 const { successResponse } = require("../../../../utils/apiResponse");
 const merchantTransactionService = require("./transaction.service");
+const transactionService = require("../../../../modules/transaction/transaction.service");
 const { emitToUser } = require("../../../../utils/socket");
-const { sendPushNotification } = require("../../../../utils/fireBaseNotification");
+const {
+  sendPushNotification,
+} = require("../../../../utils/firebaseNotification");
 const merchantTransactionController = {
   async transferMoney(req, res, next) {
     try {
@@ -50,7 +53,12 @@ const merchantTransactionController = {
           balance: result.destBalanceAfter,
         },
       });
-      return successResponse(res, 200, "Chuyển tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Chuyển tiền thành công",
+        transactionService.toTransferResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -83,18 +91,23 @@ const merchantTransactionController = {
         },
       });
 
-      return successResponse(res, 200, "Nạp tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Nạp tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
   },
 
-  async withdrawnMoney(req, res, next) {
+  async withdrawMoney(req, res, next) {
     try {
       const { user_id: sourceUserId } = req.user;
       const idempotencyKey = req.idempotencyKey;
       const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
-      const result = await merchantTransactionService.withdrawnMoney({
+      const result = await merchantTransactionService.withdrawMoney({
         sourceUserId,
         amount,
         idempotencyKey,
@@ -117,7 +130,12 @@ const merchantTransactionController = {
         },
       });
 
-      return successResponse(res, 200, "Rút tiền thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Rút tiền thành công",
+        transactionService.toBankTransactionResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -168,7 +186,12 @@ const merchantTransactionController = {
         },
       });
 
-      return successResponse(res, 200, "Thanh toán QR thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Thanh toán QR thành công",
+        transactionService.toTransferResponse(result),
+      );
     } catch (e) {
       next(e);
     }
@@ -186,14 +209,17 @@ const merchantTransactionController = {
         end_date: endDate,
       } = req.query;
 
-      const result = await merchantTransactionService.getTransferHistory(userId, {
-        cursorId,
-        limit,
-        keyword,
-        type,
-        startDate,
-        endDate,
-      });
+      const result = await merchantTransactionService.getTransferHistory(
+        userId,
+        {
+          cursorId,
+          limit,
+          keyword,
+          type,
+          startDate,
+          endDate,
+        },
+      );
 
       return successResponse(
         res,
@@ -231,7 +257,8 @@ const merchantTransactionController = {
     try {
       const { user_id: userId } = req.user;
 
-      const result = await merchantTransactionService.getCurrentMonthSummary(userId);
+      const result =
+        await merchantTransactionService.getCurrentMonthSummary(userId);
       return successResponse(
         res,
         200,
@@ -250,7 +277,12 @@ const merchantTransactionController = {
         userId,
         phone,
       });
-      return successResponse(res, 200, "Đã gửi mã OTP xác thực giao dịch", result);
+      return successResponse(
+        res,
+        200,
+        "Đã gửi mã OTP xác thực giao dịch",
+        result,
+      );
     } catch (e) {
       next(e);
     }
@@ -272,12 +304,14 @@ const merchantTransactionController = {
   async verifyTransactionOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.user;
-      const { otp, idempotency_key: idempotencyKey } = req.body;
+      const { otp, idempotency_key: idempotencyKey, action, params } = req.body;
       const result = await merchantTransactionService.verifyTransactionOtp({
         userId,
         phone,
         otp,
         idempotencyKey,
+        action,
+        params,
       });
       return successResponse(res, 200, "Xác thực OTP thành công", result);
     } catch (e) {
@@ -293,7 +327,12 @@ const merchantTransactionController = {
         userId,
         phone,
       );
-      return successResponse(res, 200, "Lấy thông tin người nhận thành công", result);
+      return successResponse(
+        res,
+        200,
+        "Lấy thông tin người nhận thành công",
+        result,
+      );
     } catch (e) {
       next(e);
     }

@@ -1,8 +1,18 @@
 const tokenUtil = require("../utils/jwt");
 const { httpError } = require("../utils/httpError");
+const { computePinBinding } = require("../utils/pinBinding");
 const { computeSignature, isSameSignature } = require("../utils/hashSecretKey");
-const dashboardRepository = require("../admin/merchant/production/dashboard/dashboard.repository");
+const dashboardRepository = require("../admin/merchant/shared/dashboard/dashboard.repository");
 const MERCHANT_TIMESTAMP_TOLERANCE = 5 * 60;
+
+function buildMerchantSignedPayload(req) {
+  return [
+    req.method.toUpperCase(),
+    req.originalUrl,
+    req.headers["idempotency-key"] ?? "",
+    req.rawBody ?? "",
+  ].join("\n");
+}
 
 const authMiddleware = {
   verifyAccessToken(req, res, next) {
@@ -42,7 +52,7 @@ const authMiddleware = {
     }
   },
 
-  
+
   verifyRefreshTokenCookie: createRefreshCookieVerifier(
     tokenUtil.MERCHANT_REFRESH_COOKIE,
   ),
@@ -123,52 +133,82 @@ const authMiddleware = {
     };
   },
 
-  verifyTransactionOtpToken(req, res, next) {
-    try {
-      const otpToken = req.headers["x-otp-token"];
-      const idempotencyKey = req.headers["idempotency-key"];
-      if (!otpToken || !idempotencyKey) {
-        throw httpError(403, "Thiếu mã xác thực OTP của giao dịch");
-      }
+  // OTP token chỉ có giá trị cho đúng loại giao dịch (action) và đúng nội dung request
+  // (số tiền, người nhận, ngân hàng...) đã được ký vào token lúc verify OTP.
+  verifyTransactionOtpToken(action) {
+    return (req, res, next) => {
+      try {
+        const otpToken = req.headers["x-otp-token"];
+        const idempotencyKey = req.headers["idempotency-key"];
+        if (!otpToken || !idempotencyKey) {
+          throw httpError(403, "Thiếu mã xác thực OTP của giao dịch");
+        }
 
-      const payload = tokenUtil.verifyTransactionOtpToken(otpToken);
-      if (
-        !req.user ||
-        payload.user_id !== req.user.user_id ||
-        payload.idempotency_key !== idempotencyKey
-      ) {
-        throw httpError(403, "Mã xác thực OTP không hợp lệ");
-      }
+        const payload = tokenUtil.verifyTransactionOtpToken(otpToken);
+        if (
+          !req.user ||
+          payload.user_id !== req.user.user_id ||
+          payload.idempotency_key !== idempotencyKey ||
+          payload.action !== action
+        ) {
+          throw httpError(403, "Mã xác thực OTP không hợp lệ");
+        }
 
-      req.otpUser = payload;
-      next();
-    } catch (e) {
-      if (e.statusCode) return next(e);
-      next(httpError(403, "Xác thực OTP đã hết hạn, vui lòng thực hiện lại"));
-    }
+        let expectedBinding;
+        try {
+          expectedBinding = computePinBinding(action, req.body);
+        } catch (_) {
+          throw httpError(403, "Mã xác thực OTP không khớp với giao dịch");
+        }
+        if (!payload.binding || payload.binding !== expectedBinding) {
+          throw httpError(403, "Mã xác thực OTP không khớp với giao dịch");
+        }
+
+        req.otpUser = payload;
+        next();
+      } catch (e) {
+        if (e.statusCode) return next(e);
+        next(httpError(403, "Xác thực OTP đã hết hạn, vui lòng thực hiện lại"));
+      }
+    };
   },
 
-  verifyPinToken(req, res, next) {
-    try {
-      const pinToken = req.headers["x-pin-token"];
-      const idempotencyKey = req.headers["idempotency-key"];
-      if (!pinToken || !idempotencyKey) {
-        throw httpError(403, "Thiếu mã xác thực PIN của giao dịch");
-      }
+  // PIN token chỉ có giá trị cho đúng loại giao dịch (action) và đúng nội dung request
+  // (số tiền, người nhận...) đã được ký vào token lúc checkPin.
+  requirePinToken(action) {
+    return (req, res, next) => {
+      try {
+        const pinToken = req.headers["x-pin-token"];
+        const idempotencyKey = req.headers["idempotency-key"];
+        if (!pinToken || !idempotencyKey) {
+          throw httpError(403, "Thiếu mã xác thực PIN của giao dịch");
+        }
 
-      const payload = tokenUtil.verifyPinToken(pinToken);
-      if (
-        !req.user ||
-        payload.user_id !== req.user.user_id ||
-        payload.idempotency_key !== idempotencyKey
-      ) {
-        throw httpError(403, "Mã xác thực PIN không hợp lệ");
+        const payload = tokenUtil.verifyPinToken(pinToken);
+        if (
+          !req.user ||
+          payload.user_id !== req.user.user_id ||
+          payload.idempotency_key !== idempotencyKey ||
+          payload.action !== action
+        ) {
+          throw httpError(403, "Mã xác thực PIN không hợp lệ");
+        }
+
+        let expectedBinding;
+        try {
+          expectedBinding = computePinBinding(action, req.body);
+        } catch (_) {
+          throw httpError(403, "Mã xác thực PIN không khớp với giao dịch");
+        }
+        if (!payload.binding || payload.binding !== expectedBinding) {
+          throw httpError(403, "Mã xác thực PIN không khớp với giao dịch");
+        }
+        next();
+      } catch (e) {
+        if (e.statusCode) return next(e);
+        next(httpError(403, "Xác thực PIN đã hết hạn, vui lòng nhập lại PIN"));
       }
-      next();
-    } catch (e) {
-      if (e.statusCode) return next(e);
-      next(httpError(403, "Xác thực PIN đã hết hạn, vui lòng nhập lại PIN"));
-    }
+    };
   },
 
   async verifyMerchant(req, res, next) {
@@ -199,10 +239,16 @@ const authMiddleware = {
       const expected = computeSignature(
         merchant.secret_key,
         timestamp,
-        req.rawBody ?? "",
+        buildMerchantSignedPayload(req),
       );
+      // Chỉ chấp nhận chữ ký kiểu mới (ký cả method, đường dẫn, Idempotency-Key và body)
       if (!isSameSignature(signature, expected)) {
         throw httpError(401, "Chữ ký không hợp lệ");
+      }
+
+      // Kiểm tra sau khi chữ ký đúng để người lạ không dò được trạng thái tài khoản.
+      if (merchant.role !== "MERCHANT" || merchant.status !== "ACTIVE") {
+        throw httpError(403, "Tài khoản merchant đang bị khoá hoặc không khả dụng");
       }
 
       const { secret_key: _secretKey, ...safeMerchant } = merchant;

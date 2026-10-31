@@ -6,6 +6,7 @@ const {
   isValidPhone,
   isValidPasswordOrPin,
   isValidEmail,
+  isValidOtp
 } = require("../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../utils/jwt");
@@ -17,8 +18,7 @@ const LOGIN_LOCK_MINUTES = 30;
 const TOTP_MAX_ATTEMPTS = 5;
 const TOTP_LOCK_MINUTES = 5;
 const TOTP_ISSUER = process.env.TOTP_ISSUER;
-
-const { maskEmail} = require("../../utils/maskPhoneAndEmail");
+const { maskEmail } = require("../../utils/mask");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -80,7 +80,7 @@ async function checkCredentials(phone, password) {
 // Kiểm tra mã 6 số của Google Authenticator.
 // requireEnabled = true: đăng nhập; false: bước xác nhận bật lần đầu.
 async function verifyTotpCode({ userId, code, requireEnabled }) {
-  if (!/^\d{6}$/.test(String(code ?? ""))) {
+  if (!isValidOtp(code)) {
     throw httpError(400, "Mã xác thực phải gồm 6 chữ số");
   }
 
@@ -227,7 +227,11 @@ const authService = {
     const user = await getOtpUser({ userId, phone });
 
     if (user.totp_enabled) {
-      await verifyTotpCode({ userId: user.id, code: otp, requireEnabled: true });
+      await verifyTotpCode({
+        userId: user.id,
+        code: otp,
+        requireEnabled: true,
+      });
     } else {
       await otpService.verifyOtp({ email: user.email, otp });
     }
@@ -280,6 +284,31 @@ const authService = {
     };
   },
 
+  // Lấy lại mã QR đã liên kết (lỡ xoá mã trong Google Authenticator).
+  // Cần đúng mật khẩu; trả về đúng khoá cũ, không tạo khoá mới.
+  async recoverTotp({ phone, password }) {
+    const user = await checkCredentials(phone, password);
+
+    if (!user.totp_enabled) {
+      throw httpError(400, "Tài khoản chưa bật Google Authenticator");
+    }
+
+    const state = await authRepository.getTotpState(user.id);
+    if (!state || !state.totp_secret) {
+      throw httpError(404, "Không tìm thấy khoá Google Authenticator");
+    }
+
+    const secret = totpUtil.decryptSecret(state.totp_secret);
+    return {
+      otpauth_uri: totpUtil.buildOtpAuthUri({
+        secret,
+        account: user.phone,
+        issuer: TOTP_ISSUER,
+      }),
+      secret,
+    };
+  },
+
   // Gọi khi đã đăng nhập (OTP email xong): nhập mã đầu tiên để bật
   async enableTotp({ userId, code }) {
     if (!userId) {
@@ -288,7 +317,10 @@ const authService = {
     await verifyTotpCode({ userId, code, requireEnabled: false });
     const enabled = await authRepository.enableTotp(userId);
     if (!enabled) {
-      throw httpError(409, "Không thể bật Google Authenticator, vui lòng thử lại");
+      throw httpError(
+        409,
+        "Không thể bật Google Authenticator, vui lòng thử lại",
+      );
     }
   },
 

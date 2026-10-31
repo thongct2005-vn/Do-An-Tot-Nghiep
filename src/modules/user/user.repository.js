@@ -69,6 +69,30 @@ const userRepository = {
     return result.rows[0];
   },
 
+  async claimPinAttempt({ userId, maxAttempts, lockMinutes }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET pin_failed_attempts = CASE
+             WHEN pin_locked_until <= NOW() THEN 1
+             ELSE COALESCE(pin_failed_attempts, 0) + 1
+           END,
+           pin_locked_until = CASE
+             WHEN (CASE
+                     WHEN pin_locked_until <= NOW() THEN 1
+                     ELSE COALESCE(pin_failed_attempts, 0) + 1
+                   END) >= $2::INT
+             THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
+             ELSE NULL
+           END
+       WHERE id = $1
+         AND pin_hash IS NOT NULL
+         AND (pin_locked_until IS NULL OR pin_locked_until <= NOW())
+       RETURNING pin_hash, pin_failed_attempts`,
+      [userId, maxAttempts, lockMinutes],
+    );
+    return result.rows[0];
+  },
+
   async resetFailedPin(userId) {
     await pool.query(
       `UPDATE users SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE id = $1`,
@@ -131,7 +155,7 @@ const userRepository = {
     return result.rows[0] ?? null;
   },
 
-  // Chỉ ghi khi pin_hash vẫn là giá trị lúc cấp token (chặn dùng lại token)
+  
   async resetPin({ userId, pinHash, oldPinHash }) {
     const result = await pool.query(
       `UPDATE users

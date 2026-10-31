@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thanh toán đơn hàng</title>
+  <style>
+    :root {
+      --pink: #e91e63;
+      --pink-soft: rgba(233, 30, 99, 0.08);
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1f2330;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --green: #16a34a;
+      --red: #b91c1c;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14151a;
+        --card: #1e2027;
+        --text: #f3f4f6;
+        --muted: #9ca3af;
+        --line: #343741;
+        --pink-soft: rgba(233, 30, 99, 0.16);
+      }
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 24px 20px;
+      align-self: flex-start;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: var(--pink);
+      margin-bottom: 18px;
+    }
+    .brand .dot {
+      width: 10px; height: 10px; border-radius: 50%; background: var(--pink);
+    }
+    .merchant { color: var(--muted); font-size: 14px; margin: 0 0 4px; }
+    .amount { font-size: 34px; font-weight: 700; margin: 0 0 14px; letter-spacing: -0.5px; }
+    .rows { border-top: 1px solid var(--line); padding-top: 12px; margin-bottom: 18px; }
+    .row { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; padding: 4px 0; }
+    .row .k { color: var(--muted); flex-shrink: 0; }
+    .row .v { text-align: right; word-break: break-word; font-weight: 500; }
+
+    .center { text-align: center; }
+    .qr-box {
+      display: inline-block;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px;
+    }
+    .qr-box img { display: block; width: 220px; height: 220px; }
+    .hint { color: var(--muted); font-size: 13.5px; line-height: 1.5; margin: 12px 0 0; }
+    .countdown {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: var(--pink-soft);
+      color: var(--pink);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .status-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 4px auto 12px;
+      font-size: 34px; font-weight: 700; color: #fff;
+    }
+    .status-icon.ok { background: var(--green); }
+    .status-icon.bad { background: var(--red); }
+    .status-title { font-size: 19px; font-weight: 700; margin: 0 0 6px; }
+    .spinner {
+      width: 34px; height: 34px; margin: 18px auto;
+      border: 3px solid var(--line); border-top-color: var(--pink);
+      border-radius: 50%; animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      padding: 13px 16px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--pink);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    #return-area { margin-top: 8px; text-align: center; }
+    .note { color: var(--muted); font-size: 13.5px; margin: 14px 0 0; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><span class="dot"></span> Cổng thanh toán</div>
+
+    <section id="state-loading" class="center">
+      <div class="spinner"></div>
+      <p class="hint">Đang tải thông tin thanh toán...</p>
+    </section>
+
+    <section id="summary" hidden>
+      <p class="merchant">Thanh toán cho <strong id="merchant-name"></strong></p>
+      <p class="amount" id="amount"></p>
+      <div class="rows">
+        <div class="row" id="description-row">
+          <span class="k">Nội dung</span><span class="v" id="description"></span>
+        </div>
+        <div class="row">
+          <span class="k">Mã đơn hàng</span><span class="v" id="order-id"></span>
+        </div>
+      </div>
+    </section>
+
+    <section id="state-pending" class="center" hidden>
+      <div class="qr-box"><img id="qr" alt="Mã QR thanh toán" width="220" height="220" /></div>
+      <p class="hint">
+        Mở ứng dụng ví, chọn quét mã QR và quét mã trên để thanh toán.
+        Trang sẽ tự cập nhật khi thanh toán xong.
+      </p>
+      <span class="countdown">Hết hạn sau <span id="countdown">--:--</span></span>
+    </section>
+
+    <section id="state-success" class="center" hidden>
+      <div class="status-icon ok">&#10003;</div>
+      <p class="status-title">Thanh toán thành công</p>
+    </section>
+
+    <section id="state-failed" class="center" hidden>
+      <div class="status-icon bad">!</div>
+      <p class="status-title">Thanh toán không thành công</p>
+      <p class="hint">Đơn hàng đã hết hạn hoặc không thể thanh toán.</p>
+    </section>
+
+    <section id="state-error" class="center" hidden>
+      <div class="status-icon bad">!</div>
+      <p class="status-title" id="error-title">Có lỗi xảy ra</p>
+      <p class="hint" id="error-text"></p>
+      <button class="btn" id="retry-btn" type="button">Thử lại</button>
+    </section>
+
+    <div id="return-area" hidden>
+      <p class="note" id="redirect-note"></p>
+      <a class="btn" id="return-link" href="#" rel="noopener noreferrer">Quay lại cửa hàng</a>
+    </div>
+  </main>
+
+  <script src="/pay/assets/pay.js"></script>
+</body>
+</html>

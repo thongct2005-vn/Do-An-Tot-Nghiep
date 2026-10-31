@@ -1,0 +1,116 @@
+const pool = require("../../../../../config/database");
+
+const authRepository = {
+  async findUserByPhone(phone) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+      FROM users u
+      WHERE u.phone = $1
+      `,
+      [phone],
+    );
+    return result.rows[0];
+  },
+
+  async findUserByEmail(email) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+      FROM users u
+      WHERE u.email = $1
+      `,
+      [email],
+    );
+    return result.rows[0];
+  },
+
+  async resetFailedLogin(phone) {
+    await pool.query(
+      `
+      UPDATE users
+      SET failed_login_attempts = 0, locked_until = NULL
+      WHERE phone = $1
+      `,
+      [phone],
+    );
+  },
+
+  async registerFailedLogin({ phone, maxAttempts, lockMinutes }) {
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1,
+          locked_until = CASE
+            WHEN COALESCE(failed_login_attempts, 0) + 1 >= $2::INT
+            THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
+            ELSE locked_until
+          END
+      WHERE phone = $1
+      RETURNING failed_login_attempts
+      `,
+      [phone, maxAttempts, lockMinutes],
+    );
+    return result.rows[0];
+  },
+
+  async updateRefeshToken({ refreshToken, userId }) {
+    await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
+      refreshToken,
+      userId,
+    ]);
+  },
+
+  async findUserByRefreshToken(refreshToken) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.balance, u.role
+      FROM users u
+      WHERE u.refresh_token = $1
+      `,
+      [refreshToken],
+    );
+    return result.rows[0];
+  },
+
+  async createUserWithKyc({ userId, phone, phoneHash, email, passwordHash, status = "APPROVED" }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `
+        INSERT INTO users(id, phone, phone_hash, email, password_hash, full_name)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [userId, phone, phoneHash, email, passwordHash, "unknow"],
+      );
+
+      await client.query(
+        `
+        INSERT INTO user_kyc(id, user_id, status)
+        VALUES ($1, $2, $3)
+        `,
+        [phone, userId, status],
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async logout(userId) {
+    await pool.query(
+      "UPDATE users SET refresh_token = $1, fcm_token = $2 WHERE id = $3",
+      [null, null, userId],
+    );
+  },
+};
+
+module.exports = authRepository;

@@ -803,6 +803,298 @@ const adminUserRepository = {
       client.release();
     }
   },
+
+  async executeAdminBankOperationWithHistory({
+    operationType, // 'TOPUP' | 'WITHDRAW'
+    adminId,
+    userId,
+    linkedBankAccountId,
+    amount,
+    fee = 0,
+    description,
+    reason,
+    authorizationReference,
+    idempotencyKey,
+    requestHash,
+    requestPath,
+  }) {
+    const isTopup = operationType === "TOPUP";
+    const action = isTopup ? "ADMIN_OP_TOPUP" : "ADMIN_OP_WITHDRAW";
+    const executionMode = isTopup
+      ? "SIMULATED_ADMIN_TOPUP"
+      : "SIMULATED_ADMIN_WITHDRAW";
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Khóa và kiểm tra Idempotency-Key
+      const idemResult = await client.query(
+        `
+        SELECT idempotency_key, status, actor_id, request_path, request_hash,
+               response_body, response_status_code
+        FROM idempotency_keys
+        WHERE idempotency_key = $1
+        FOR UPDATE
+        `,
+        [idempotencyKey]
+      );
+
+      const idemRow = idemResult.rows[0];
+      if (!idemRow) {
+        throw httpError(400, "Không tìm thấy khóa Idempotency-Key hợp lệ");
+      }
+
+      if (
+        (idemRow.actor_id && String(idemRow.actor_id) !== String(adminId)) ||
+        (idemRow.request_path && idemRow.request_path !== requestPath) ||
+        (requestHash &&
+          idemRow.request_hash &&
+          idemRow.request_hash !== requestHash)
+      ) {
+        throw httpError(
+          422,
+          "Mã Idempotency-Key đã được sử dụng với dữ liệu giao dịch khác"
+        );
+      }
+
+      if (idemRow.status === "SUCCESS" && idemRow.response_body) {
+        await client.query("ROLLBACK");
+        return {
+          replayed: true,
+          responseBody: idemRow.response_body,
+          notificationContext: null,
+        };
+      }
+
+      // 2. Khóa dòng User để bảo vệ số dư và kiểm tra trạng thái
+      const userResult = await client.query(
+        `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
+        [userId]
+      );
+      const userRow = userResult.rows[0];
+      if (!userRow) {
+        throw httpError(404, "Không tìm thấy thông tin người dùng");
+      }
+      if (userRow.status !== "ACTIVE") {
+        throw httpError(
+          403,
+          "Tài khoản người dùng đang bị khóa hoặc không khả dụng"
+        );
+      }
+
+      // 3. Khóa và kiểm tra tài khoản ngân hàng liên kết (Phương án A: không tác động số dư ngân hàng)
+      const bankResult = await client.query(
+        `
+        SELECT lba.id, lba.account_number, b.name AS bank_name
+        FROM linked_bank_accounts lba
+        JOIN banks b ON lba.bank_id = b.id
+        WHERE lba.id = $1 AND lba.user_id = $2 AND lba.status = 'ACTIVE'
+        FOR UPDATE OF lba
+        `,
+        [linkedBankAccountId, userId]
+      );
+      const bankRow = bankResult.rows[0];
+      if (!bankRow) {
+        throw httpError(
+          404,
+          "Không tìm thấy tài khoản ngân hàng liên kết hợp lệ của người dùng"
+        );
+      }
+
+      // 4. Tính toán số dư và kiểm tra hạn mức
+      const amountNum = Number(amount);
+      const feeNum = Number(fee || 0);
+      const sourceBalanceBefore = Number(userRow.balance);
+      let sourceBalanceAfter;
+
+      if (isTopup) {
+        sourceBalanceAfter = sourceBalanceBefore + amountNum;
+      } else {
+        if (sourceBalanceBefore < amountNum + feeNum) {
+          throw httpError(
+            422,
+            "Số dư ví người dùng không đủ để thực hiện rút tiền"
+          );
+        }
+
+        const dailyLimitResult = await client.query(
+          `
+          SELECT COALESCE(SUM(amount), 0) AS daily_used
+          FROM transactions
+          WHERE source_user_id = $1
+            AND status = 'SUCCESS'
+            AND transaction_type IN ('TRANSFER', 'WITHDRAW', 'PAYMENT')
+            AND created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AT TIME ZONE 'Asia/Ho_Chi_Minh'
+          `,
+          [userId]
+        );
+        const dailyUsed = Number(dailyLimitResult.rows[0]?.daily_used || 0);
+        const DAILY_LIMIT = 50000000;
+        if (dailyUsed + amountNum > DAILY_LIMIT) {
+          throw httpError(
+            422,
+            "Giao dịch vượt quá hạn mức rút tiền trong ngày (50.000.000đ)"
+          );
+        }
+
+        sourceBalanceAfter = sourceBalanceBefore - (amountNum + feeNum);
+      }
+
+      // 5. Cập nhật số dư ví
+      await client.query(
+        `UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`,
+        [sourceBalanceAfter, userId]
+      );
+
+      const cleanDescription =
+        typeof description === "string" && description.trim().length > 0
+          ? description.trim().slice(0, 255)
+          : isTopup
+          ? `Admin hỗ trợ nạp tiền (${authorizationReference})`
+          : `Admin hỗ trợ rút tiền (${authorizationReference})`;
+
+      // 6. Ghi bản ghi transactions
+      const txResult = await client.query(
+        `
+        INSERT INTO transactions (
+          transaction_type, source_user_id, source_balance_before, source_balance_after,
+          amount, fee, idempotency_key, status, description, linked_bank_account_id, created_at, completed_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUCCESS', $8, $9, NOW(), NOW())
+        RETURNING id, status, created_at
+        `,
+        [
+          operationType,
+          userId,
+          sourceBalanceBefore,
+          sourceBalanceAfter,
+          amountNum,
+          feeNum,
+          idempotencyKey,
+          cleanDescription,
+          linkedBankAccountId,
+        ]
+      );
+      const txRow = txResult.rows[0];
+      const transactionId = String(txRow.id);
+
+      // 7. Ghi nhận sự kiện vào audit_outbox
+      await TransactionRepository.recordAudit(client, {
+        eventType: isTopup
+          ? "ADMIN_TOPUP_COMPLETED"
+          : "ADMIN_WITHDRAW_COMPLETED",
+        payload: {
+          transaction_id: transactionId,
+          transaction_type: operationType,
+          status: "SUCCESS",
+          admin_id: String(adminId),
+          user_id: String(userId),
+          linked_bank_account_id: String(linkedBankAccountId),
+          bank_name: bankRow.bank_name,
+          amount: amountNum,
+          fee: feeNum,
+          balance_before: sourceBalanceBefore,
+          balance_after: sourceBalanceAfter,
+          reason,
+          authorization_reference: authorizationReference,
+          idempotency_key: idempotencyKey,
+        },
+      });
+
+      // 8. Ghi nhận kiểm toán vào admin_user_change_history
+      const oldValues = {
+        balance_before: sourceBalanceBefore,
+      };
+      const newValues = {
+        balance_after: sourceBalanceAfter,
+        transaction_id: transactionId,
+        transaction_type: operationType,
+        amount: amountNum,
+        fee: feeNum,
+        linked_bank_account_id: String(linkedBankAccountId),
+        bank_name: bankRow.bank_name,
+        bank_account: bankRow.account_number,
+        authorization_reference: authorizationReference,
+        execution_mode: executionMode,
+      };
+
+      const historyResult = await client.query(
+        `
+        INSERT INTO admin_user_change_history (
+          admin_id, user_id, action, reason, old_values, new_values, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        RETURNING id, action, reason, created_at
+        `,
+        [
+          adminId,
+          userId,
+          action,
+          reason,
+          JSON.stringify(oldValues),
+          JSON.stringify(newValues),
+        ]
+      );
+      const historyRow = historyResult.rows[0];
+
+      // 9. Cập nhật idempotency_keys
+      const responseBody = {
+        transaction_id: transactionId,
+        transaction_type: operationType,
+        execution_mode: executionMode,
+        status: "SUCCESS",
+        amount: amountNum,
+        fee: feeNum,
+        description: cleanDescription,
+        reason,
+        authorization_reference: authorizationReference,
+        user_id: String(userId),
+        user_name: userRow.full_name,
+        user_phone: userRow.phone,
+        balance_before: sourceBalanceBefore,
+        balance_after: sourceBalanceAfter,
+        linked_bank_account_id: String(linkedBankAccountId),
+        bank_name: bankRow.bank_name,
+        bank_account: bankRow.account_number,
+        audit_log_id: historyRow?.id || null,
+        created_at: txRow.created_at,
+      };
+
+      await client.query(
+        `
+        UPDATE idempotency_keys
+        SET status = 'SUCCESS',
+            response_status_code = 200,
+            response_body = $1
+        WHERE idempotency_key = $2
+        `,
+        [JSON.stringify(responseBody), idempotencyKey]
+      );
+
+      await client.query("COMMIT");
+
+      return {
+        replayed: false,
+        responseBody,
+        notificationContext: {
+          operationType,
+          transactionId,
+          amount: amountNum,
+          description: cleanDescription,
+          userId: String(userId),
+          userName: userRow.full_name,
+          balanceAfter: sourceBalanceAfter,
+          bankName: bankRow.bank_name,
+          bankAccount: bankRow.account_number,
+        },
+      };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
 };
 
 module.exports = adminUserRepository;

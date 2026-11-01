@@ -251,6 +251,154 @@ const adminUserController = {
       next(e);
     }
   },
+
+  async executeAdminTopup(req, res, next) {
+    try {
+      const { id: userId } = req.params;
+      const adminId = req.user?.user_id;
+      const idempotencyKey =
+        req.headers?.["idempotency-key"] ||
+        req.headers?.["Idempotency-Key"] ||
+        req.idempotencyKey;
+
+      const {
+        linked_bank_account_id: linkedBankAccountId,
+        amount,
+        description,
+        reason,
+        authorization_reference: authorizationReference,
+        admin_password: adminPassword,
+      } = req.body || {};
+
+      const outcome = await adminUserService.executeAdminTopup({
+        adminId,
+        userId,
+        linkedBankAccountId,
+        amount,
+        description,
+        reason,
+        authorizationReference,
+        adminPassword,
+        idempotencyKey,
+      });
+
+      if (!outcome.replayed && outcome.notificationContext) {
+        const ctx = outcome.notificationContext;
+
+        try {
+          socketUtil.emitToUser(ctx.userId, "wallet_balance_updated", {
+            balance: ctx.balanceAfter,
+            transactionId: ctx.transactionId,
+            type: "TOPUP",
+          });
+        } catch (socketErr) {
+          console.error(
+            "Emit wallet_balance_updated (topup) error:",
+            socketErr.message
+          );
+        }
+
+        try {
+          await firebaseNotification.sendPushNotification(ctx.userId, {
+            title: "Nạp tiền thành công",
+            body: `Ví của bạn vừa được nạp +${Number(ctx.amount).toLocaleString(
+              "vi-VN"
+            )}đ từ ngân hàng ${ctx.bankName}`,
+            data: {
+              type: "TOPUP_MONEY",
+              transactionId: ctx.transactionId,
+              balance: ctx.balanceAfter,
+            },
+          });
+        } catch (fcmErr) {
+          console.error("Push notification (topup) error:", fcmErr.message);
+        }
+      }
+
+      return successResponse(
+        res,
+        200,
+        "Thực hiện nạp tiền vào ví thành công",
+        outcome.data
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async executeAdminWithdraw(req, res, next) {
+    try {
+      const { id: userId } = req.params;
+      const adminId = req.user?.user_id;
+      const idempotencyKey =
+        req.headers?.["idempotency-key"] ||
+        req.headers?.["Idempotency-Key"] ||
+        req.idempotencyKey;
+
+      const {
+        linked_bank_account_id: linkedBankAccountId,
+        amount,
+        description,
+        reason,
+        authorization_reference: authorizationReference,
+        admin_password: adminPassword,
+      } = req.body || {};
+
+      const outcome = await adminUserService.executeAdminWithdraw({
+        adminId,
+        userId,
+        linkedBankAccountId,
+        amount,
+        description,
+        reason,
+        authorizationReference,
+        adminPassword,
+        idempotencyKey,
+      });
+
+      if (!outcome.replayed && outcome.notificationContext) {
+        const ctx = outcome.notificationContext;
+
+        try {
+          socketUtil.emitToUser(ctx.userId, "wallet_balance_updated", {
+            balance: ctx.balanceAfter,
+            transactionId: ctx.transactionId,
+            type: "WITHDRAW",
+          });
+        } catch (socketErr) {
+          console.error(
+            "Emit wallet_balance_updated (withdraw) error:",
+            socketErr.message
+          );
+        }
+
+        try {
+          await firebaseNotification.sendPushNotification(ctx.userId, {
+            title: "Rút tiền thành công",
+            body: `Ví của bạn vừa rút -${Number(ctx.amount).toLocaleString(
+              "vi-VN"
+            )}đ về ngân hàng ${ctx.bankName}`,
+            data: {
+              type: "WITHDRAW_MONEY",
+              transactionId: ctx.transactionId,
+              balance: ctx.balanceAfter,
+            },
+          });
+        } catch (fcmErr) {
+          console.error("Push notification (withdraw) error:", fcmErr.message);
+        }
+      }
+
+      return successResponse(
+        res,
+        200,
+        "Thực hiện rút tiền về ngân hàng thành công",
+        outcome.data
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = adminUserController;

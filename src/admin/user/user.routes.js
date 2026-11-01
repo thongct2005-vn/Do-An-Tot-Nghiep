@@ -14,5 +14,7 @@ router.patch("/:id/profile", adminUserController.updateUserProfile);
 router.get("/:id/transactions", adminUserController.getUserTransactions);
 router.get("/:id/history", adminUserController.getUserChangeHistory);
 router.post("/:id/operations/p2p", adminUserController.executeAdminP2P);
+router.post("/:id/operations/topup", adminUserController.executeAdminTopup);
+router.post("/:id/operations/withdraw", adminUserController.executeAdminWithdraw);
 
 module.exports = router;

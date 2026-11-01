@@ -12,6 +12,11 @@ const AUTH_REFERENCE_REGEX = /^[A-Za-z0-9_-]{5,100}$/;
 const ADMIN_P2P_REQUEST_PATH = "POST /api/v2/admin/user/:id/operations/p2p";
 const MIN_P2P_AMOUNT = 1000;
 const MAX_P2P_AMOUNT = 50000000;
+const ADMIN_TOPUP_REQUEST_PATH = "POST /api/v2/admin/user/:id/operations/topup";
+const ADMIN_WITHDRAW_REQUEST_PATH = "POST /api/v2/admin/user/:id/operations/withdraw";
+const MIN_BANK_OP_AMOUNT = 1000;
+const MAX_BANK_OP_AMOUNT = 50000000;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sanitizeP2PResponseData(raw) {
   if (!raw) return raw;
@@ -804,6 +809,241 @@ const adminUserService = {
       }
       throw e;
     }
+  },
+
+  computeAdminBankOpRequestHash({
+    operationType,
+    adminId,
+    userId,
+    linkedBankAccountId,
+    amount,
+    reason,
+    authorizationReference,
+  }) {
+    const canonicalPayload = JSON.stringify({
+      actor_id: String(adminId),
+      operation:
+        operationType === "TOPUP" ? "ADMIN_OP_TOPUP" : "ADMIN_OP_WITHDRAW",
+      user_id: String(userId),
+      linked_bank_account_id: String(linkedBankAccountId),
+      amount: Number(amount),
+      reason: reason || "",
+      authorization_reference: authorizationReference || "",
+    });
+    return crypto.createHash("sha256").update(canonicalPayload).digest("hex");
+  },
+
+  async _executeAdminBankOp({
+    operationType, // 'TOPUP' | 'WITHDRAW'
+    requestPath,
+    adminId,
+    userId,
+    linkedBankAccountId,
+    amount,
+    description,
+    reason,
+    authorizationReference,
+    adminPassword,
+    idempotencyKey,
+  }) {
+    if (!adminId) {
+      throw httpError(401, "Thiếu định danh quản trị viên");
+    }
+
+    if (
+      typeof idempotencyKey !== "string" ||
+      idempotencyKey.trim().length === 0 ||
+      idempotencyKey.trim().length > 100
+    ) {
+      throw httpError(
+        400,
+        "Header Idempotency-Key là bắt buộc và tối đa 100 ký tự"
+      );
+    }
+    const cleanIdempotencyKey = idempotencyKey.trim();
+
+    if (!userId) {
+      throw httpError(400, "Thiếu định danh người dùng");
+    }
+    const cleanUserId = String(userId).trim();
+
+    if (!linkedBankAccountId || !UUID_REGEX.test(String(linkedBankAccountId).trim())) {
+      throw httpError(
+        400,
+        "Định danh tài khoản ngân hàng liên kết (linked_bank_account_id) không hợp lệ"
+      );
+    }
+    const cleanBankAccountId = String(linkedBankAccountId).trim();
+
+    const numAmount = Number(amount);
+    if (
+      !Number.isInteger(numAmount) ||
+      numAmount < MIN_BANK_OP_AMOUNT ||
+      numAmount > MAX_BANK_OP_AMOUNT
+    ) {
+      throw httpError(
+        400,
+        "Số tiền giao dịch phải là số nguyên từ 1.000đ đến 50.000.000đ"
+      );
+    }
+
+    if (
+      typeof reason !== "string" ||
+      reason.trim().length < 5 ||
+      reason.trim().length > 500
+    ) {
+      throw httpError(
+        400,
+        "Lý do thực hiện giao dịch (reason) là bắt buộc và phải từ 5 đến 500 ký tự"
+      );
+    }
+    const cleanReason = reason.trim();
+
+    if (
+      typeof authorizationReference !== "string" ||
+      !AUTH_REFERENCE_REGEX.test(authorizationReference.trim())
+    ) {
+      throw httpError(
+        400,
+        "Mã tham chiếu ủy quyền (authorization_reference) là bắt buộc và phải từ 5-100 ký tự (chữ, số, gạch ngang, gạch dưới)"
+      );
+    }
+    const cleanAuthRef = authorizationReference.trim();
+
+    const cleanDescription =
+      typeof description === "string" && description.trim().length > 0
+        ? description.trim().slice(0, 255)
+        : operationType === "TOPUP"
+          ? `Admin hỗ trợ nạp tiền (${cleanAuthRef})`
+          : `Admin hỗ trợ rút tiền (${cleanAuthRef})`;
+
+    // Xác thực lại mật khẩu của Quản trị viên (Step-up Authentication)
+    await this.verifyAdminStepUpPassword({
+      adminId,
+      adminPassword,
+    });
+
+    const requestHash = this.computeAdminBankOpRequestHash({
+      operationType,
+      adminId,
+      userId: cleanUserId,
+      linkedBankAccountId: cleanBankAccountId,
+      amount: numAmount,
+      reason: cleanReason,
+      authorizationReference: cleanAuthRef,
+    });
+
+    const inserted = await adminUserRepository.tryInsertIdempotencyKey({
+      idempotencyKey: cleanIdempotencyKey,
+      actorId: adminId,
+      actorType: "ADMIN",
+      requestPath,
+      requestHash,
+    });
+
+    if (!inserted) {
+      const existingKey = await adminUserRepository.getIdempotencyKey(
+        cleanIdempotencyKey
+      );
+      if (!existingKey) {
+        throw httpError(409, "Yêu cầu giao dịch đang được xử lý");
+      }
+
+      if (
+        String(existingKey.actor_id) !== String(adminId) ||
+        existingKey.request_path !== requestPath ||
+        existingKey.request_hash !== requestHash
+      ) {
+        throw httpError(
+          422,
+          "Mã Idempotency-Key đã được sử dụng với dữ liệu giao dịch khác"
+        );
+      }
+
+      if (existingKey.status === "SUCCESS" && existingKey.response_body) {
+        return {
+          replayed: true,
+          data: existingKey.response_body,
+          notificationContext: null,
+        };
+      }
+
+      const reclaimed = await adminUserRepository.reclaimIdempotencyKey({
+        idempotencyKey: cleanIdempotencyKey,
+        actorId: adminId,
+        requestPath,
+        requestHash,
+      });
+
+      if (!reclaimed) {
+        const latestKey = await adminUserRepository.getIdempotencyKey(
+          cleanIdempotencyKey
+        );
+        if (
+          latestKey &&
+          latestKey.status === "SUCCESS" &&
+          latestKey.response_body &&
+          latestKey.request_hash === requestHash
+        ) {
+          return {
+            replayed: true,
+            data: latestKey.response_body,
+            notificationContext: null,
+          };
+        }
+        throw httpError(
+          409,
+          "Yêu cầu giao dịch đang được xử lý, vui lòng không gửi trùng lặp"
+        );
+      }
+    }
+
+    try {
+      const txResult =
+        await adminUserRepository.executeAdminBankOperationWithHistory({
+          operationType,
+          adminId,
+          userId: cleanUserId,
+          linkedBankAccountId: cleanBankAccountId,
+          amount: numAmount,
+          fee: 0,
+          description: cleanDescription,
+          reason: cleanReason,
+          authorizationReference: cleanAuthRef,
+          idempotencyKey: cleanIdempotencyKey,
+          requestHash,
+          requestPath,
+        });
+
+      return {
+        replayed: Boolean(txResult.replayed),
+        data: txResult.responseBody,
+        notificationContext: txResult.notificationContext || null,
+      };
+    } catch (e) {
+      try {
+        await adminUserRepository.markIdempotencyKeyFailed(cleanIdempotencyKey);
+      } catch (markErr) {
+        console.error("markIdempotencyKeyFailed error:", markErr.message);
+      }
+      throw e;
+    }
+  },
+
+  async executeAdminTopup(params) {
+    return this._executeAdminBankOp({
+      ...params,
+      operationType: "TOPUP",
+      requestPath: ADMIN_TOPUP_REQUEST_PATH,
+    });
+  },
+
+  async executeAdminWithdraw(params) {
+    return this._executeAdminBankOp({
+      ...params,
+      operationType: "WITHDRAW",
+      requestPath: ADMIN_WITHDRAW_REQUEST_PATH,
+    });
   },
 };
 

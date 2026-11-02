@@ -1,5 +1,9 @@
 const express = require("express");
 const router = express.Router();
+const sanitizeRequest = require("../middlewares/sanitize.middleware");
+
+// Lọc ký tự đặc biệt cho mọi request (body + query)
+router.use(sanitizeRequest);
 
 //USER
 const authRoutes = require("../modules/auth/auth.routes");

@@ -77,5 +77,80 @@ const kycService = {
     }
   },
 
+  async updateKYC({ userId, frontPath, backPath, facePath }) {
+    const newFiles = [frontPath, backPath, facePath];
+    let oldFiles = [];
+    let saved = false;
+    try {
+      if (!frontPath || !backPath || !facePath) {
+        throw httpError(400, "Thiếu ảnh mặt trước, mặt sau hoặc ảnh khuôn mặt");
+      }
+
+      const approved = await kycRepository.findApprovedKycByUserId(userId);
+      if (!approved) {
+        throw httpError(
+          403,
+          "Tài khoản chưa xác thực danh tính, vui lòng xác thực lần đầu",
+        );
+      }
+
+      const { ocrInfo, matchResult } = await analyzeDocuments({
+        frontPath,
+        backPath,
+        facePath,
+      });
+
+      if (String(ocrInfo.id).trim() !== String(approved.id).trim()) {
+        throw httpError(403, "Số căn cước không khớp với thông tin đã đăng ký");
+      }
+
+      const referencePath = [
+        approved.face_image_url,
+        approved.front_image_url,
+      ].find((p) => p && fs.existsSync(p));
+      if (!referencePath) {
+        throw httpError(
+          409,
+          "Không tìm thấy dữ liệu khuôn mặt đã đăng ký, vui lòng liên hệ hỗ trợ",
+        );
+      }
+      const sameFace = await viettelAIService.verifyFaceMatch(
+        referencePath,
+        facePath,
+      );
+      if (!sameFace.isMatch) {
+        throw httpError(403, "Khuôn mặt không khớp với dữ liệu đã đăng ký");
+      }
+
+      const result = await kycRepository.updateKYCResult({
+        userId,
+        idNumber: ocrInfo.id,
+        fullName: ocrInfo.name,
+        dob: ocrInfo.birth_day,
+        gender: ocrInfo.gender,
+        address: ocrInfo.recent_place,
+        frontImageUrl: frontPath,
+        backImageUrl: backPath,
+        faceImageUrl: facePath,
+        matchScore: matchResult.score,
+      });
+      saved = true;
+      oldFiles = [
+        approved.front_image_url,
+        approved.back_image_url,
+        approved.face_image_url,
+      ];
+
+      return { ...result.rows[0], full_name: ocrInfo.name };
+    } finally {
+      (saved ? oldFiles : newFiles).forEach((p) => {
+        if (p && !(saved && newFiles.includes(p)) && fs.existsSync(p)) {
+          try {
+            fs.unlinkSync(p);
+          } catch (_) {}
+        }
+      });
+    }
+  },
 };
 module.exports = kycService;

@@ -34,6 +34,26 @@ const kycController = {
       next(e);
     }
   },
+
+  async updateKYC(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await kycService.updateKYC({
+        userId,
+        frontPath: req.files?.front_id?.[0]?.path,
+        backPath: req.files?.back_id?.[0]?.path,
+        facePath: req.files?.face?.[0]?.path,
+      });
+      return successResponse(
+        res,
+        200,
+        "Cập nhật thông tin định danh thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = kycController;

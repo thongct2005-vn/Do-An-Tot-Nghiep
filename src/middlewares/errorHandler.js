@@ -2,12 +2,17 @@ const { errorResponse } = require("../utils/apiResponse");
 require("dotenv").config();
 
 const errorHandler = (err, req, res, next) => {
-  if (err.statusCode === 500) {
-    console.log(err.stack);
-  }
   let statusCode = err.statusCode || 500;
   let message = err.message || "Lỗi không xác định";
   let errorDetail = null;
+  
+  if (err.statusCode === 500) {
+    console.log(err.stack);
+  } else {
+    console.log(
+      `[${statusCode}] ${req.method} ${req.originalUrl} - ${message}`,
+    );
+  }
 
   if (err.code === "23505") {
     statusCode = 400;

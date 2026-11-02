@@ -23,6 +23,14 @@ const tokenUtil = {
   MERCHANT_REFRESH_COOKIE: "merchant_refresh_token",
   MERCHANT_SANDBOX_REFRESH_COOKIE: "merchant_sandbox_refresh_token",
 
+  getSessionId(refreshToken) {
+    return crypto
+      .createHash("sha256")
+      .update(String(refreshToken))
+      .digest("hex")
+      .slice(0, 16);
+  },
+
   hashToken(token) {
     return crypto.createHash("sha256").update(String(token)).digest("hex");
   },
@@ -35,15 +43,17 @@ const tokenUtil = {
       type: user.role,
     };
 
-    const accessToken = jwt.sign(
-      payload,
-      requireSecret(ACCESS_SECRET, "ACCESS_SECRET"),
-      { expiresIn: "15m", algorithm: "HS256" },
-    );
     const refreshToken = jwt.sign(
       payload,
       requireSecret(REFRESH_SECRET, "REFRESH_SECRET"),
       { expiresIn: "7d", algorithm: "HS256" },
+    );
+   
+    
+    const accessToken = jwt.sign(
+      { ...payload, sid: tokenUtil.getSessionId(refreshToken) },
+      requireSecret(ACCESS_SECRET, "ACCESS_SECRET"),
+      { expiresIn: "15m", algorithm: "HS256" },
     );
     return {
       accessToken,

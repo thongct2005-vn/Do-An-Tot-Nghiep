@@ -1,14 +1,12 @@
 const { Server } = require("socket.io");
 const tokenUtil = require("./jwt");
+const pool = require("../config/database");
 
 let io;
 const activeSockets = new Map();
 
-// Access token chỉ được kiểm tra lúc handshake nên trước đây socket vẫn sống sau khi token hết hạn.
-// Giờ khi token hết hạn server báo "token_expired" và cho client TOKEN_REFRESH_GRACE_MS để gửi
-// token mới qua sự kiện "refresh_auth"; quá hạn mà chưa gia hạn thì ngắt kết nối.
+
 const TOKEN_REFRESH_GRACE_MS = 60 * 1000;
-const MAX_TIMER_MS = 2 ** 31 - 1;
 
 const clearExpiryTimers = (socket) => {
   clearTimeout(socket.data.expiryTimer);
@@ -17,10 +15,7 @@ const clearExpiryTimers = (socket) => {
 
 const scheduleTokenExpiry = (socket) => {
   clearExpiryTimers(socket);
-  const msLeft = Math.min(
-    Math.max(0, socket.user.exp * 1000 - Date.now()),
-    MAX_TIMER_MS,
-  );
+  const msLeft = Math.max(0, socket.user.exp * 1000 - Date.now());
   socket.data.expiryTimer = setTimeout(() => {
     socket.emit("token_expired", { grace_ms: TOKEN_REFRESH_GRACE_MS });
     socket.data.graceTimer = setTimeout(
@@ -40,7 +35,7 @@ const initSocket = (server, corsOrigins = []) => {
     },
   });
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) {
       const err = new Error("Thiếu thông tin xác thực để kết nối");
@@ -50,6 +45,23 @@ const initSocket = (server, corsOrigins = []) => {
 
     try {
       const decode = tokenUtil.verifyAccessToken(token);
+      if (decode.type === "USER") {
+        const { rows } = await pool.query(
+          "SELECT refresh_token FROM users WHERE id = $1",
+          [decode.user_id],
+        );
+        const currentRefresh = rows[0]?.refresh_token;
+        const sessionOk =
+          !!currentRefresh &&
+          (decode.sid === undefined ||
+            decode.sid === tokenUtil.getSessionId(currentRefresh));
+        if (!sessionOk) {
+          const err = new Error("Phiên đăng nhập đã kết thúc");
+          err.statusCode = 401;
+          return next(err);
+        }
+      }
+
       socket.user = decode;
       next();
     } catch (e) {
@@ -114,7 +126,7 @@ const emitToUser = (userId, eventName, data) => {
 
 const disconnectUser = (userId) => {
   if (!io) return;
-  io.in(`user_${userId}`).disconnectSockets(true); // cần socket.io v4
+  io.in(`user_${userId}`).disconnectSockets(true);
   activeSockets.delete(userId);
 };
 

@@ -2,6 +2,7 @@ const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
+const { assertDailyLimit } = require("../../utils/dailyLimit");
 const { uuidv7 } = require("uuidv7");
 
 const TransactionRepository = {
@@ -158,22 +159,13 @@ const TransactionRepository = {
       throw httpError(422, "Số dư không đủ để thực hiện giao dịch");
     }
 
-    const dailyLimitResult = await client.query(
-      `SELECT COALESCE(SUM(amount + fee), 0)::BIGINT AS daily_used
-       FROM transactions
-       WHERE source_user_id = $1
-         AND transaction_type IN ('TRANSFER', 'WITHDRAW', 'PAYMENT')
-         AND status = 'SUCCESS'
-         AND created_at >= date_trunc('day', NOW())`,
-      [sourceUserId],
-    );
-    const dailyUsed = Number(dailyLimitResult?.rows?.[0]?.daily_used || 0);
-    if (dailyUsed + totalDeduct > 50000000) {
-      throw httpError(
-        422,
-        "Vượt quá hạn mức giao dịch trong ngày (50.000.000đ)",
-      );
-    }
+    await assertDailyLimit(client, {
+      userId: sourceUserId,
+      role: sourceUser.role,
+      type: transactionType,
+      amount: amountNum,
+      fee: feeNum,
+    });
 
     const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
     const destBalanceBefore = Number(destUser.balance);
@@ -281,7 +273,7 @@ const TransactionRepository = {
       await client.query("BEGIN");
 
       const userResult = await client.query(
-        `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
         [sourceUserId],
       );
       const sourceUser = userResult.rows[0];
@@ -335,6 +327,14 @@ const TransactionRepository = {
         sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
         linkedBankBalanceAfter = linkedBankBalanceBefore + amountNum;
       }
+
+      await assertDailyLimit(client, {
+        userId: sourceUserId,
+        role: sourceUser.role,
+        type: isTopup ? "TOPUP" : "WITHDRAW",
+        amount: amountNum,
+        fee: feeNum,
+      });
 
       await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
         sourceBalanceAfter,

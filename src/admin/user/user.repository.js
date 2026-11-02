@@ -2,6 +2,7 @@ const pool = require("../../config/database");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
 const { httpError } = require("../../utils/httpError");
 const { maskPhone } = require("../../utils/maskPhoneAndEmail");
+const { assertDailyLimit, getDailyUsage } = require("../../utils/dailyLimit");
 
 const adminUserRepository = {
   async getUserStats() {
@@ -153,18 +154,7 @@ const adminUserRepository = {
     );
     user.linked_banks = banksResult.rows;
 
-    const dailyResult = await pool.query(
-      `
-      SELECT COALESCE(SUM(amount + fee), 0)::BIGINT AS daily_used
-      FROM transactions
-      WHERE source_user_id = $1
-        AND transaction_type IN ('TRANSFER', 'WITHDRAW', 'PAYMENT')
-        AND status = 'SUCCESS'
-        AND created_at >= date_trunc('day', NOW())
-      `,
-      [userId]
-    );
-    user.daily_used = Number(dailyResult.rows[0]?.daily_used || 0);
+    user.daily_limits = await getDailyUsage(pool, userId, user.role);
 
     return user;
   },
@@ -869,7 +859,7 @@ const adminUserRepository = {
 
       // 2. Khóa dòng User để bảo vệ số dư và kiểm tra trạng thái
       const userResult = await client.query(
-        `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
         [userId]
       );
       const userRow = userResult.rows[0];
@@ -918,25 +908,13 @@ const adminUserRepository = {
           );
         }
 
-        const dailyLimitResult = await client.query(
-          `
-          SELECT COALESCE(SUM(amount), 0) AS daily_used
-          FROM transactions
-          WHERE source_user_id = $1
-            AND status = 'SUCCESS'
-            AND transaction_type IN ('TRANSFER', 'WITHDRAW', 'PAYMENT')
-            AND created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AT TIME ZONE 'Asia/Ho_Chi_Minh'
-          `,
-          [userId]
-        );
-        const dailyUsed = Number(dailyLimitResult.rows[0]?.daily_used || 0);
-        const DAILY_LIMIT = 50000000;
-        if (dailyUsed + amountNum > DAILY_LIMIT) {
-          throw httpError(
-            422,
-            "Giao dịch vượt quá hạn mức rút tiền trong ngày (50.000.000đ)"
-          );
-        }
+        await assertDailyLimit(client, {
+          userId,
+          role: userRow.role,
+          type: "WITHDRAW",
+          amount: amountNum,
+          fee: feeNum,
+        });
 
         sourceBalanceAfter = sourceBalanceBefore - (amountNum + feeNum);
       }

@@ -16,7 +16,11 @@ const {
 } = require("../../../../utils/validators");
 const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
 const { parseAmountInRange } = require("../../../../utils/amount");
-const { AMOUNT, HISTORY_PAGE_LIMIT } = require("../../../../config/limits");
+const {
+  AMOUNT,
+  MERCHANT_AMOUNT,
+  HISTORY_PAGE_LIMIT,
+} = require("../../../../config/limits");
 const {
   assertKyc,
   assertKycBoth,
@@ -122,7 +126,11 @@ const merchantTransactionService = {
 
     await assertKyc(sourceUserId);
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.WITHDRAW, "rút");
+    const numAmount = parseAmountInRange(
+      amount,
+      MERCHANT_AMOUNT.WITHDRAW,
+      "rút",
+    );
 
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");

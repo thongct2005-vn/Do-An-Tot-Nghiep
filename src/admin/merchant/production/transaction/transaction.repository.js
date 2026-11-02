@@ -2,6 +2,7 @@ const pool = require("../../../../config/database");
 const paymentRequestRepository = require("../../../../modules/paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const { httpError } = require("../../../../utils/httpError");
+const { assertDailyLimit } = require("../../../../utils/dailyLimit");
 const transactionRepository = require("../../../../modules/transaction/transaction.repository");
 
 const merchantTransactionRepository = {
@@ -78,11 +79,11 @@ const merchantTransactionRepository = {
     ].sort();
 
     const firstUserResult = await client.query(
-      `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
+      `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
       [firstId],
     );
     const secondUserResult = await client.query(
-      `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
+      `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
       [secondId],
     );
 
@@ -116,6 +117,14 @@ const merchantTransactionRepository = {
     if (sourceBalanceBefore < totalDeduct) {
       throw httpError(422, "Số dư không đủ để thực hiện giao dịch");
     }
+
+    await assertDailyLimit(client, {
+      userId: sourceUserId,
+      role: sourceUser.role,
+      type: transactionType,
+      amount: amountNum,
+      fee: feeNum,
+    });
 
     const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
     const destBalanceBefore = Number(destUser.balance);
@@ -214,7 +223,7 @@ const merchantTransactionRepository = {
       await client.query("BEGIN");
 
       const userResult = await client.query(
-        `SELECT id, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
+        `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
         [sourceUserId],
       );
       const sourceUser = userResult.rows[0];
@@ -268,6 +277,14 @@ const merchantTransactionRepository = {
         sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
         linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
       }
+
+      await assertDailyLimit(client, {
+        userId: sourceUserId,
+        role: sourceUser.role,
+        type: isTopup ? "TOPUP" : "WITHDRAW",
+        amount: amountNum,
+        fee: feeNum,
+      });
 
       await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
         sourceBalanceAfter,

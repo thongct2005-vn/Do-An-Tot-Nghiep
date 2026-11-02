@@ -9,11 +9,14 @@ const errorHandler = require("./src/middlewares/errorHandler");
 const router = require("./src/routes/index");
 const { initSocket } = require("./src/utils/socket");
 const { startBackgroundJobs, stopBackgroundJobs } = require("./src/jobs");
-const { pageRouter: payPageRouter } = require("./src/modules/paymentPage/paymentPage.routes");
+const {
+  pageRouter: payPageRouter,
+} = require("./src/modules/paymentPage/paymentPage.routes");
 const { assertPublicBaseUrlConfigured } = require("./src/utils/publicUrl");
 const server = http.createServer(app);
 const PORT = process.env.PORT;
-
+require("dotenv").config();
+const environment = process.env.NODE_ENV;
 // Dừng ngay lúc khởi động nếu thiếu/sai PUBLIC_BASE_URL (bắt buộc khi NODE_ENV=production)
 try {
   assertPublicBaseUrlConfigured();
@@ -52,9 +55,22 @@ app.use(
     },
   }),
 );
-app.use("/api/v2", router);
 
-// Trang thanh toán của cổng (Redirect flow): https://<gateway>/pay/<reference_code>
+if (!environment) {
+  throw new Error("Thiếu môi trường");
+} else if (environment === "production") {
+  app.use("/api/v2", router);
+}
+else if(environment === "sandbox"){
+  app.use("/sb/api/v2", router);
+}
+else {
+  throw new Error(
+    `Môi trường không hợp lệ: "${environment}")`,
+  );
+}
+
+
 app.use("/pay", payPageRouter);
 
 app.use(

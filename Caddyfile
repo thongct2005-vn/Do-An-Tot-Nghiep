@@ -1,0 +1,14 @@
+:5000 {
+    handle /sb/socket.io/* {
+        uri strip_prefix /sb
+        reverse_proxy 127.0.0.1:3001
+    }
+
+    handle /sb/* {
+        reverse_proxy 127.0.0.1:3001
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}

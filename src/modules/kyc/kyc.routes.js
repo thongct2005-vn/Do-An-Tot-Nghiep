@@ -15,5 +15,11 @@ router.post(
   uploadKycImages,
   kycController.verifyAndSaveKYC,
 );
+router.put(
+  "/update",
+  authMiddleware.verifyAccessToken,
+  uploadKycImages,
+  kycController.updateKYC,
+);
 
 module.exports = router;

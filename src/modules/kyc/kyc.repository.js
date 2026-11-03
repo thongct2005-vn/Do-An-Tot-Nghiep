@@ -18,7 +18,7 @@ const kycRepository = {
 
   async findApprovedKycByUserId(userId) {
     const result = await pool.query(
-      `SELECT id, front_image_url, face_image_url
+      `SELECT id, front_image_url, back_image_url, face_image_url
        FROM user_kyc
        WHERE user_id = $1 AND status = 'APPROVED'
        ORDER BY created_at DESC
@@ -62,6 +62,59 @@ const kycRepository = {
           matchScore,
         ],
       );
+      await client.query(`UPDATE users SET full_name = $1 WHERE id = $2`, [
+        fullName,
+        userId,
+      ]);
+      await client.query("COMMIT");
+      return result;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async updateKYCResult({
+    userId,
+    idNumber,
+    fullName,
+    dob,
+    gender,
+    address,
+    frontImageUrl,
+    backImageUrl,
+    faceImageUrl,
+    matchScore,
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE user_kyc
+         SET id = $1, dob = $2, gender = $3, address = $4,
+             front_image_url = $5, back_image_url = $6, face_image_url = $7,
+             face_match_score = $8
+         WHERE user_id = $9 AND status = 'APPROVED'
+         RETURNING id, user_id, dob, gender, address`,
+        [
+          idNumber,
+          dob,
+          gender,
+          address,
+          frontImageUrl,
+          backImageUrl,
+          faceImageUrl,
+          matchScore,
+          userId,
+        ],
+      );
+      if (result.rows.length === 0) {
+        throw Object.assign(new Error("Tài khoản chưa xác thực danh tính"), {
+          statusCode: 403,
+        });
+      }
       await client.query(`UPDATE users SET full_name = $1 WHERE id = $2`, [
         fullName,
         userId,

@@ -90,6 +90,11 @@ module.exports = {
     limit: 10,
     keyGenerator: byUser,
   }),
+  exportLimiter: createLimiter({
+    windowMs: 10 * 60 * 1000,
+    limit: 5,
+    keyGenerator: byUser,
+  }),
   pinCheckLimiter: createLimiter({
     windowMs: 60 * 1000,
     limit: 10,

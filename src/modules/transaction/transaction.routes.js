@@ -5,6 +5,7 @@ const authMiddleware = require("../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
 const {
   transactionLimiter,
+  exportLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 
 router.post(
@@ -47,6 +48,13 @@ router.get(
   "/history",
   authMiddleware.verifyAccessToken,
   transactionController.getTransferHistory,
+);
+
+router.post(
+  "/export-email",
+  authMiddleware.verifyAccessToken,
+  exportLimiter,
+  transactionController.exportHistoryToEmail,
 );
 
 router.get(

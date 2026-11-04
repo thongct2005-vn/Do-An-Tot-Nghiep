@@ -1,4 +1,5 @@
 const { successResponse } = require("../../../../utils/apiResponse");
+const { sendXlsx } = require("../../../../utils/transactionExcel");
 const merchantTransactionService = require("./transaction.service");
 const transactionService = require("../../../../modules/transaction/transaction.service");
 const { emitToUser } = require("../../../../utils/socket");
@@ -227,6 +228,29 @@ const merchantTransactionController = {
         "Lấy danh sách lịch sử thành công",
         result,
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async exportHistory(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const {
+        keyword,
+        type,
+        start_date: startDate,
+        end_date: endDate,
+      } = req.query;
+
+      const file = await merchantTransactionService.exportHistory(userId, {
+        keyword,
+        type,
+        startDate,
+        endDate,
+      });
+
+      return sendXlsx(res, file);
     } catch (e) {
       next(e);
     }

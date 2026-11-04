@@ -7,6 +7,7 @@ const {
   otpLimiter,
   sendOtpLimiter,
   transactionLimiter,
+  exportLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
 
 router.post(
@@ -75,6 +76,13 @@ router.get(
   "/history",
   authMiddleware.verifyAccessToken,
   transactionController.getTransferHistory,
+);
+
+router.get(
+  "/export",
+  authMiddleware.verifyAccessToken,
+  exportLimiter,
+  transactionController.exportHistory,
 );
 
 router.get(

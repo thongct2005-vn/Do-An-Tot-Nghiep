@@ -37,7 +37,7 @@ function resolveExportRange(startDate, endDate) {
     );
   }
 
-  // Giống API lịch sử: chỉ cho xem dữ liệu trong 1 năm gần nhất
+  // Chỉ cho xem dữ liệu trong 1 năm gần nhất
   const oneYearAgo = new Date(Date.now() + VN_OFFSET_MS);
   oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1);
   if (startDate < oneYearAgo.toISOString().slice(0, 10)) {

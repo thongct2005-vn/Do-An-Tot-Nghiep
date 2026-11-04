@@ -9,11 +9,6 @@ const WEBHOOK_TIMEOUT_MS = Number(process.env.WEBHOOK_TIMEOUT_MS) || 8000;
 const httpAgent = new http.Agent({ lookup: safeLookup });
 const httpsAgent = new https.Agent({ lookup: safeLookup });
 
-/**
- * Gửi 1 webhook đã ký. KHÔNG tự retry, việc retry do webhook worker quyết định.
- * Ném lỗi nếu không nhận được HTTP 2xx.
- * Chữ ký: HMAC-SHA256(secretKey, `${timestamp}.${rawBody}`) trong header X-Signature.
- */
 async function postCallBack({
   callbackUrl,
   secretKey,

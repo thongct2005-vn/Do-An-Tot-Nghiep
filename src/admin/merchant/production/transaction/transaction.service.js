@@ -20,7 +20,14 @@ const {
   AMOUNT,
   MERCHANT_AMOUNT,
   HISTORY_PAGE_LIMIT,
+  EXPORT,
 } = require("../../../../config/limits");
+const { resolveExportRange } = require("../../../../utils/exportRange");
+const {
+  buildTransactionsXlsx,
+  buildExportFileName,
+} = require("../../../../utils/transactionExcel");
+const userTransactionRepository = require("../../../../modules/transaction/transaction.repository");
 const {
   assertKyc,
   assertKycBoth,
@@ -165,6 +172,64 @@ const merchantTransactionService = {
       transactionType: "PAYMENT",
       status: "SUCCESS",
     });
+  },
+
+  // Xuất lịch sử giao dịch ra file Excel (web merchant)
+  async exportHistory(userId, { keyword, type, startDate, endDate }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin để xuất lịch sử giao dịch");
+    }
+
+    const range = resolveExportRange(startDate, endDate);
+    const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+    const normalizedType =
+      type && String(type).trim() ? String(type).trim().toUpperCase() : null;
+    if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
+      throw httpError(400, "Loại giao dịch không hợp lệ");
+    }
+
+    const rows = await merchantTransactionRepository.exportHistory(userId, {
+      keyword: normalizedKeyword,
+      type: normalizedType,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      limit: EXPORT.MAX_ROWS + 1,
+    });
+    if (rows.length > EXPORT.MAX_ROWS) {
+      throw httpError(
+        400,
+        `Có hơn ${EXPORT.MAX_ROWS} giao dịch trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn hoặc thêm bộ lọc`,
+      );
+    }
+
+    const filters = [];
+    if (normalizedType) filters.push(`loại ${normalizedType}`);
+    if (normalizedKeyword) filters.push(`từ khóa "${normalizedKeyword}"`);
+
+    const buffer = await buildTransactionsXlsx({
+      rows,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      filters,
+    });
+
+    await userTransactionRepository.recordAuditSafe({
+      eventType: "TRANSACTION_HISTORY_EXPORTED",
+      payload: {
+        user_id: userId,
+        channel: "MERCHANT_WEB",
+        start_date: range.startDate,
+        end_date: range.endDate,
+        type: normalizedType,
+        keyword: normalizedKeyword,
+        row_count: rows.length,
+      },
+    });
+
+    return {
+      buffer,
+      fileName: buildExportFileName(range.startDate, range.endDate),
+    };
   },
 
   async getTransferHistory(

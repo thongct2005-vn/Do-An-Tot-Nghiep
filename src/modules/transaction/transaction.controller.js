@@ -225,6 +225,32 @@ const transactionController = {
     }
   },
 
+  async exportHistoryToEmail(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const {
+        keyword,
+        start_date: startDate,
+        end_date: endDate,
+      } = req.body;
+
+      const result = await transactionService.exportHistoryToEmail(userId, {
+        keyword,
+        startDate,
+        endDate,
+      });
+
+      return successResponse(
+        res,
+        200,
+        "Đã gửi file Excel đến email của bạn",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
   async getCurrentMonthSummary(req, res, next) {
     try {
       const { user_id: userId } = req.user;

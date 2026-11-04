@@ -638,6 +638,88 @@ const TransactionRepository = {
     };
   },
 
+  async getUserEmail(userId) {
+    const result = await pool.query(`SELECT email FROM users WHERE id = $1`, [
+      userId,
+    ]);
+    return result.rows[0]?.email || null;
+  },
+
+  /**
+   * Lấy toàn bộ giao dịch trong khoảng ngày (giờ VN) để xuất Excel, cũ -> mới.
+   * Không phân trang; service truyền limit = MAX_ROWS + 1 để biết có vượt giới hạn hay không.
+   * SĐT đối tác được che ngay trong SQL.
+   */
+  async exportHistory(
+    userId,
+    { keyword = null, startDate, endDate, limit },
+  ) {
+    const hasKeyword = Boolean(keyword && keyword.trim());
+    const safeKeyword = hasKeyword
+      ? keyword.trim().replace(/[\\%_]/g, "\\$&")
+      : null;
+
+    const result = await pool.query(
+      `
+      SELECT
+        t.id,
+        t.transaction_type,
+        t.source_user_id,
+        su.full_name AS source_display_name,
+        CASE
+          WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3
+          THEN '*********' || RIGHT(su.phone, 3)
+          ELSE su.phone
+        END AS source_display_phone,
+        t.destination_user_id,
+        du.full_name AS destination_display_name,
+        CASE
+          WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3
+          THEN '*********' || RIGHT(du.phone, 3)
+          ELSE du.phone
+        END AS destination_display_phone,
+        t.amount,
+        t.fee,
+        t.description,
+        t.status,
+        t.created_at,
+        b.name AS bank_name,
+        pr.order_id AS order_id,
+        CASE
+          WHEN t.transaction_type = 'TOPUP' THEN 'IN'
+          WHEN t.source_user_id = $1 THEN 'OUT'
+          ELSE 'IN'
+        END AS direction,
+        CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
+        CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
+      FROM transactions t
+      LEFT JOIN users su ON t.source_user_id = su.id
+      LEFT JOIN users du ON t.destination_user_id = du.id
+      LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
+      LEFT JOIN banks b ON lba.bank_id = b.id
+      LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
+      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+        AND (
+          $2::boolean = false
+          OR (
+            (t.source_user_id = $1 AND du.full_name ILIKE '%' || $3::text || '%')
+            OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $3::text || '%')
+            OR t.description ILIKE '%' || $3::text || '%'
+            OR b.name ILIKE '%' || $3::text || '%'
+            OR pr.order_id ILIKE '%' || $3::text || '%'
+          )
+        )
+        AND t.created_at >= (($4::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        AND t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+      ORDER BY t.created_at ASC, t.id ASC
+      LIMIT $6::int
+      `,
+      [userId, hasKeyword, safeKeyword, startDate, endDate, limit],
+    );
+
+    return result.rows;
+  },
+
   async getCurrentMonthSummary(userId) {
     const result = await pool.query(
       `

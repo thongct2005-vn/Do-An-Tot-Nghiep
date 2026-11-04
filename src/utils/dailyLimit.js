@@ -1,7 +1,6 @@
 const { httpError } = require("./httpError");
 const { DAILY_LIMIT, DAILY_LIMIT_TIMEZONE } = require("../config/limits");
-
-// Mỗi "nhóm hạn mức" gồm những transaction_type nào (PAYMENT = thanh toán QR, tính chung với chuyển tiền).
+const { formatVnd } = require("./amount");
 const BUCKET_TYPES = {
   TRANSFER: ["TRANSFER", "PAYMENT"],
   TOPUP: ["TOPUP"],
@@ -14,10 +13,8 @@ const BUCKET_LABEL = {
   WITHDRAW: "rút tiền",
 };
 
-function formatMoney(n) {
-  return `${Number(n).toLocaleString("vi-VN")}đ`;
-}
 
+// Tìm nhóm hạn mức tương ứng với một loại giao dịch
 function toBucket(type) {
   const bucket = Object.keys(BUCKET_TYPES).find((b) =>
     BUCKET_TYPES[b].includes(type),
@@ -26,13 +23,12 @@ function toBucket(type) {
   return bucket;
 }
 
-/** Hạn mức/ngày theo vai trò + loại giao dịch. Role lạ thì dùng hạn mức USER. null = không giới hạn. */
+// Lấy hạn mức giao dịch trong ngày theo vai trò và loại giao dịch
 function getDailyLimit(role, type) {
   const limit = (DAILY_LIMIT[role] || DAILY_LIMIT.USER)[toBucket(type)];
   return limit == null ? null : Number(limit);
 }
 
-/** Tổng tiền đã dùng hôm nay (theo giờ VN) của nhóm hạn mức chứa `type`. `db` là pool hoặc client. */
 async function getDailyUsed(db, userId, type) {
   const types = BUCKET_TYPES[toBucket(type)].map((t) => `'${t}'`).join(", ");
   const result = await db.query(
@@ -54,13 +50,6 @@ async function resolveRole(db, userId) {
   return result.rows[0]?.role;
 }
 
-/**
- * Kiểm tra giao dịch sắp thực hiện có vượt hạn mức ngày không, vượt thì throw 422.
- * - Gọi SAU khi đã khoá dòng user (FOR UPDATE) trong transaction để 2 request song song không cùng lọt qua.
- * - Truyền `role` nếu đã có sẵn (đỡ 1 query), không thì util tự lấy.
- * @param {{query: Function}} db pool hoặc client
- * @param {{userId: string, role?: string, type: string, amount: number, fee?: number}} params
- */
 async function assertDailyLimit(db, { userId, role, type, amount, fee = 0 }) {
   const userRole = role || (await resolveRole(db, userId));
   const limit = getDailyLimit(userRole, type);
@@ -72,14 +61,13 @@ async function assertDailyLimit(db, { userId, role, type, amount, fee = 0 }) {
   if (used + Number(amount) + Number(fee) > limit) {
     throw httpError(
       422,
-      `Vượt quá hạn mức ${BUCKET_LABEL[toBucket(type)]} trong ngày (${formatMoney(limit)}). ` +
-        `Hôm nay bạn đã dùng ${formatMoney(used)}, còn lại ${formatMoney(remaining)}`,
+      `Vượt quá hạn mức ${BUCKET_LABEL[toBucket(type)]} trong ngày (${formatVnd(limit)}). ` +
+        `Hôm nay bạn đã dùng ${formatVnd(used)}, còn lại ${formatMoney(remaining)}`,
     );
   }
   return { limit, used, remaining };
 }
 
-/** Hạn mức - đã dùng - còn lại của mọi nhóm, dùng để hiển thị (vd: chi tiết user bên admin). */
 async function getDailyUsage(db, userId, role) {
   const usage = {};
   for (const bucket of Object.keys(BUCKET_TYPES)) {
@@ -94,4 +82,9 @@ async function getDailyUsage(db, userId, role) {
   return usage;
 }
 
-module.exports = { assertDailyLimit, getDailyLimit, getDailyUsed, getDailyUsage };
+module.exports = {
+  assertDailyLimit,
+  getDailyLimit,
+  getDailyUsed,
+  getDailyUsage,
+};

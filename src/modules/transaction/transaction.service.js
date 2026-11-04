@@ -1,7 +1,14 @@
 const transactionRepository = require("./transaction.repository");
 const { httpError } = require("../../utils/httpError");
 const { parseAmountInRange } = require("../../utils/amount");
-const { AMOUNT, HISTORY_PAGE_LIMIT } = require("../../config/limits");
+const { AMOUNT, HISTORY_PAGE_LIMIT, EXPORT } = require("../../config/limits");
+const { resolveExportRange } = require("../../utils/exportRange");
+const {
+  buildTransactionsXlsx,
+  buildExportFileName,
+} = require("../../utils/transactionExcel");
+const { sendTransactionExportEmail } = require("../../utils/mailer");
+const { maskEmail } = require("../../utils/mask");
 const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
 const { isValidDateOnly } = require("../../utils/validators");
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -167,6 +174,67 @@ const TransactionService = {
       startDate: startDay,
       endDate: endDay,
     });
+  },
+
+  // Xuất lịch sử giao dịch ra file Excel và gửi đến email đã đăng ký (app)
+  async exportHistoryToEmail(userId, { keyword, startDate, endDate }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin để xuất lịch sử giao dịch");
+    }
+
+    const range = resolveExportRange(startDate, endDate);
+    const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+
+    const email = await transactionRepository.getUserEmail(userId);
+    if (!email) {
+      throw httpError(400, "Tài khoản chưa có email đăng ký để nhận file");
+    }
+
+    const rows = await transactionRepository.exportHistory(userId, {
+      keyword: normalizedKeyword,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      limit: EXPORT.MAX_ROWS + 1,
+    });
+    if (rows.length === 0) {
+      throw httpError(400, "Không có giao dịch nào trong khoảng thời gian này");
+    }
+    if (rows.length > EXPORT.MAX_ROWS) {
+      throw httpError(
+        400,
+        `Có hơn ${EXPORT.MAX_ROWS} giao dịch trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn`,
+      );
+    }
+
+    const buffer = await buildTransactionsXlsx({
+      rows,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      filters: normalizedKeyword ? [`từ khóa "${normalizedKeyword}"`] : [],
+    });
+
+    await sendTransactionExportEmail({
+      to: email,
+      buffer,
+      fileName: buildExportFileName(range.startDate, range.endDate),
+      startDate: range.startDate,
+      endDate: range.endDate,
+      rowCount: rows.length,
+    });
+
+    await transactionRepository.recordAuditSafe({
+      eventType: "TRANSACTION_HISTORY_EXPORTED",
+      payload: {
+        user_id: userId,
+        channel: "APP_EMAIL",
+        start_date: range.startDate,
+        end_date: range.endDate,
+        keyword: normalizedKeyword,
+        row_count: rows.length,
+      },
+    });
+
+    return { email: maskEmail(email), row_count: rows.length };
   },
 
   // Response chuyển tiền / thanh toán QR: chỉ trả những gì người gửi cần thấy.

@@ -51,8 +51,7 @@ router.get(
   userController.getFcmToken,
 );
 
-// ===== Quên mật khẩu / quên mã PIN (không cần đăng nhập) =====
-// Bước 1: nhập số điện thoại, gửi OTP về email
+
 router.post(
   "/forgot/request",
   forgotRequestLimiter,

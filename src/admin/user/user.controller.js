@@ -1,7 +1,7 @@
 const { successResponse } = require("../../utils/apiResponse");
 const adminUserService = require("./user.service");
 const socketUtil = require("../../utils/socket");
-const firebaseNotification = require("../../utils/fireBaseNotification");
+const firebaseNotification = require("../../utils/firebaseNotification");
 
 const adminUserController = {
   async getStats(req, res, next) {

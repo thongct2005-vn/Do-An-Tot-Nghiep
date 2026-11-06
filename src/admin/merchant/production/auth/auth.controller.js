@@ -1,6 +1,7 @@
 const { successResponse } = require("../../../../utils/apiResponse");
 const merchantAuthService = require("./auth.service");
 const tokenUtil = require("../../../../utils/jwt");
+const { recordFailure } = require("../../../../utils/risk");
 
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -38,6 +39,9 @@ const merchantAuthController = {
         result,
       );
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.body?.phone);
+      }
       next(e);
     }
   },
@@ -70,6 +74,9 @@ const merchantAuthController = {
         token: publicToken(result.token),
       });
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.otpUser?.phone);
+      }
       next(e);
     }
   },
@@ -139,6 +146,9 @@ const merchantAuthController = {
         token: publicToken(result.token),
       });
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.otpUser?.phone);
+      }
       next(e);
     }
   },

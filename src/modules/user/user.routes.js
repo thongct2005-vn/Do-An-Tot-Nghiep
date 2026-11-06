@@ -7,11 +7,15 @@ const {
   findUserLimiter,
   contactDailyQuota,
   otpLimiter,
+  sendOtpLimiter,
   forgotRequestLimiter,
   forgotKycLimiter,
   resetCredentialLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { uploadKycImages } = require("../../middlewares/upload.middleware");
+const { riskGuard } = require("../../middlewares/riskGuard");
+
+const forgotRisk = riskGuard({ challenge: 35, block: 60 });
 
 router.get(
   "/find-user",
@@ -55,20 +59,23 @@ router.get(
 router.post(
   "/forgot/request",
   forgotRequestLimiter,
+  forgotRisk,
   userController.forgotRequest,
 );
 
 router.post(
   "/forgot/resend-otp",
-  otpLimiter,
   authMiddleware.verifyForgotOtpToken,
+  sendOtpLimiter,
+  forgotRisk,
   userController.forgotResendOtp,
 );
 
 router.post(
   "/forgot/verify-otp",
-  otpLimiter,
   authMiddleware.verifyForgotOtpToken,
+  otpLimiter,
+  forgotRisk,
   userController.forgotVerifyOtp,
 );
 

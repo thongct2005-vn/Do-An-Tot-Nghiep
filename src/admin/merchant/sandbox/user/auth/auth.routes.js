@@ -4,6 +4,9 @@ const authController = require("./auth.controller");
 const authMiddleware = require("../../../../../middlewares/auth.middleware");
 const {
   loginLimiter,
+  registerLimiter,
+  lookupLimiter,
+  logoutLimiter,
 } = require("../../../../../middlewares/ratelimit.middleware");
 
 router.post(
@@ -15,13 +18,14 @@ router.post(
 router.post(
   "/logout",
   authMiddleware.verifyAccessToken,
+  logoutLimiter,
   authController.logout,
 );
 
-router.post("/register", loginLimiter, authController.register);
+router.post("/register", registerLimiter, authController.register);
 
-router.post("/checkPhoneExists", loginLimiter, authController.isPhoneExist);
-router.post("/checkEmailExists", loginLimiter, authController.isEmailExist);
+router.post("/checkPhoneExists", lookupLimiter, authController.isPhoneExist);
+router.post("/checkEmailExists", lookupLimiter, authController.isEmailExist);
 
 router.get(
   "/me",

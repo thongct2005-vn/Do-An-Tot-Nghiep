@@ -4,48 +4,73 @@ const authController = require("./auth.controller");
 const authMiddleware = require("../../middlewares/auth.middleware");
 const {
   loginLimiter,
+  registerLimiter,
+  lookupLimiter,
+  logoutLimiter,
   otpLimiter,
+  sendOtpLimiter,
 } = require("../../middlewares/ratelimit.middleware");
+const { riskGuard } = require("../../middlewares/riskGuard");
 
-router.post("/login", loginLimiter, authController.login);
+const loginRisk = riskGuard({ challenge: 40, block: 70 });
+const registerRisk = riskGuard({ challenge: 35, block: 60 });
+const otpRisk = riskGuard({ challenge: 35, block: 60 });
+
+router.post("/login", loginLimiter, loginRisk, authController.login);
 router.post(
   "/resend-login-otp",
-  otpLimiter,
   authMiddleware.verifyLoginOtpToken,
+  sendOtpLimiter,
+  otpRisk,
   authController.resendLoginOtp,
 );
 router.post(
   "/verify-login-otp",
-  otpLimiter,
   authMiddleware.verifyLoginOtpToken,
+  otpLimiter,
+  otpRisk,
   authController.verifyLoginOtp,
 );
-router.post("/logout", authMiddleware.verifyAccessToken, authController.logout);
+router.post(
+  "/logout",
+  authMiddleware.verifyAccessToken,
+  logoutLimiter,
+  authController.logout,
+);
 
-router.post("/totp/setup", loginLimiter, authController.setupTotp);
-router.post("/totp/recover", loginLimiter, authController.recoverTotp);
+router.post("/totp/setup", loginLimiter, loginRisk, authController.setupTotp);
+router.post(
+  "/totp/recover",
+  loginLimiter,
+  loginRisk,
+  authController.recoverTotp,
+);
 router.post(
   "/totp/enable",
-  otpLimiter,
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("USER"),
+  otpLimiter,
+  otpRisk,
   authController.enableTotp,
 );
 router.post(
   "/totp/disable",
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("USER"),
+  otpLimiter,
+  otpRisk,
   authController.disableTotp,
 );
-router.post("/register", loginLimiter, authController.register);
+router.post("/register", registerLimiter, registerRisk, authController.register);
 router.post(
   "/verify-register",
-  otpLimiter,
   authMiddleware.verifyRegisterOtpToken,
+  otpLimiter,
+  otpRisk,
   authController.verifyRegister,
 );
-router.post("/checkPhoneExists", loginLimiter, authController.isPhoneExist);
-router.post("/checkEmailExists", loginLimiter, authController.isEmailExist);
+router.post("/checkPhoneExists", lookupLimiter, authController.isPhoneExist);
+router.post("/checkEmailExists", lookupLimiter, authController.isEmailExist);
 router.get(
   "/me",
   authMiddleware.verifyAccessToken,

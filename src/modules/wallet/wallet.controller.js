@@ -1,5 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const walletService = require("./wallet.service");
+const { recordFailure } = require("../../utils/risk");
 
 const walletController = {
   async getWalletByUserId(req, res, next) {
@@ -37,6 +38,9 @@ const walletController = {
       });
       return successResponse(res, 200, "Kiểm tra mã PIN thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
       next(e);
     }
   },

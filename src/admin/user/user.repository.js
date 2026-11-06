@@ -1,7 +1,7 @@
 const pool = require("../../config/database");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
 const { httpError } = require("../../utils/httpError");
-const { maskPhone } = require("../../utils/maskPhoneAndEmail");
+const { maskPhone } = require("../../utils/mask");
 const { assertDailyLimit, getDailyUsage } = require("../../utils/dailyLimit");
 
 const adminUserRepository = {
@@ -929,8 +929,8 @@ const adminUserRepository = {
         typeof description === "string" && description.trim().length > 0
           ? description.trim().slice(0, 255)
           : isTopup
-          ? `Admin hỗ trợ nạp tiền (${authorizationReference})`
-          : `Admin hỗ trợ rút tiền (${authorizationReference})`;
+            ? `Admin hỗ trợ nạp tiền (${authorizationReference})`
+            : `Admin hỗ trợ rút tiền (${authorizationReference})`;
 
       // 6. Ghi bản ghi transactions
       const txResult = await client.query(

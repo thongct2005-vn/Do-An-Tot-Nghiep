@@ -1,5 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const authService = require("./auth.service");
+const { recordFailure } = require("../../utils/risk");
 
 const authController = {
   async isPhoneExist(req, res, next) {
@@ -38,6 +39,9 @@ const authController = {
         result,
       );
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.body?.phone);
+      }
       next(e);
     }
   },
@@ -59,6 +63,9 @@ const authController = {
       const result = await authService.verifyLoginOtp({ userId, phone, otp });
       return successResponse(res, 200, "Đăng nhập thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.otpUser?.phone);
+      }
       next(e);
     }
   },
@@ -132,6 +139,9 @@ const authController = {
       });
       return successResponse(res, 200, "Đăng ký tài khoản thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.otpUser?.phone);
+      }
       next(e);
     }
   },
@@ -143,6 +153,9 @@ const authController = {
       const result = await authService.setupTotp({ phone, password });
       return successResponse(res, 200, "Tạo mã QR thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.body?.phone);
+      }
       next(e);
     }
   },
@@ -153,6 +166,9 @@ const authController = {
       const result = await authService.recoverTotp({ phone, password });
       return successResponse(res, 200, "Lấy lại mã QR thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.body?.phone);
+      }
       next(e);
     }
   },

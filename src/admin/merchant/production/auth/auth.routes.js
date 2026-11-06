@@ -4,25 +4,36 @@ const merchantAuthController = require("./auth.controller");
 const authMiddleware = require("../../../../middlewares/auth.middleware");
 const {
   loginLimiter,
+  registerLimiter,
+  logoutLimiter,
   otpLimiter,
+  sendOtpLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
+const { riskGuard } = require("../../../../middlewares/riskGuard");
 
-router.post("/login", loginLimiter, merchantAuthController.login);
+const loginRisk = riskGuard({ challenge: 40, block: 70 });
+const registerRisk = riskGuard({ challenge: 35, block: 60 });
+const otpRisk = riskGuard({ challenge: 35, block: 60 });
+
+router.post("/login", loginLimiter, loginRisk, merchantAuthController.login);
 router.post(
   "/resend-login-otp",
-  otpLimiter,
   authMiddleware.verifyLoginOtpToken,
+  sendOtpLimiter,
+  otpRisk,
   merchantAuthController.resendLoginOtp,
 );
 router.post(
   "/verify-login-otp",
-  otpLimiter,
   authMiddleware.verifyLoginOtpToken,
+  otpLimiter,
+  otpRisk,
   merchantAuthController.verifyLoginOtp,
 );
 router.post(
   "/logout",
   authMiddleware.verifyAccessToken,
+  logoutLimiter,
   merchantAuthController.logout,
 );
 router.get(
@@ -33,30 +44,39 @@ router.get(
 );
 router.post(
   "/totp/setup",
-  loginLimiter,
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("MERCHANT"),
+  loginLimiter,
+  loginRisk,
   merchantAuthController.setupTotp,
 );
 router.post(
   "/totp/enable",
-  otpLimiter,
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("MERCHANT"),
+  otpLimiter,
+  otpRisk,
   merchantAuthController.enableTotp,
 );
 router.post(
   "/totp/disable",
-  otpLimiter,
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("MERCHANT"),
+  otpLimiter,
+  otpRisk,
   merchantAuthController.disableTotp,
 );
-router.post("/register", loginLimiter, merchantAuthController.register);
+router.post(
+  "/register",
+  registerLimiter,
+  registerRisk,
+  merchantAuthController.register,
+);
 router.post(
   "/verify-register",
-  otpLimiter,
   authMiddleware.verifyRegisterOtpToken,
+  otpLimiter,
+  otpRisk,
   merchantAuthController.verifyRegister,
 );
 router.post(

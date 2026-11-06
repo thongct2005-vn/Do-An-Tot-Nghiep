@@ -23,12 +23,13 @@ function toBucket(type) {
   return bucket;
 }
 
-// Lấy hạn mức giao dịch trong ngày theo vai trò và loại giao dịch
+// Lấy hạn mức giao dịch tối đa trong ngày theo vai trò và loại giao dịch
 function getDailyLimit(role, type) {
   const limit = (DAILY_LIMIT[role] || DAILY_LIMIT.USER)[toBucket(type)];
   return limit == null ? null : Number(limit);
 }
 
+// Lấy hạn mức đã dùng trong ngày của 1 người dùng theo loại giao dịch
 async function getDailyUsed(db, userId, type) {
   const types = BUCKET_TYPES[toBucket(type)].map((t) => `'${t}'`).join(", ");
   const result = await db.query(
@@ -43,6 +44,7 @@ async function getDailyUsed(db, userId, type) {
   return Number(result.rows[0]?.daily_used || 0);
 }
 
+// Lấy quyền của người dùng
 async function resolveRole(db, userId) {
   const result = await db.query(`SELECT role FROM users WHERE id = $1`, [
     userId,
@@ -50,6 +52,7 @@ async function resolveRole(db, userId) {
   return result.rows[0]?.role;
 }
 
+// Kiểm tra và xác thực xem giao dịch sắp thực hiện có vượt quá hạn mức cho phép trong ngày hay không
 async function assertDailyLimit(db, { userId, role, type, amount, fee = 0 }) {
   const userRole = role || (await resolveRole(db, userId));
   const limit = getDailyLimit(userRole, type);
@@ -62,12 +65,13 @@ async function assertDailyLimit(db, { userId, role, type, amount, fee = 0 }) {
     throw httpError(
       422,
       `Vượt quá hạn mức ${BUCKET_LABEL[toBucket(type)]} trong ngày (${formatVnd(limit)}). ` +
-        `Hôm nay bạn đã dùng ${formatVnd(used)}, còn lại ${formatMoney(remaining)}`,
+        `Hôm nay bạn đã dùng ${formatVnd(used)}, còn lại ${formatVnd(remaining)}`,
     );
   }
   return { limit, used, remaining };
 }
 
+// Lấy danh sách hạn mức tối đa, đã dùng, còn lại của từng loại giao dịch trong ngày
 async function getDailyUsage(db, userId, role) {
   const usage = {};
   for (const bucket of Object.keys(BUCKET_TYPES)) {

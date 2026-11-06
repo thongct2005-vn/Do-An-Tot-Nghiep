@@ -2,8 +2,7 @@ const crypto = require("crypto");
 const { httpError } = require("./httpError");
 const { parseAmount } = require("./amount");
 
-// Mỗi loại giao dịch cần PIN và các trường của request mà PIN token phải "ký" vào.
-// Tên trường trùng với tên trường trong body của endpoint tương ứng.
+// Với mỗi loại giao dịch: danh sách trường trong body mà PIN token phải "ký" vào.
 const PIN_ACTIONS = {
   TRANSFER: ["destination_user_id", "amount"],
   TOPUP: ["linked_bank_account_id", "amount"],
@@ -12,6 +11,7 @@ const PIN_ACTIONS = {
   BANK_LINK: ["bank_id"],
 };
 
+// Chuẩn hóa 1 trường về dạng chuỗi sạch để so sánh nhất quán
 function normalizeField(name, value) {
   if (name === "amount") return String(parseAmount(value));
   if (typeof value !== "string" && typeof value !== "number") {
@@ -22,15 +22,20 @@ function normalizeField(name, value) {
   return text;
 }
 
-// Băm (action + các trường) thành 1 chuỗi cố định. JSON.stringify dạng mảng để
-// các giá trị không thể "dính" vào nhau (vd "a|b" + "c" khác "a" + "b|c").
+// Tạo binding: băm (action + giá trị các trường) thành 1 chuỗi hex 64 ký tự
 function computePinBinding(action, params) {
   const fields = PIN_ACTIONS[action];
   if (!fields) throw httpError(400, "Loại giao dịch không hợp lệ");
+
+  // params là body của request, phải là object -> { destination_user_id: 42, amount: 50000 }
   if (!params || typeof params !== "object") {
     throw httpError(400, "Thiếu dữ liệu giao dịch để xác thực PIN");
   }
+
+  // Lấy đúng các trường cần ký, chuẩn hóa từng giá trị
   const values = fields.map((field) => normalizeField(field, params[field]));
+
+  // Băm JSON dạng mảng [action, giá trị1, giá trị2...]
   return crypto
     .createHash("sha256")
     .update(JSON.stringify([action, ...values]))

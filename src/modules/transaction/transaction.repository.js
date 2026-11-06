@@ -597,11 +597,18 @@ const TransactionRepository = {
         AND (
           $5::boolean = false
           OR (
-            (t.source_user_id = $1 AND du.full_name ILIKE '%' || $6 || '%')
-            OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $6 || '%')
-            OR t.description ILIKE '%' || $6 || '%'
-            OR b.name ILIKE '%' || $6 || '%'
-            OR pr.order_id ILIKE '%' || $6 || '%'
+            unaccent(COALESCE(du.full_name, '')) ILIKE '%' || unaccent($6) || '%'
+            OR unaccent(COALESCE(su.full_name, '')) ILIKE '%' || unaccent($6) || '%'
+            OR COALESCE(du.phone, '') LIKE '%' || $6 || '%'
+            OR COALESCE(su.phone, '') LIKE '%' || $6 || '%'
+            OR t.id::text LIKE '%' || $6 || '%'
+            OR unaccent(COALESCE(t.description, '')) ILIKE '%' || unaccent($6) || '%'
+            OR unaccent(COALESCE(b.name, '')) ILIKE '%' || unaccent($6) || '%'
+            OR COALESCE(pr.order_id, '') ILIKE '%' || $6 || '%'
+            OR (t.transaction_type = 'TOPUP' AND ('nap tien vao vi' ILIKE '%' || unaccent($6) || '%' OR 'nap tien' ILIKE '%' || unaccent($6) || '%'))
+            OR (t.transaction_type = 'WITHDRAW' AND ('rut tien tu vi' ILIKE '%' || unaccent($6) || '%' OR 'rut tien' ILIKE '%' || unaccent($6) || '%'))
+            OR (t.transaction_type = 'TRANSFER' AND ('chuyen tien' ILIKE '%' || unaccent($6) || '%' OR 'nhan tien' ILIKE '%' || unaccent($6) || '%'))
+            OR (t.transaction_type = 'PAYMENT' AND ('thanh toan' ILIKE '%' || unaccent($6) || '%'))
           )
         )
         AND (
@@ -702,11 +709,18 @@ const TransactionRepository = {
         AND (
           $2::boolean = false
           OR (
-            (t.source_user_id = $1 AND du.full_name ILIKE '%' || $3::text || '%')
-            OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $3::text || '%')
-            OR t.description ILIKE '%' || $3::text || '%'
-            OR b.name ILIKE '%' || $3::text || '%'
-            OR pr.order_id ILIKE '%' || $3::text || '%'
+            unaccent(COALESCE(du.full_name, '')) ILIKE '%' || unaccent($3::text) || '%'
+            OR unaccent(COALESCE(su.full_name, '')) ILIKE '%' || unaccent($3::text) || '%'
+            OR COALESCE(du.phone, '') LIKE '%' || $3::text || '%'
+            OR COALESCE(su.phone, '') LIKE '%' || $3::text || '%'
+            OR t.id::text LIKE '%' || $3::text || '%'
+            OR unaccent(COALESCE(t.description, '')) ILIKE '%' || unaccent($3::text) || '%'
+            OR unaccent(COALESCE(b.name, '')) ILIKE '%' || unaccent($3::text) || '%'
+            OR COALESCE(pr.order_id, '') ILIKE '%' || $3::text || '%'
+            OR (t.transaction_type = 'TOPUP' AND ('nap tien vao vi' ILIKE '%' || unaccent($3::text) || '%' OR 'nap tien' ILIKE '%' || unaccent($3::text) || '%'))
+            OR (t.transaction_type = 'WITHDRAW' AND ('rut tien tu vi' ILIKE '%' || unaccent($3::text) || '%' OR 'rut tien' ILIKE '%' || unaccent($3::text) || '%'))
+            OR (t.transaction_type = 'TRANSFER' AND ('chuyen tien' ILIKE '%' || unaccent($3::text) || '%' OR 'nhan tien' ILIKE '%' || unaccent($3::text) || '%'))
+            OR (t.transaction_type = 'PAYMENT' AND ('thanh toan' ILIKE '%' || unaccent($3::text) || '%'))
           )
         )
         AND t.created_at >= (($4::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'

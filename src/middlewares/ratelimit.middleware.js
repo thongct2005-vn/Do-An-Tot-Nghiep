@@ -76,7 +76,7 @@ module.exports = {
   sendOtpLimiter: createLimiter({ windowMs: 5 * 60 * 1000, limit: 5 }),
   contactCheckLimiter: createLimiter({
     windowMs: 60 * 1000,
-    limit: 5,
+    limit: 100,
     keyGenerator: byUser,
   }),
   findUserLimiter: createLimiter({

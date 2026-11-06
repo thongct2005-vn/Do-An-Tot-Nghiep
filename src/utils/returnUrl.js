@@ -13,7 +13,10 @@ const { computeSignature } = require("./hashSecretKey");
  *   (paid_at = "" nếu không có; order_id đặt cuối để chuỗi không bị nhập nhằng)
  *
  * Trả về null nếu return_url không hợp lệ.
+ * Kết quả trả về: https://shop.com/done?order_id=A1&payment_id=P9&amount=50000&status=PAID
+    &paid_at=2026-11-06T03%3A15%3A00.000Z&timestamp=1793934900&signature=9f86d081...
  */
+
 function buildSignedReturnUrl({
   returnUrl,
   secretKey,
@@ -35,7 +38,9 @@ function buildSignedReturnUrl({
 
   const paidAtIso = paidAt ? new Date(paidAt).toISOString() : "";
   const timestamp = String(time);
-  const data = [paymentId, String(amount), status, paidAtIso, orderId].join("|");
+  const data = [paymentId, String(amount), status, paidAtIso, orderId].join(
+    "|",
+  );
   const signature = computeSignature(secretKey, timestamp, data);
 
   u.searchParams.set("order_id", orderId);

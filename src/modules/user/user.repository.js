@@ -132,10 +132,10 @@ const userRepository = {
 
   async getFcmToken(userId) {
     const result = await pool.query(
-      `SELECT fcm_token FROM users WHERE id = $1`,
+      `SELECT fcm_token, full_name FROM users WHERE id = $1`,
       [userId],
     );
-    return result.rows[0]?.fcm_token || null;
+    return result?.rows[0] || null;
   },
 
   // Tìm tài khoản theo số điện thoại cho luồng quên mật khẩu / PIN

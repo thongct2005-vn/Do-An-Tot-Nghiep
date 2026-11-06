@@ -1,7 +1,38 @@
 const { successResponse } = require("../../utils/apiResponse");
 const adminTransactionService = require("./transaction.service");
+const { sendXlsxResponse } = require("./transaction.export");
 
 const adminTransactionController = {
+  async exportTransactions(req, res, next) {
+    try {
+      const {
+        type,
+        status,
+        initiated_by,
+        keyword,
+        period,
+        start_date,
+        end_date,
+      } = req.query;
+
+      const { buffer, fileName } =
+        await adminTransactionService.exportTransactions({
+          type,
+          status,
+          initiated_by,
+          keyword,
+          period,
+          start_date,
+          end_date,
+          currentUser: req.user,
+        });
+
+      return sendXlsxResponse(res, { buffer, fileName });
+    } catch (e) {
+      next(e);
+    }
+  },
+
   async getTransactions(req, res, next) {
     try {
       const {

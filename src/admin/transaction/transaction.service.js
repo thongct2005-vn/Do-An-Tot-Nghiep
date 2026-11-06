@@ -1,5 +1,9 @@
 const adminTransactionRepository = require("./transaction.repository");
 const { httpError } = require("../../utils/httpError");
+const {
+  buildTransactionsAdminXlsx,
+  buildExportFileName,
+} = require("./transaction.export");
 
 const VALID_TRANSACTION_TYPES = [
   "ALL",
@@ -9,7 +13,7 @@ const VALID_TRANSACTION_TYPES = [
   "PAYMENT",
 ];
 const VALID_TRANSACTION_STATUSES = ["ALL", "SUCCESS", "PENDING", "FAILED"];
-const VALID_INITIATED_BY = ["ALL", "USER", "ADMIN"];
+const VALID_INITIATED_BY = ["ALL", "USER", "ADMIN", "SYSTEM"];
 
 function parseDateRange({ period, startDate, endDate }) {
   let filterStartDate = null;
@@ -88,6 +92,49 @@ function parseDateRange({ period, startDate, endDate }) {
   return { filterStartDate, filterEndDate };
 }
 
+function parseFilterParams({
+  type,
+  status,
+  initiated_by,
+  period,
+  start_date,
+  end_date,
+}) {
+  const cleanType = type ? type.trim().toUpperCase() : "ALL";
+  if (!VALID_TRANSACTION_TYPES.includes(cleanType)) {
+    throw httpError(
+      400,
+      `Loại giao dịch không hợp lệ. Chỉ chấp nhận: ${VALID_TRANSACTION_TYPES.join(", ")}`
+    );
+  }
+
+  const cleanStatus = status ? status.trim().toUpperCase() : "ALL";
+  if (!VALID_TRANSACTION_STATUSES.includes(cleanStatus)) {
+    throw httpError(
+      400,
+      `Trạng thái giao dịch không hợp lệ. Chỉ chấp nhận: ${VALID_TRANSACTION_STATUSES.join(", ")}`
+    );
+  }
+
+  const cleanInitiatedBy = initiated_by
+    ? initiated_by.trim().toUpperCase()
+    : "ALL";
+  if (!VALID_INITIATED_BY.includes(cleanInitiatedBy)) {
+    throw httpError(
+      400,
+      `Nguồn thực hiện không hợp lệ. Chỉ chấp nhận: ${VALID_INITIATED_BY.join(", ")}`
+    );
+  }
+
+  const { filterStartDate, filterEndDate } = parseDateRange({
+    period,
+    startDate: start_date,
+    endDate: end_date,
+  });
+
+  return { cleanType, cleanStatus, cleanInitiatedBy, filterStartDate, filterEndDate };
+}
+
 const adminTransactionService = {
   async getTransactions({
     page = 1,
@@ -104,36 +151,19 @@ const adminTransactionService = {
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
     const offset = (pageNum - 1) * limitNum;
 
-    const cleanType = type ? type.trim().toUpperCase() : "ALL";
-    if (!VALID_TRANSACTION_TYPES.includes(cleanType)) {
-      throw httpError(
-        400,
-        `Loại giao dịch không hợp lệ. Chỉ chấp nhận: ${VALID_TRANSACTION_TYPES.join(", ")}`
-      );
-    }
-
-    const cleanStatus = status ? status.trim().toUpperCase() : "ALL";
-    if (!VALID_TRANSACTION_STATUSES.includes(cleanStatus)) {
-      throw httpError(
-        400,
-        `Trạng thái giao dịch không hợp lệ. Chỉ chấp nhận: ${VALID_TRANSACTION_STATUSES.join(", ")}`
-      );
-    }
-
-    const cleanInitiatedBy = initiated_by
-      ? initiated_by.trim().toUpperCase()
-      : "ALL";
-    if (!VALID_INITIATED_BY.includes(cleanInitiatedBy)) {
-      throw httpError(
-        400,
-        `Nguồn thực hiện không hợp lệ. Chỉ chấp nhận: ${VALID_INITIATED_BY.join(", ")}`
-      );
-    }
-
-    const { filterStartDate, filterEndDate } = parseDateRange({
+    const {
+      cleanType,
+      cleanStatus,
+      cleanInitiatedBy,
+      filterStartDate,
+      filterEndDate,
+    } = parseFilterParams({
+      type,
+      status,
+      initiated_by,
       period,
-      startDate: start_date,
-      endDate: end_date,
+      start_date,
+      end_date,
     });
 
     const [total, rows] = await Promise.all([
@@ -184,6 +214,7 @@ const adminTransactionService = {
         role: t.initiator_role,
         admin_name:
           t.initiator_role === "ADMIN" ? t.admin_name || "Quản trị viên" : null,
+        audit_verified: t.initiator_role === "ADMIN",
       },
       created_at: t.created_at,
     }));
@@ -213,10 +244,31 @@ const adminTransactionService = {
 
     const amount = Number(t.amount || 0);
     const fee = Number(t.fee || 0);
-    const sourceBefore = Number(t.source_balance_before || 0);
-    const sourceAfter = Number(t.source_balance_after || 0);
-    const destBefore = Number(t.dest_balance_before || 0);
-    const destAfter = Number(t.dest_balance_after || 0);
+
+    const hasSourceSnapshot =
+      t.source_balance_before !== null &&
+      t.source_balance_before !== undefined &&
+      t.source_balance_after !== null &&
+      t.source_balance_after !== undefined;
+
+    const hasDestSnapshot =
+      t.dest_balance_before !== null &&
+      t.dest_balance_before !== undefined &&
+      t.dest_balance_after !== null &&
+      t.dest_balance_after !== undefined;
+
+    const sourceBefore = hasSourceSnapshot
+      ? Number(t.source_balance_before)
+      : null;
+    const sourceAfter = hasSourceSnapshot
+      ? Number(t.source_balance_after)
+      : null;
+    const destBefore = hasDestSnapshot
+      ? Number(t.dest_balance_before)
+      : null;
+    const destAfter = hasDestSnapshot
+      ? Number(t.dest_balance_after)
+      : null;
 
     const adminIntervention = t.audit_history_id
       ? {
@@ -249,8 +301,10 @@ const adminTransactionService = {
     switch (t.transaction_type) {
       case "TRANSFER": {
         const isConsistent =
-          sourceBefore - (amount + fee) === sourceAfter &&
-          destBefore + amount === destAfter;
+          hasSourceSnapshot && hasDestSnapshot
+            ? sourceBefore - (amount + fee) === sourceAfter &&
+              destBefore + amount === destAfter
+            : null;
 
         return {
           ...baseData,
@@ -262,7 +316,7 @@ const adminTransactionService = {
             email: t.source_user_email || "",
             balance_before: sourceBefore,
             balance_after: sourceAfter,
-            difference: -(amount + fee),
+            difference: hasSourceSnapshot ? -(amount + fee) : null,
           },
           receiver: {
             id: String(t.destination_user_id),
@@ -271,13 +325,15 @@ const adminTransactionService = {
             email: t.destination_user_email || "",
             balance_before: destBefore,
             balance_after: destAfter,
-            difference: amount,
+            difference: hasDestSnapshot ? amount : null,
           },
         };
       }
 
       case "TOPUP": {
-        const isConsistent = sourceBefore + amount === sourceAfter;
+        const isConsistent = hasSourceSnapshot
+          ? sourceBefore + amount === sourceAfter
+          : null;
 
         return {
           ...baseData,
@@ -289,7 +345,7 @@ const adminTransactionService = {
             email: t.source_user_email || "",
             balance_before: sourceBefore,
             balance_after: sourceAfter,
-            difference: amount,
+            difference: hasSourceSnapshot ? amount : null,
           },
           bank: {
             bank_name: t.bank_name || "Chưa cập nhật",
@@ -301,7 +357,9 @@ const adminTransactionService = {
       }
 
       case "WITHDRAW": {
-        const isConsistent = sourceBefore - (amount + fee) === sourceAfter;
+        const isConsistent = hasSourceSnapshot
+          ? sourceBefore - (amount + fee) === sourceAfter
+          : null;
 
         return {
           ...baseData,
@@ -313,7 +371,7 @@ const adminTransactionService = {
             email: t.source_user_email || "",
             balance_before: sourceBefore,
             balance_after: sourceAfter,
-            difference: -(amount + fee),
+            difference: hasSourceSnapshot ? -(amount + fee) : null,
           },
           bank: {
             bank_name: t.bank_name || "Chưa cập nhật",
@@ -326,8 +384,12 @@ const adminTransactionService = {
 
       case "PAYMENT": {
         const isConsistent =
-          sourceBefore - (amount + fee) === sourceAfter &&
-          destBefore + amount === destAfter;
+          hasSourceSnapshot && hasDestSnapshot
+            ? sourceBefore - (amount + fee) === sourceAfter &&
+              destBefore + amount === destAfter
+            : hasSourceSnapshot
+            ? sourceBefore - (amount + fee) === sourceAfter
+            : null;
 
         return {
           ...baseData,
@@ -339,7 +401,7 @@ const adminTransactionService = {
             email: t.source_user_email || "",
             balance_before: sourceBefore,
             balance_after: sourceAfter,
-            difference: -(amount + fee),
+            difference: hasSourceSnapshot ? -(amount + fee) : null,
           },
           merchant: {
             id: String(t.destination_user_id),
@@ -348,7 +410,7 @@ const adminTransactionService = {
             email: t.destination_user_email || "",
             balance_before: destBefore,
             balance_after: destAfter,
-            difference: amount,
+            difference: hasDestSnapshot ? amount : null,
           },
           payment_request: {
             reference_code: t.reference_code || null,
@@ -360,7 +422,7 @@ const adminTransactionService = {
       default: {
         return {
           ...baseData,
-          is_balance_consistent: true,
+          is_balance_consistent: null,
           source_user: t.source_user_id
             ? {
                 id: String(t.source_user_id),
@@ -384,6 +446,93 @@ const adminTransactionService = {
         };
       }
     }
+  },
+
+  async exportTransactions({
+    type,
+    status,
+    initiated_by,
+    keyword,
+    period,
+    start_date,
+    end_date,
+    currentUser,
+  }) {
+    const {
+      cleanType,
+      cleanStatus,
+      cleanInitiatedBy,
+      filterStartDate,
+      filterEndDate,
+    } = parseFilterParams({
+      type,
+      status,
+      initiated_by,
+      period,
+      start_date,
+      end_date,
+    });
+
+    // Truy xuất an toàn tên Admin xuất báo cáo
+    const adminId = currentUser?.user_id || currentUser?.id;
+    let adminName = currentUser?.full_name;
+    if (!adminName && adminId) {
+      const adminUser = await adminTransactionRepository.getUserById(adminId);
+      adminName = adminUser?.full_name || "Quản trị viên";
+    }
+    if (!adminName) {
+      adminName = "Quản trị viên";
+    }
+
+    // Query tối đa 5001 dòng để kiểm tra trần an toàn (tránh silent truncation)
+    const rows = await adminTransactionRepository.getTransactionsForExport({
+      type: cleanType,
+      status: cleanStatus,
+      initiatedBy: cleanInitiatedBy,
+      keyword,
+      startDate: filterStartDate,
+      endDate: filterEndDate,
+      limit: 5001,
+    });
+
+    if (rows.length > 5000) {
+      const err = httpError(
+        422,
+        "Số lượng giao dịch thỏa mãn vượt quá giới hạn cho phép (5.000 bản ghi). Vui lòng thu hẹp khoảng thời gian hoặc thêm điều kiện lọc."
+      );
+      err.code = "EXPORT_LIMIT_EXCEEDED";
+      throw err;
+    }
+
+    if (rows.length === 0) {
+      const err = httpError(
+        404,
+        "Không có dữ liệu giao dịch nào phù hợp với bộ lọc đã chọn."
+      );
+      err.code = "NO_DATA_FOUND";
+      throw err;
+    }
+
+    // Tạo tóm tắt bộ lọc cho Header Excel
+    const summaryParts = [];
+    if (cleanType !== "ALL") summaryParts.push(`Loại: ${cleanType}`);
+    if (cleanStatus !== "ALL") summaryParts.push(`Trạng thái: ${cleanStatus}`);
+    if (cleanInitiatedBy !== "ALL") summaryParts.push(`Nguồn: ${cleanInitiatedBy}`);
+    if (keyword && keyword.trim()) summaryParts.push(`Từ khóa: "${keyword.trim()}"`);
+    const filterSummary = summaryParts.join(" | ");
+
+    // Tạo file Excel với module transaction.export.js
+    const buffer = await buildTransactionsAdminXlsx({
+      rows,
+      adminName,
+      filterSummary,
+      startDate: filterStartDate,
+      endDate: filterEndDate,
+    });
+
+    const fileName = buildExportFileName(filterStartDate, filterEndDate);
+
+    return { buffer, fileName, totalRows: rows.length };
   },
 };
 

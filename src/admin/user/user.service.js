@@ -4,7 +4,7 @@ const adminUserRepository = require("./user.repository");
 const { httpError } = require("../../utils/httpError");
 const { emitToUser } = require("../../utils/socket");
 const { isValidPhone, isValidEmail } = require("../../utils/validators");
-const { maskPhone } = require("../../utils/maskPhoneAndEmail");
+const { maskPhone } = require("../../utils/mask");
 
 const MAX_ADMIN_AUTH_ATTEMPTS = 5;
 const ADMIN_LOCK_MINUTES = 30;

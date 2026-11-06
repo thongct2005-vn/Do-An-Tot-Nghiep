@@ -24,10 +24,11 @@ function resolveExportRange(startDate, endDate) {
     throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
   }
 
+  // Lấy số ngày giữa 2 mốc thời gian
   const days =
     Math.round(
       (Date.parse(`${endDate}T00:00:00Z`) -
-        Date.parse(`${startDate}T00:00:00Z`)) /
+        Date.parse(`${startDate}T00:00:00Z`)) / // Ra mili giây nên phải chia để ra số ngày
         DAY_MS,
     ) + 1;
   if (days > EXPORT.MAX_DAYS) {
@@ -38,9 +39,10 @@ function resolveExportRange(startDate, endDate) {
   }
 
   // Chỉ cho xem dữ liệu trong 1 năm gần nhất
-  const oneYearAgo = new Date(Date.now() + VN_OFFSET_MS);
-  oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1);
-  if (startDate < oneYearAgo.toISOString().slice(0, 10)) {
+  const oneYearAgo = new Date(Date.now() + VN_OFFSET_MS); // Trả về thời gian hiện tại - mili giây
+  oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1); // Gán lại năm hiện tại lùi đi 1
+  // Chuyển oneYearAgo thành chuỗi định dạng ISO, ví dụ: '2025-11-05T20:27:16.000Z', lấy 10 kí tự đầu 
+  if (startDate < oneYearAgo.toISOString().slice(0, 10)) { 
     throw httpError(
       400,
       "Chỉ có thể xuất lịch sử giao dịch trong vòng 1 năm gần nhất",

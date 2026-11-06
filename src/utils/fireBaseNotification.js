@@ -4,9 +4,10 @@ const userRepository = require("../modules/user/user.repository");
 
 const sendPushNotification = async (userId, { title, body, data = {} }) => {
   try {
-    const fcmToken = await userRepository.getFcmToken(userId);
+    const user = await userRepository.getFcmToken(userId);
+    const { fcm_token: fcmToken, full_name: fullName } = user;
     if (!fcmToken) {
-      console.log(`User ${userId} chưa có fcm_token, bỏ qua gửi noti`);
+      console.log(`User ${fullName} - ${userId} chưa có fcm_token, bỏ qua gửi thông báo`);
       return;
     }
 
@@ -27,16 +28,17 @@ const sendPushNotification = async (userId, { title, body, data = {} }) => {
       },
     });
 
-    console.log(`Đã gửi push notification tới user ${userId}`);
+    console.log(`Đã gửi push notification tới user ${fullName} - ${userId}`);
   } catch (e) {
-    console.error(`Lỗi gửi FCM tới user ${userId}:`, e.message);
+    console.error(`Lỗi gửi FCM tới user ${fullName} - ${userId}:`, e.message);
 
+    // Token ko hợp lệ hoặc sai định dạng
     if (
       e.code === "messaging/registration-token-not-registered" ||
       e.code === "messaging/invalid-registration-token"
     ) {
       await userRepository.updateFcmToken(userId, null);
-      console.log(`Đã xóa fcm_token không hợp lệ của user ${userId}`);
+      console.log(`Đã xóa fcm_token không hợp lệ của user ${fullName} - ${userId}`);
     }
   }
 };

@@ -215,9 +215,9 @@ const TransactionRepository = {
     await TransactionRepository.recordAudit(client, {
       eventType: "TRANSACTION_COMPLETED",
       payload: {
-        transaction_id: insertResult.rows[0].id,
+        transaction_id: insertResult.rows[0]?.id,
         transaction_type: transactionType,
-        status: insertResult.rows[0].status,
+        status: insertResult.rows[0]?.status,
         source_user_id: sourceUserId,
         destination_user_id: destinationUserId,
         amount: amountNum,
@@ -231,9 +231,9 @@ const TransactionRepository = {
     });
 
     return {
-      transactionId: insertResult.rows[0].id,
-      status: insertResult.rows[0].status,
-      createdAt: insertResult.rows[0].created_at,
+      transactionId: insertResult.rows[0]?.id,
+      status: insertResult.rows[0]?.status,
+      createdAt: insertResult.rows[0]?.created_at,
       amount,
       fee,
       description,
@@ -370,9 +370,9 @@ const TransactionRepository = {
       await TransactionRepository.recordAudit(client, {
         eventType: "TRANSACTION_COMPLETED",
         payload: {
-          transaction_id: insertResult.rows[0].id,
+          transaction_id: insertResult.rows[0]?.id,
           transaction_type: transactionType,
-          status: insertResult.rows[0].status,
+          status: insertResult.rows[0]?.status,
           source_user_id: sourceUserId,
           linked_bank_account_id: linkedBankAccountId,
           amount: amountNum,
@@ -388,9 +388,9 @@ const TransactionRepository = {
       await client.query("COMMIT");
 
       return {
-        transactionId: insertResult.rows[0].id,
-        status: insertResult.rows[0].status,
-        createdAt: insertResult.rows[0].created_at,
+        transactionId: insertResult.rows[0]?.id,
+        status: insertResult.rows[0]?.status,
+        createdAt: insertResult.rows[0]?.created_at,
         amount,
         fee,
         sourceUserName: sourceUser?.full_name,

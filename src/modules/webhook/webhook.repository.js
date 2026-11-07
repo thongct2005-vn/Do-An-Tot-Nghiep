@@ -93,7 +93,7 @@ const webhookRepository = {
        SELECT(SELECT count(*) FROM expired):: int AS expired_count`,
       [orderId, merchantId, limit, webhookIds],
     );
-    return result.rows[0].expired_count;
+    return result.rows[0]?.expired_count ?? 0;
   },
 
   /**

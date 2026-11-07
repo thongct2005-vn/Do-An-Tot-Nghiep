@@ -25,6 +25,7 @@ function parseAmount(raw, message = "Số tiền không hợp lệ") {
 
 // Format số tiền để hiển thị, ví dụ: 100000 -> 100.000đ
 function formatVnd(n) {
+  if (n === 0 || n === "0") return "0đ";
   const amount = parseAmount(n);
   return `${amount.toLocaleString("vi-VN")}đ`;
 }

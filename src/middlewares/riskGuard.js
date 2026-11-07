@@ -40,19 +40,26 @@ function riskGuard({ challenge = 40, block = 70, dryRun } = {}) {
           : "BLOCK"
         : "CHALLENGE";
 
+      const divider = "-".repeat(60);
       console.warn(
-        JSON.stringify({
-          tag: "RISK_GUARD",
-          action,
-          method: req.method,
-          path: req.originalUrl || req.url,
-          ip: metrics?.ip,
-          phone: maskPhone(metrics?.phone),
-          userId: req.user?.user_id ?? null,
-          score,
-          threshold: { challenge, block },
-          reasons,
-        }),
+        `\n${divider}\n` +
+          JSON.stringify(
+            {
+              tag: "RISK_GUARD",
+              action,
+              method: req.method,
+              path: req.originalUrl || req.url,
+              ip: metrics?.ip,
+              phone: maskPhone(metrics?.phone),
+              userId: req.user?.user_id ?? null,
+              score,
+              threshold: { challenge, block },
+              reasons,
+            },
+            null,
+            2,
+          ) +
+          `\n${divider}`,
       );
     }
 

@@ -550,7 +550,9 @@ const TransactionRepository = {
       endDate = null,
     } = {},
   ) {
-    const hasCursor = Boolean(cursorId);
+    const validCursorId =
+      cursorId && String(cursorId).trim() !== "" ? Number(cursorId) : null;
+    const hasCursor = Boolean(validCursorId);
     const hasKeyword = Boolean(keyword && keyword.trim());
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
@@ -625,7 +627,7 @@ const TransactionRepository = {
       [
         userId,
         hasCursor,
-        cursorId,
+        validCursorId,
         limit,
         hasKeyword,
         safeKeyword,

@@ -7,7 +7,6 @@ const sendPushNotification = async (userId, { title, body, data = {} }) => {
     const user = await userRepository.getFcmToken(userId);
     const { fcm_token: fcmToken, full_name: fullName } = user;
     if (!fcmToken) {
-      console.log(`User ${fullName} - ${userId} chưa có fcm_token, bỏ qua gửi thông báo`);
       return;
     }
 
@@ -27,8 +26,6 @@ const sendPushNotification = async (userId, { title, body, data = {} }) => {
         payload: { aps: { sound: "default" } },
       },
     });
-
-    console.log(`Đã gửi push notification tới user ${fullName} - ${userId}`);
   } catch (e) {
     console.error(`Lỗi gửi FCM tới user ${fullName} - ${userId}:`, e.message);
 

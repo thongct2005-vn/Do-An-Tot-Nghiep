@@ -3,9 +3,55 @@ const { sanitizePhone } = require("./sanitize");
 const { isValidPhone } = require("./validators");
 
 /* ============================================================================
- * Hằng số thời gian & cấu hình trọng số điểm rủi ro (Risk Scoring)
- * Nguyên tắc: Không tin tín hiệu đơn lẻ — cần nhiều tín hiệu cộng dồn mới
- * vượt ngưỡng chặn (block), tránh chặn nhầm người dùng chung Wi-Fi / NAT 4G.
+ * BẢNG CÔNG THỨC TÍNH ĐIỂM RỦI RO (RISK SCORING) & ĐIỀU KIỆN KHÓA / CHẶN
+ * ============================================================================
+ * 
+ * 1. NGUYÊN TẮC:
+ *    - Không tin tín hiệu đơn lẻ: Phải có NHIỀU tín hiệu cộng dồn mới bị chặn (block).
+ *    - Điều này giúp tránh chặn nhầm người dùng hợp lệ cùng mạng Wi-Fi/NAT/4G.
+ *
+ * 2. CÔNG THỨC CỘNG ĐIỂM: Tổng điểm = Tín hiệu (1) + (2) + (3) + (4) + (5) + (6) + (7)
+ *    --------------------------------------------------------------------------------------
+ *    | Nhóm tín hiệu                            | Ngưỡng vi phạm          | Điểm cộng     |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (1) Tốc độ request từ 1 IP (trong 1p)    | > 20 req                | +15 điểm      |
+ *    |                                          | > 45 req                | +30 điểm      |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (2) 1 IP thử nhiều SĐT (trong 10p)       | >= 3 số khác nhau       | +20 điểm      |
+ *    |                                          | >= 6 số khác nhau       | +40 điểm      |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (3) 1 SĐT bị nhiều nguồn/IP thử (trong 10p)| >= 3 nguồn khác nhau  | +20 điểm      |
+ *    |                                          | >= 5 nguồn khác nhau    | +35 điểm      |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (4) Số lần login/OTP sai của SĐT (15p)   | >= 3 lần                | +20 điểm      |
+ *    |                                          | >= 5 lần                | +35 điểm      |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (5) Dữ liệu sai hình dạng                | SĐT sai định dạng VN    | +15 điểm      |
+ *    |                                          | Body/Phone sai kiểu dữ  | +30 điểm      |
+ *    |                                          | liệu (object/array lạ)  |               |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (6) Bẫy Honeypot (điền vào trường ẩn)    | Điền 1 trường ẩn        | +35 điểm      |
+ *    |                                          | Điền từ 2 trường trở lên| +50 điểm      |
+ *    |------------------------------------------|-------------------------|---------------|
+ *    | (7) Dấu hiệu Bot qua Header              | Thiếu X-Device-Id (App) | +6 điểm       |
+ *    |                                          | User-Agent quá ngắn     | +8 điểm       |
+ *    |                                          | User-Agent curl/python..| +16 điểm      |
+ *    |                                          | (Tối đa nhóm bot header)| Max: 22 điểm  |
+ *    --------------------------------------------------------------------------------------
+ *
+ * 3. KHI NÀO KHÓA / CHẶN (HTTP 429) & KHI NÀO THỬ THÁCH (CHALLENGE)?
+ *    Được kiểm tra bởi middleware `riskGuard({ challenge, block })`:
+ *
+ *    - CHẶN (BLOCK - trả về HTTP 429 "Bạn thao tác quá nhiều lần..."):
+ *      Khi TỔNG ĐIỂM >= block (nếu RISK_DRY_RUN=false).
+ *      + /otp/send-otp           : Điểm >= 55  (Chặn sớm nhất để chống cháy cước/bom OTP)
+ *      + /auth/register, /forgot : Điểm >= 60  (Chặn bot cày acc rác, bot dính honeypot)
+ *      + /transaction/transfer...: Điểm >= 65  (Bảo vệ giao dịch tiền tệ)
+ *      + /auth/login             : Điểm >= 70  (Khoan dung hơn cho người gõ nhầm mật khẩu)
+ *
+ *    - THỬ THÁCH (CHALLENGE - bật cờ req.risk.challenge = true):
+ *      Khi TỔNG ĐIỂM >= challenge (thường từ 30 - 40 điểm).
+ *      Dùng để controller bắt người dùng thực hiện thêm bước xác thực phụ (như OTP, CAPTCHA).
  * ============================================================================ */
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;

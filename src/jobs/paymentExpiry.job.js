@@ -11,9 +11,9 @@ async function tick() {
   running = true;
   try {
     const n = await webhookRepository.expireDuePayments(pool);
-    if (n > 0) console.log(`[expiry] đã chuyển ${n} đơn hết hạn sang FAILED`);
+    if (n > 0) console.log(`Đã chuyển ${n} đơn hết hạn sang FAILED`);
   } catch (e) {
-    console.error("[expiry] lỗi:", e.message);
+    console.error("Lỗi:", e.message);
   } finally {
     running = false;
   }

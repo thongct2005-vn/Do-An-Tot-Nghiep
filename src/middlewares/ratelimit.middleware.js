@@ -108,7 +108,7 @@ const authLimiters = {
   registerLimiter: [
     createLimiter({
       windowMs: 15 * MINUTE,
-      limit: 5,
+      limit: 10,
       keyGenerator: byTarget,
     }),
     createLimiter({

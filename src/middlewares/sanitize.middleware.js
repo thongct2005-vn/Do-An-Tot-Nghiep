@@ -111,6 +111,14 @@ function clean(node, depth = 0) {
 // trước các route để mọi request đều được làm sạch.
 // ----------------------------------------------------------------------------
 function sanitizeRequest(req, res, next) {
+  // Giữ bản chụp nông các trường gốc trước khi làm sạch tại chỗ (mutate)
+  // để riskGuard phía sau vẫn phát hiện được hành vi truyền sai kiểu dữ liệu (object/array) ở phone/email.
+  if (req.body && typeof req.body === "object" && !Array.isArray(req.body)) {
+    req.rawBodyForRisk = { ...req.body };
+  } else {
+    req.rawBodyForRisk = req.body;
+  }
+
   // Làm sạch body (JSON, form...) nếu có và là object.
   // Lưu ý: middleware parse body (express.json, ...) phải chạy TRƯỚC middleware này.
   if (req.body && typeof req.body === "object") {

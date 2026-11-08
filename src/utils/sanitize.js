@@ -99,22 +99,26 @@ function sanitizeSearch(value, { maxLength = 100 } = {}) {
 /** Số điện thoại: chỉ giữ chữ số (cho phép nhập "0912 345 678", "0912.345.678") */
 function sanitizePhone(value) {
   if (value === undefined || value === null) return value;
+  if (typeof value === "string" && value.trim() === "") return "";
   const str = toStr(value);
-  if (str === null) return undefined;
+  if (str === null) return "INVALID";
   // \D = mọi ký tự không phải chữ số; tối đa 15 chữ số (chuẩn E.164)
-  return str.replace(/\D/g, "").slice(0, 15);
+  const digits = str.replace(/\D/g, "").slice(0, 15);
+  return digits || "INVALID";
 }
 
 /** Email: bỏ khoảng trắng, ký tự điều khiển và ký tự không thể có trong email */
 function sanitizeEmail(value) {
   if (value === undefined || value === null) return value;
+  if (typeof value === "string" && value.trim() === "") return "";
   const str = toStr(value);
-  if (str === null) return undefined;
-  return str
+  if (str === null) return "INVALID";
+  const cleaned = str
     .replace(CONTROL_CHARS, "") // bỏ ký tự điều khiển
     .replace(INVISIBLE_CHARS, "") // bỏ ký tự vô hình
     .replace(/[\s<>"'`;,()\\]/g, "") // bỏ khoảng trắng và ký tự không hợp lệ trong email
     .slice(0, 254); // email tối đa 254 ký tự
+  return cleaned || "INVALID";
 }
 
 module.exports = {

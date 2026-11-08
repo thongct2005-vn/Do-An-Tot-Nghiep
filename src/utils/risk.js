@@ -202,7 +202,7 @@ function extractIp(req) {
 // Chuẩn hóa SĐT Việt Nam: chuyển +84/84 đầu về 0 rồi lọc chữ số qua sanitizePhone
 function normalizeVnPhone(raw) {
   const cleaned = sanitizePhone(raw);
-  if (!cleaned) return "";
+  if (!cleaned || cleaned === "INVALID") return "";
   if (cleaned.length === 11 && cleaned.startsWith("84")) {
     return `0${cleaned.slice(2)}`;
   }
@@ -309,15 +309,16 @@ function evaluatePayloadShape(req, reasons) {
   const method = String(req?.method || "POST").toUpperCase();
   const expectsBody =
     method === "POST" || method === "PUT" || method === "PATCH";
+  const body = req?.rawBodyForRisk !== undefined ? req.rawBodyForRisk : req?.body;
 
-  if (expectsBody && !isPlainObject(req?.body)) {
+  if (expectsBody && !isPlainObject(body)) {
     score += RULES.MALFORMED.heavyScore;
     reasons.push("malformed_body_not_object");
     return score;
   }
 
-  if (isPlainObject(req?.body) && "phone" in req.body) {
-    const rawPhone = req.body.phone;
+  if (isPlainObject(body) && "phone" in body) {
+    const rawPhone = body.phone;
     // Truyền object/array vào trường phone (ví dụ tấn công type juggling / injection)
     if (
       rawPhone !== null &&
@@ -341,11 +342,12 @@ function evaluatePayloadShape(req, reasons) {
 
 // Tín hiệu 6: Honeypot (trường ẩn mà người dùng thật không bao giờ điền)
 function evaluateHoneypot(req, reasons) {
-  if (!isPlainObject(req?.body)) return 0;
+  const body = req?.rawBodyForRisk !== undefined ? req.rawBodyForRisk : req?.body;
+  if (!isPlainObject(body)) return 0;
 
   let filledCount = 0;
   for (const field of HONEYPOT_FIELDS) {
-    const val = req.body[field];
+    const val = body[field];
     if (val !== undefined && val !== null && String(val).trim() !== "") {
       filledCount += 1;
     }

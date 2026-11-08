@@ -10,5 +10,11 @@ router.get("/export", adminTransactionController.exportTransactions);
 router.get("/", adminTransactionController.getTransactions);
 router.get("/:id", adminTransactionController.getTransactionDetail);
 
+router.post("/:id/disputes", adminTransactionController.openDispute);
+router.post(
+  "/:id/disputes/:disputeId/events",
+  adminTransactionController.appendDisputeEvent
+);
+
 module.exports = router;
 

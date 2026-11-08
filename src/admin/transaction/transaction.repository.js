@@ -1,9 +1,11 @@
 const pool = require("../../config/database");
+const { uuidv7 } = require("uuidv7");
 
 function buildFilterConditions({
   type,
   status,
   initiatedBy,
+  anomaly,
   keyword,
   startDate,
   endDate,
@@ -27,6 +29,61 @@ function buildFilterConditions({
     conditions.push(`ach.id IS NULL AND t.source_user_id IS NOT NULL`);
   } else if (initiatedBy === "SYSTEM") {
     conditions.push(`ach.id IS NULL AND t.source_user_id IS NULL`);
+  }
+
+  if (anomaly && anomaly !== "ALL") {
+    switch (anomaly) {
+      case "BALANCE_MISMATCH":
+        conditions.push(`(
+          t.status = 'SUCCESS' AND (
+            (t.transaction_type IN ('TRANSFER', 'PAYMENT') 
+             AND t.source_balance_before IS NOT NULL 
+             AND t.source_balance_after IS NOT NULL 
+             AND t.dest_balance_before IS NOT NULL 
+             AND t.dest_balance_after IS NOT NULL 
+             AND ((t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after) 
+                  OR (t.dest_balance_before + t.amount != t.dest_balance_after)))
+            OR
+            (t.transaction_type = 'TOPUP' 
+             AND t.source_balance_before IS NOT NULL 
+             AND t.source_balance_after IS NOT NULL 
+             AND (t.source_balance_before + t.amount != t.source_balance_after))
+            OR
+            (t.transaction_type = 'WITHDRAW' 
+             AND t.source_balance_before IS NOT NULL 
+             AND t.source_balance_after IS NOT NULL 
+             AND (t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after))
+          )
+        )`);
+        break;
+
+      case "MISSING_SNAPSHOT":
+        conditions.push(`(
+          t.status = 'SUCCESS' AND (
+            t.source_balance_before IS NULL 
+            OR t.source_balance_after IS NULL 
+            OR (t.transaction_type IN ('TRANSFER', 'PAYMENT') AND (t.dest_balance_before IS NULL OR t.dest_balance_after IS NULL))
+          )
+        )`);
+        break;
+
+      case "STUCK_PENDING":
+        conditions.push(`(t.status = 'PENDING' AND t.created_at < (NOW() - INTERVAL '15 minutes'))`);
+        break;
+
+      case "HIGH_VALUE_TX":
+        conditions.push(`(t.amount >= 10000000)`);
+        break;
+
+      case "ACTIVE_DISPUTE":
+        conditions.push(`EXISTS (
+          SELECT 1 
+          FROM admin_user_change_history d_ach 
+          WHERE (d_ach.new_values->>'transaction_id') = t.id::TEXT 
+            AND (d_ach.new_values->>'dispute_status') IN ('OPEN', 'INVESTIGATING')
+        )`);
+        break;
+    }
   }
 
   if (startDate) {
@@ -61,6 +118,7 @@ const adminTransactionRepository = {
     type,
     status,
     initiatedBy,
+    anomaly,
     keyword,
     startDate,
     endDate,
@@ -69,6 +127,7 @@ const adminTransactionRepository = {
       type,
       status,
       initiatedBy,
+      anomaly,
       keyword,
       startDate,
       endDate,
@@ -99,6 +158,7 @@ const adminTransactionRepository = {
     type,
     status,
     initiatedBy,
+    anomaly,
     keyword,
     startDate,
     endDate,
@@ -109,6 +169,7 @@ const adminTransactionRepository = {
       type,
       status,
       initiatedBy,
+      anomaly,
       keyword,
       startDate,
       endDate,
@@ -238,6 +299,7 @@ const adminTransactionRepository = {
     type,
     status,
     initiatedBy,
+    anomaly,
     keyword,
     startDate,
     endDate,
@@ -247,6 +309,7 @@ const adminTransactionRepository = {
       type,
       status,
       initiatedBy,
+      anomaly,
       keyword,
       startDate,
       endDate,
@@ -330,6 +393,223 @@ const adminTransactionRepository = {
     `;
     const result = await pool.query(query, [id]);
     return result.rows[0] || null;
+  },
+
+  async getTransactionTimeline(id) {
+    const events = [];
+
+    // 1. Từ payment_requests
+    const prRes = await pool.query(
+      `SELECT id, reference_code, order_id, amount, status, created_at, paid_at
+       FROM payment_requests
+       WHERE transaction_id = $1`,
+      [id]
+    );
+    for (const pr of prRes.rows) {
+      if (pr.created_at) {
+        events.push({
+          id: `PR_CREATED_${pr.id}`,
+          timestamp: pr.created_at,
+          source: "payment_requests",
+          event_type: "PAYMENT_REQUEST_CREATED",
+          title: "Tạo yêu cầu thanh toán QR",
+          description: `Đơn hàng: ${pr.order_id || "N/A"} - Mã tham chiếu: ${pr.reference_code || "N/A"}`,
+          data: { order_id: pr.order_id, reference_code: pr.reference_code, status: pr.status },
+        });
+      }
+      if (pr.paid_at) {
+        events.push({
+          id: `PR_PAID_${pr.id}`,
+          timestamp: pr.paid_at,
+          source: "payment_requests",
+          event_type: "PAYMENT_REQUEST_PAID",
+          title: "Ghi nhận thanh toán yêu cầu QR",
+          description: `Khách hàng hoàn tất thanh toán cho đơn hàng ${pr.order_id || pr.reference_code || ""}`.trim(),
+          data: { paid_at: pr.paid_at },
+        });
+      }
+
+      // Webhook deliveries nếu có
+      const wdRes = await pool.query(
+        `SELECT id, event_type, status, attempt_count, last_http_status, created_at, delivered_at
+         FROM webhook_deliveries
+         WHERE payment_request_id = $1`,
+        [pr.id]
+      );
+      for (const wd of wdRes.rows) {
+        events.push({
+          id: `WD_${wd.id}`,
+          timestamp: wd.delivered_at || wd.created_at,
+          source: "webhook_deliveries",
+          event_type: "WEBHOOK_DELIVERY",
+          title: `Gửi Webhook thông báo kết quả (${wd.status})`,
+          description: `Sự kiện: ${wd.event_type} - HTTP Status: ${wd.last_http_status || "N/A"} - Lần thử: ${wd.attempt_count}`,
+          data: { status: wd.status, http_status: wd.last_http_status, attempt_count: wd.attempt_count },
+        });
+      }
+    }
+
+    // 2. Từ transactions
+    const txRes = await pool.query(
+      `SELECT id, transaction_type, status, created_at, completed_at
+       FROM transactions
+       WHERE id = $1`,
+      [id]
+    );
+    const tx = txRes.rows[0];
+    if (tx) {
+      events.push({
+        id: `TX_CREATED_${tx.id}`,
+        timestamp: tx.created_at,
+        source: "transactions",
+        event_type: "TRANSACTION_CREATED",
+        title: `Ghi nhận bút toán giao dịch (${tx.status})`,
+        description: `Bản ghi giao dịch loại ${tx.transaction_type} được tạo với trạng thái ${tx.status}`,
+        data: { status: tx.status, type: tx.transaction_type },
+      });
+      if (tx.completed_at) {
+        events.push({
+          id: `TX_COMPLETED_${tx.id}`,
+          timestamp: tx.completed_at,
+          source: "transactions",
+          event_type: "TRANSACTION_COMPLETED",
+          title: "Hoàn tất xử lý giao dịch",
+          description: `Giao dịch chính thức chuyển sang trạng thái hoàn tất tại mốc thời gian này`,
+          data: { completed_at: tx.completed_at },
+        });
+      }
+    }
+
+    // 3. Từ audit_outbox
+    const aoRes = await pool.query(
+      `SELECT id, event_type, payload, created_at
+       FROM audit_outbox
+       WHERE (payload->>'transaction_id') = $1::TEXT`,
+      [id]
+    );
+    for (const ao of aoRes.rows) {
+      events.push({
+        id: `AO_${ao.id}`,
+        timestamp: ao.created_at,
+        source: "audit_outbox",
+        event_type: ao.event_type || "AUDIT_EVENT",
+        title: `Hệ thống ghi nhận sự kiện (${ao.event_type})`,
+        description: `Sự kiện kiểm toán tự động được ghi nhận vào audit outbox`,
+        data: ao.payload,
+      });
+    }
+
+    // 4. Từ admin_user_change_history
+    const achRes = await pool.query(
+      `SELECT ach.id, ach.action, ach.reason, ach.new_values, ach.created_at,
+              u.full_name AS admin_name, u.email AS admin_email
+       FROM admin_user_change_history ach
+       LEFT JOIN users u ON ach.admin_id = u.id
+       WHERE (ach.new_values->>'transaction_id') = $1::TEXT
+       ORDER BY ach.created_at ASC`,
+      [id]
+    );
+    for (const ach of achRes.rows) {
+      let title = `Quản trị viên thao tác (${ach.action})`;
+      if (ach.action === "DISPUTE_OPENED") {
+        title = `Mở hồ sơ tra soát (#${ach.new_values?.authorization_reference || ach.new_values?.dispute_id?.slice(0, 8)})`;
+      } else if (ach.action === "DISPUTE_UPDATED") {
+        title = `Cập nhật hồ sơ tra soát (${ach.new_values?.dispute_status || ""})`;
+      } else if (ach.action === "DISPUTE_RESOLVED") {
+        title = `Kết luận và đóng hồ sơ tra soát (${ach.new_values?.resolution_result || "RESOLVED"})`;
+      }
+
+      events.push({
+        id: `ACH_${ach.id}`,
+        timestamp: ach.created_at,
+        source: "admin_user_change_history",
+        event_type: ach.action,
+        title,
+        description: `Admin: ${ach.admin_name || "Quản trị viên"} - Lý do: ${ach.reason || "N/A"}${ach.new_values?.note ? ` - Ghi chú: ${ach.new_values.note}` : ""}`,
+        data: {
+          admin_name: ach.admin_name,
+          admin_email: ach.admin_email,
+          action: ach.action,
+          reason: ach.reason,
+          new_values: ach.new_values,
+        },
+      });
+    }
+
+    // Sắp xếp theo timestamp ASC, id ASC
+    events.sort((a, b) => {
+      const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      if (diff !== 0) return diff;
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+    return events;
+  },
+
+  async lockTransactionForDispute(client, transactionId) {
+    const query = `
+      SELECT id, transaction_type, amount, fee, status, source_user_id, destination_user_id
+      FROM transactions
+      WHERE id = $1
+      FOR UPDATE
+    `;
+    const result = await client.query(query, [transactionId]);
+    return result.rows[0] || null;
+  },
+
+  async getDisputeEventsByTransactionId(transactionId, client = pool) {
+    const query = `
+      SELECT 
+        ach.id,
+        ach.admin_id,
+        ach.user_id,
+        ach.action,
+        ach.reason,
+        ach.old_values,
+        ach.new_values,
+        ach.created_at,
+        au.full_name AS admin_name,
+        au.email AS admin_email
+      FROM admin_user_change_history ach
+      LEFT JOIN users au ON ach.admin_id = au.id
+      WHERE (ach.new_values->>'transaction_id') = $1::TEXT
+        AND ach.action IN ('DISPUTE_OPENED', 'DISPUTE_UPDATED', 'DISPUTE_RESOLVED')
+      ORDER BY ach.created_at ASC, ach.id ASC
+    `;
+    const result = await client.query(query, [transactionId]);
+    return result.rows;
+  },
+
+  async insertDisputeEvent(client, {
+    adminId,
+    userId,
+    action,
+    reason,
+    oldValues,
+    newValues,
+  }) {
+    const id = uuidv7();
+    const query = `
+      INSERT INTO admin_user_change_history (
+        id, admin_id, user_id, action, reason, old_values, new_values, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      RETURNING id, admin_id, user_id, action, reason, old_values, new_values, created_at
+    `;
+    const result = await client.query(query, [
+      id,
+      adminId,
+      userId,
+      action,
+      reason,
+      oldValues ? JSON.stringify(oldValues) : null,
+      newValues ? JSON.stringify(newValues) : null,
+    ]);
+    return result.rows[0];
+  },
+
+  async getClient() {
+    return pool.connect();
   },
 };
 

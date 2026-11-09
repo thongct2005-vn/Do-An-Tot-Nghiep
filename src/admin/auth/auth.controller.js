@@ -4,7 +4,6 @@ const adminAuthService = require("./auth.service");
 const adminAuthController = {
   async login(req, res, next) {
     try {
-      console.log("link" + req.originalUrl);
       const { email, password } = req.body;
       const result = await adminAuthService.login({ email, password });
       return successResponse(res, 200, "Đăng nhập Admin thành công", result);
@@ -41,7 +40,7 @@ const adminAuthController = {
   async logout(req, res, next) {
     try {
       const adminId = req.user.user_id;
-      await adminAuthService.logout(adminId);
+      await adminAuthService.logout(adminId, req.body.refresh_token);
       return successResponse(res, 200, "Đăng xuất thành công");
     } catch (e) {
       next(e);

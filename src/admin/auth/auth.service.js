@@ -118,10 +118,14 @@ const adminAuthService = {
         role: user.role,
       });
 
-    await adminAuthRepository.updateRefreshToken({
-      refreshToken: newRefreshToken,
+    const rotated = await adminAuthRepository.rotateRefreshToken({
       userId: user.id,
+      oldRefreshToken: token,
+      newRefreshToken,
     });
+    if (!rotated) {
+      throw httpError(401, "Phiên đăng nhập đã được thay thế hoặc kết thúc");
+    }
 
     return {
       token: {
@@ -155,11 +159,11 @@ const adminAuthService = {
     };
   },
 
-  async logout(adminId) {
-    if (!adminId) {
-      throw httpError(400, "Thiếu thông tin để đăng xuất");
+  async logout(adminId, refreshToken) {
+    if (!adminId || !refreshToken) {
+      throw httpError(401, "Thiếu thông tin xác thực");
     }
-    await adminAuthRepository.logout(adminId);
+    await adminAuthRepository.logout(adminId, refreshToken);
   },
 };
 

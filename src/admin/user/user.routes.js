@@ -2,9 +2,11 @@ const express = require("express");
 const router = express.Router();
 const adminUserController = require("./user.controller");
 const authMiddleware = require("../../middlewares/auth.middleware");
+const requireCurrentAdminSession = require("../auth/adminSession.middleware");
 
 router.use(authMiddleware.verifyAccessToken);
 router.use(authMiddleware.requireRole("ADMIN"));
+router.use(requireCurrentAdminSession);
 
 router.get("/stats", adminUserController.getStats);
 router.get("/", adminUserController.getUsers);

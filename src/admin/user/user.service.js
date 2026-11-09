@@ -686,21 +686,26 @@ const adminUserService = {
     }
     const cleanReason = reason.trim();
 
+    let cleanAuthRef = null;
     if (
-      typeof authorizationReference !== "string" ||
-      !AUTH_REFERENCE_REGEX.test(authorizationReference.trim())
+      typeof authorizationReference === "string" &&
+      authorizationReference.trim().length > 0
     ) {
-      throw httpError(
-        400,
-        "Mã tham chiếu ủy quyền (authorization_reference) là bắt buộc và phải từ 5-100 ký tự (chữ, số, gạch ngang, gạch dưới)"
-      );
+      if (!AUTH_REFERENCE_REGEX.test(authorizationReference.trim())) {
+        throw httpError(
+          400,
+          "Mã tham chiếu ủy quyền (authorization_reference) nếu có phải từ 5-100 ký tự (chữ, số, gạch ngang, gạch dưới)"
+        );
+      }
+      cleanAuthRef = authorizationReference.trim();
     }
-    const cleanAuthRef = authorizationReference.trim();
 
     const cleanDescription =
       typeof description === "string" && description.trim().length > 0
         ? description.trim().slice(0, 255)
-        : `Admin hỗ trợ chuyển tiền (${cleanAuthRef})`;
+        : cleanAuthRef
+          ? `Admin hỗ trợ chuyển tiền (${cleanAuthRef})`
+          : "Admin hỗ trợ chuyển tiền";
 
     await this.verifyAdminStepUpPassword({
       adminId,
@@ -900,23 +905,30 @@ const adminUserService = {
     }
     const cleanReason = reason.trim();
 
+    let cleanAuthRef = null;
     if (
-      typeof authorizationReference !== "string" ||
-      !AUTH_REFERENCE_REGEX.test(authorizationReference.trim())
+      typeof authorizationReference === "string" &&
+      authorizationReference.trim().length > 0
     ) {
-      throw httpError(
-        400,
-        "Mã tham chiếu ủy quyền (authorization_reference) là bắt buộc và phải từ 5-100 ký tự (chữ, số, gạch ngang, gạch dưới)"
-      );
+      if (!AUTH_REFERENCE_REGEX.test(authorizationReference.trim())) {
+        throw httpError(
+          400,
+          "Mã tham chiếu ủy quyền (authorization_reference) nếu có phải từ 5-100 ký tự (chữ, số, gạch ngang, gạch dưới)"
+        );
+      }
+      cleanAuthRef = authorizationReference.trim();
     }
-    const cleanAuthRef = authorizationReference.trim();
 
     const cleanDescription =
       typeof description === "string" && description.trim().length > 0
         ? description.trim().slice(0, 255)
         : operationType === "TOPUP"
-          ? `Admin hỗ trợ nạp tiền (${cleanAuthRef})`
-          : `Admin hỗ trợ rút tiền (${cleanAuthRef})`;
+          ? cleanAuthRef
+            ? `Admin hỗ trợ nạp tiền (${cleanAuthRef})`
+            : "Admin hỗ trợ nạp tiền"
+          : cleanAuthRef
+            ? `Admin hỗ trợ rút tiền (${cleanAuthRef})`
+            : "Admin hỗ trợ rút tiền";
 
     // Xác thực lại mật khẩu của Quản trị viên (Step-up Authentication)
     await this.verifyAdminStepUpPassword({

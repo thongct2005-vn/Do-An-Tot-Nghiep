@@ -115,7 +115,7 @@ const merchantAuthRepository = {
     callbackUrl,
     apiKey,
     secretKey,
-    status = "APPPROVED",
+    status = "APPROVED",
   }) {
     const client = await pool.connect();
 

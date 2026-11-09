@@ -38,6 +38,7 @@ const merchantSandboxWalletRoutes = createMerchantSandboxWalletRoutes();
 const adminUserRoutes = require("../admin/user/user.routes");
 const adminAuthRoutes = require("../admin/auth/auth.routes");
 const adminTransactionRoutes = require("../admin/transaction/transaction.routes");
+const adminMerchantsRoutes = require("../admin/merchants/merchants.routes");
 
 router.use("/auth", authRoutes);
 router.use("/otp", otpRoutes);
@@ -53,6 +54,7 @@ router.use("/kyc", kycRoutes);
 router.use("/admin/auth", adminAuthRoutes);
 router.use("/admin/user", adminUserRoutes);
 router.use("/admin/transactions", adminTransactionRoutes);
+router.use("/admin/merchants", adminMerchantsRoutes);
 
 
 //MERCHANT PRODUCTION ROUTES

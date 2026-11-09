@@ -50,6 +50,16 @@ const adminAuthRepository = {
     ]);
   },
 
+  async rotateRefreshToken({ userId, oldRefreshToken, newRefreshToken }) {
+    const result = await pool.query(
+      `UPDATE users SET refresh_token = $1
+       WHERE id = $2 AND refresh_token = $3 AND role = 'ADMIN' AND status = 'ACTIVE'
+       RETURNING id`,
+      [newRefreshToken, userId, oldRefreshToken],
+    );
+    return result.rowCount === 1;
+  },
+
   async findAdminByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
@@ -74,10 +84,21 @@ const adminAuthRepository = {
     return result.rows[0];
   },
 
-  async logout(adminId) {
-    await pool.query(`UPDATE users SET refresh_token = NULL WHERE id = $1`, [
-      adminId,
-    ]);
+  async findAdminSessionById(adminId) {
+    const result = await pool.query(
+      `SELECT id, status, refresh_token FROM users
+       WHERE id = $1 AND role = 'ADMIN'`,
+      [adminId],
+    );
+    return result.rows[0];
+  },
+
+  async logout(adminId, refreshToken) {
+    await pool.query(
+      `UPDATE users SET refresh_token = NULL
+       WHERE id = $1 AND refresh_token = $2 AND role = 'ADMIN'`,
+      [adminId, refreshToken],
+    );
   },
 };
 

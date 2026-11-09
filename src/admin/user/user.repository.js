@@ -715,7 +715,7 @@ const adminUserRepository = {
         amount: Number(transferResult.amount),
         fee: Number(transferResult.fee || 0),
         destination_user_id: String(destinationUserId),
-        authorization_reference: authorizationReference,
+        authorization_reference: authorizationReference || null,
         execution_mode: "SIMULATED_ADMIN_P2P",
       };
 
@@ -746,7 +746,7 @@ const adminUserRepository = {
         fee: Number(transferResult.fee || 0),
         description: transferResult.description,
         reason,
-        authorization_reference: authorizationReference,
+        authorization_reference: authorizationReference || null,
         source_user_id: String(sourceUserId),
         source_user_name: transferResult.sourceUserName,
         source_balance_before: Number(transferResult.sourceBalanceBefore),
@@ -975,7 +975,7 @@ const adminUserRepository = {
           balance_before: sourceBalanceBefore,
           balance_after: sourceBalanceAfter,
           reason,
-          authorization_reference: authorizationReference,
+          authorization_reference: authorizationReference || null,
           idempotency_key: idempotencyKey,
         },
       });
@@ -993,7 +993,7 @@ const adminUserRepository = {
         linked_bank_account_id: String(linkedBankAccountId),
         bank_name: bankRow.bank_name,
         bank_account: bankRow.account_number,
-        authorization_reference: authorizationReference,
+        authorization_reference: authorizationReference || null,
         execution_mode: executionMode,
       };
 
@@ -1025,7 +1025,7 @@ const adminUserRepository = {
         fee: feeNum,
         description: cleanDescription,
         reason,
-        authorization_reference: authorizationReference,
+        authorization_reference: authorizationReference || null,
         user_id: String(userId),
         user_name: userRow.full_name,
         user_phone: userRow.phone,

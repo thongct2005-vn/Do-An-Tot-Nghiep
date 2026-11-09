@@ -2,9 +2,11 @@ const express = require("express");
 const router = express.Router();
 const adminTransactionController = require("./transaction.controller");
 const authMiddleware = require("../../middlewares/auth.middleware");
+const requireCurrentAdminSession = require("../auth/adminSession.middleware");
 
 router.use(authMiddleware.verifyAccessToken);
 router.use(authMiddleware.requireRole("ADMIN"));
+router.use(requireCurrentAdminSession);
 
 router.get("/export", adminTransactionController.exportTransactions);
 router.get("/", adminTransactionController.getTransactions);

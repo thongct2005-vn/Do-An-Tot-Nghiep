@@ -56,10 +56,14 @@ const tokenUtil = {
       type: user.role,
     };
 
+    const refreshOptions = { expiresIn: "7d", algorithm: "HS256" };
+    if (user.role === "ADMIN") {
+      refreshOptions.jwtid = crypto.randomUUID();
+    }
     const refreshToken = jwt.sign(
       payload,
       requireSecret(REFRESH_SECRET, "REFRESH_SECRET"),
-      { expiresIn: "7d", algorithm: "HS256" },
+      refreshOptions,
     );
 
     const accessToken = jwt.sign(

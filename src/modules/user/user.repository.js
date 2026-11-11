@@ -87,7 +87,7 @@ const userRepository = {
        WHERE id = $1
          AND pin_hash IS NOT NULL
          AND (pin_locked_until IS NULL OR pin_locked_until <= NOW())
-       RETURNING pin_hash, pin_failed_attempts`,
+       RETURNING pin_hash, pin_failed_attempts, email, phone, totp_enabled`,
       [userId, maxAttempts, lockMinutes],
     );
     return result.rows[0];

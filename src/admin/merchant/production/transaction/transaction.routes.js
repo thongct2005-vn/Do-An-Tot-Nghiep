@@ -10,32 +10,33 @@ const {
   exportLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../../../middlewares/riskGuard");
+const { RISK_THRESHOLDS } = require("../../../../config/limits");
 
-const sendOtpRisk = riskGuard({ challenge: 30, block: 55 });
-const verifyOtpRisk = riskGuard({ challenge: 35, block: 60 });
-const moneyRisk = riskGuard({ challenge: 35, block: 65 });
+const sendOtpRisk = riskGuard(RISK_THRESHOLDS.SEND_OTP);
+const verifyOtpRisk = riskGuard(RISK_THRESHOLDS.OTP);
+const moneyRisk = riskGuard(RISK_THRESHOLDS.TRANSACTION);
 
 router.post(
   "/otp/send",
   authMiddleware.verifyAccessToken,
-  sendOtpLimiter,
   sendOtpRisk,
+  sendOtpLimiter,
   transactionController.sendTransactionOtp,
 );
 
 router.post(
   "/otp/resend",
   authMiddleware.verifyAccessToken,
-  sendOtpLimiter,
   sendOtpRisk,
+  sendOtpLimiter,
   transactionController.resendTransactionOtp,
 );
 
 router.post(
   "/otp/verify",
   authMiddleware.verifyAccessToken,
-  otpLimiter,
   verifyOtpRisk,
+  otpLimiter,
   transactionController.verifyTransactionOtp,
 );
 
@@ -48,8 +49,8 @@ router.get(
 router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.verifyTransactionOtpToken("TRANSFER"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
@@ -58,8 +59,8 @@ router.post(
 router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.verifyTransactionOtpToken("TOPUP"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
@@ -68,8 +69,8 @@ router.post(
 router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.verifyTransactionOtpToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.withdrawMoney,
@@ -78,8 +79,8 @@ router.post(
 router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.processQRPayment,
 );

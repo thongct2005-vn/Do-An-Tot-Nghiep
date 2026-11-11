@@ -8,14 +8,15 @@ const {
   exportLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
+const { RISK_THRESHOLDS } = require("../../config/limits");
 
-const moneyRisk = riskGuard({ challenge: 35, block: 65 });
+const moneyRisk = riskGuard(RISK_THRESHOLDS.TRANSACTION);
 
 router.post(
   "/transfer",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.requirePinToken("TRANSFER"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.transferMoney,
@@ -24,8 +25,8 @@ router.post(
 router.post(
   "/topup",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.requirePinToken("TOPUP"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.topupMoney,
@@ -34,8 +35,8 @@ router.post(
 router.post(
   "/withdraw",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.requirePinToken("WITHDRAW"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.withdrawMoney,
@@ -44,8 +45,8 @@ router.post(
 router.post(
   "/qr-payment",
   authMiddleware.verifyAccessToken,
-  transactionLimiter,
   moneyRisk,
+  transactionLimiter,
   authMiddleware.requirePinToken("QR_PAYMENT"),
   idempotencyMiddleware.checkIdempotencyKey,
   transactionController.processQRPayment,

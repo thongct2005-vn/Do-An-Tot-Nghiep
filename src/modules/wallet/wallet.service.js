@@ -1,11 +1,14 @@
 const userRepository = require("../user/user.repository");
 const walletRepository = require("./wallet.repository");
+const otpService = require("../otp/otp.service");
+const authService = require("../auth/auth.service");
 const bcrypt = require("bcrypt");
 const tokenUtil = require("../../utils/jwt");
 const { httpError } = require("../../utils/httpError");
 const { parseAmount } = require("../../utils/amount");
 const { computePinBinding } = require("../../utils/pinBinding");
 const { isValidPasswordOrPin } = require("../../utils/validators");
+const { maskEmail } = require("../../utils/mask");
 
 const MAX_PIN_ATTEMPTS = 5;
 const PIN_LOCK_MINUTES = 15;
@@ -37,7 +40,14 @@ const walletService = {
     };
   },
 
-  async checkPin({ userId, pin, idempotencyKey, action, params }) {
+  async checkPin({
+    userId,
+    pin,
+    idempotencyKey,
+    action,
+    params,
+    riskChallenge = false,
+  }) {
     if (!userId || !pin) {
       throw httpError(400, "Thiếu thông tin để kiểm tra mã pin");
     }
@@ -86,8 +96,38 @@ const walletService = {
       };
     }
 
-
     await userRepository.resetFailedPin(userId);
+
+    // Kích hoạt thử thách bảo mật bổ sung (Step-Up OTP Challenge) khi điểm rủi ro cao
+    // hoặc khi vừa nhập sai PIN từ 2 lần trở lên trước khi nhập đúng ở lần thứ 3-4.
+    if (riskChallenge || attempts >= 3) {
+      if (!claimed.totp_enabled && claimed.email) {
+        try {
+          await otpService.generateAndSaveOtp({ email: claimed.email });
+        } catch (e) {
+          if (e.statusCode !== 429) throw e;
+        }
+      }
+
+      const challengeToken = tokenUtil.generateOtpToken(
+        { id: userId, phone: claimed.phone, email: claimed.email },
+        "pin_challenge",
+        {
+          idempotency_key: idempotencyKey,
+          action,
+          binding,
+          totp_enabled: Boolean(claimed.totp_enabled),
+        },
+      );
+
+      return {
+        is_correct: true,
+        challenge_required: true,
+        challenge_token: challengeToken,
+        otp_method: claimed.totp_enabled ? "totp" : "email",
+        masked_email: maskEmail(claimed.email || ""),
+      };
+    }
 
     return {
       is_correct: true,
@@ -97,6 +137,48 @@ const walletService = {
         action,
         binding,
       }),
+    };
+  },
+
+  async verifyPinChallenge({ userId, otpUser, otp }) {
+    if (!userId || !otpUser) {
+      throw httpError(401, "Phiên xác thực bổ sung không hợp lệ");
+    }
+
+    if (otpUser.totp_enabled) {
+      await authService.verifyTotpCode({
+        userId,
+        code: otp,
+        requireEnabled: true,
+      });
+    } else {
+      await otpService.verifyOtp({ email: otpUser.email, otp });
+    }
+
+    return {
+      is_correct: true,
+      pin_token: tokenUtil.generatePinToken({
+        userId,
+        idempotencyKey: otpUser.idempotency_key,
+        action: otpUser.action,
+        binding: otpUser.binding,
+      }),
+    };
+  },
+
+  async resendPinChallenge({ userId, otpUser }) {
+    if (!userId || !otpUser) {
+      throw httpError(401, "Phiên xác thực bổ sung không hợp lệ");
+    }
+    if (otpUser.totp_enabled) {
+      throw httpError(
+        400,
+        "Tài khoản đang dùng Google Authenticator, không có mã gửi qua email",
+      );
+    }
+    await otpService.generateAndSaveOtp({ email: otpUser.email });
+    return {
+      masked_email: maskEmail(otpUser.email || ""),
     };
   },
 };

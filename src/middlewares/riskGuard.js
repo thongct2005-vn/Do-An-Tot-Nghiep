@@ -1,5 +1,6 @@
-const { risk } = require("../utils/risk");
+const { risk, blockAccountByPhone } = require("../utils/risk");
 const { maskPhone } = require("../utils/mask");
+const { RISK_THRESHOLDS } = require("../config/limits");
 
 // Kiểm tra chế độ "chỉ log, không chặn" từ biến môi trường (RISK_DRY_RUN=true hoặc 1)
 function isEnvDryRun() {
@@ -17,8 +18,12 @@ function isEnvDryRun() {
  * @param {number} [options.block=70]      Ngưỡng chặn thẳng với mã lỗi HTTP 429
  * @param {boolean} [options.dryRun]       Ghi đè chế độ chỉ log không chặn (mặc định đọc từ process.env.RISK_DRY_RUN)
  */
-function riskGuard({ challenge = 40, block = 70, dryRun } = {}) {
-  return (req, res, next) => {
+function riskGuard({
+  challenge = RISK_THRESHOLDS.DEFAULT.challenge,
+  block = RISK_THRESHOLDS.DEFAULT.block,
+  dryRun,
+} = {}) {
+  return async (req, res, next) => {
     const isDryRun = dryRun !== undefined ? Boolean(dryRun) : isEnvDryRun();
 
     const { score, reasons, metrics } = risk(req);
@@ -64,6 +69,12 @@ function riskGuard({ challenge = 40, block = 70, dryRun } = {}) {
     }
 
     if (shouldBlock && !isDryRun) {
+      req.risk.blocked = true;
+      // Chỉ khóa tài khoản trong DB (status = 'BLOCKED') khi đã đăng nhập (có req.user)
+      // để tránh kẻ xấu bên ngoài truyền SĐT người khác vào API công khai làm khóa oan.
+      if (req.user?.phone) {
+        await blockAccountByPhone(req.user.phone);
+      }
       const err = new Error(
         "Bạn thao tác quá nhiều lần hoặc có dấu hiệu bất thường, vui lòng thử lại sau",
       );

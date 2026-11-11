@@ -104,6 +104,23 @@ const authMiddleware = {
     }
   },
 
+  verifyPinChallengeToken(req, res, next) {
+    try {
+      const otpToken = req.headers["x-otp-token"];
+      if (!otpToken) {
+        throw httpError(401, "Thiếu thông tin xác thực bổ sung");
+      }
+      const payload = tokenUtil.verifyOtpToken(otpToken, "pin_challenge");
+      if (req.user && payload.user_id !== req.user.user_id) {
+        throw httpError(403, "Mã phiên xác thực bổ sung không hợp lệ");
+      }
+      req.otpUser = payload;
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
   verifyForgotKycToken(req, res, next) {
     try {
       const token = req.headers["x-forgot-token"];

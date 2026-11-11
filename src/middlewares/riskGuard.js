@@ -70,8 +70,10 @@ function riskGuard({
 
     if (shouldBlock && !isDryRun) {
       req.risk.blocked = true;
-      if (metrics?.phone) {
-        await blockAccountByPhone(metrics.phone);
+      // Chỉ khóa tài khoản trong DB (status = 'BLOCKED') khi đã đăng nhập (có req.user)
+      // để tránh kẻ xấu bên ngoài truyền SĐT người khác vào API công khai làm khóa oan.
+      if (req.user?.phone) {
+        await blockAccountByPhone(req.user.phone);
       }
       const err = new Error(
         "Bạn thao tác quá nhiều lần hoặc có dấu hiệu bất thường, vui lòng thử lại sau",

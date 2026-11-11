@@ -10,10 +10,6 @@ router.use(requireCurrentAdminSession);
 
 router.get("/", adminMerchantsController.getMerchants);
 router.get("/:id", adminMerchantsController.getMerchantDetail);
-<<<<<<< HEAD
-router.patch("/:id/profile", adminMerchantsController.updateMerchantProfile);
-=======
->>>>>>> 2d2169c19a628ee9d33a2352416e94593ce5e226
 router.patch("/:id/status", adminMerchantsController.updateMerchantStatus);
 
 module.exports = router;

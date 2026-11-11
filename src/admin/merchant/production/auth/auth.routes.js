@@ -10,24 +10,25 @@ const {
   sendOtpLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../../../middlewares/riskGuard");
+const { RISK_THRESHOLDS } = require("../../../../config/limits");
 
-const loginRisk = riskGuard({ challenge: 40, block: 70 });
-const registerRisk = riskGuard({ challenge: 35, block: 60 });
-const otpRisk = riskGuard({ challenge: 35, block: 60 });
+const loginRisk = riskGuard(RISK_THRESHOLDS.LOGIN);
+const registerRisk = riskGuard(RISK_THRESHOLDS.REGISTER);
+const otpRisk = riskGuard(RISK_THRESHOLDS.OTP);
 
-router.post("/login", loginLimiter, loginRisk, merchantAuthController.login);
+router.post("/login", loginRisk, loginLimiter, merchantAuthController.login);
 router.post(
   "/resend-login-otp",
   authMiddleware.verifyLoginOtpToken,
-  sendOtpLimiter,
   otpRisk,
+  sendOtpLimiter,
   merchantAuthController.resendLoginOtp,
 );
 router.post(
   "/verify-login-otp",
   authMiddleware.verifyLoginOtpToken,
-  otpLimiter,
   otpRisk,
+  otpLimiter,
   merchantAuthController.verifyLoginOtp,
 );
 router.post(
@@ -46,37 +47,37 @@ router.post(
   "/totp/setup",
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("MERCHANT"),
-  loginLimiter,
   loginRisk,
+  loginLimiter,
   merchantAuthController.setupTotp,
 );
 router.post(
   "/totp/enable",
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("MERCHANT"),
-  otpLimiter,
   otpRisk,
+  otpLimiter,
   merchantAuthController.enableTotp,
 );
 router.post(
   "/totp/disable",
   authMiddleware.verifyAccessToken,
   authMiddleware.requireRole("MERCHANT"),
-  otpLimiter,
   otpRisk,
+  otpLimiter,
   merchantAuthController.disableTotp,
 );
 router.post(
   "/register",
-  registerLimiter,
   registerRisk,
+  registerLimiter,
   merchantAuthController.register,
 );
 router.post(
   "/verify-register",
   authMiddleware.verifyRegisterOtpToken,
-  otpLimiter,
   otpRisk,
+  otpLimiter,
   merchantAuthController.verifyRegister,
 );
 router.post(

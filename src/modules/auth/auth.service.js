@@ -64,15 +64,19 @@ async function checkCredentials(phone, password) {
       lockMinutes: LOGIN_LOCK_MINUTES,
     });
     const attempts = Number(row?.failed_login_attempts ?? MAX_LOGIN_ATTEMPTS);
+    const remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
     const isLocked = attempts >= MAX_LOGIN_ATTEMPTS;
     const err = httpError(
       isLocked ? 403 : 400,
-      isLocked ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
+      isLocked
+        ? `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản bị tạm khóa ${LOGIN_LOCK_MINUTES} phút`
+        : `Mật khẩu không chính xác. Bạn còn ${remainingAttempts} lần thử`,
     );
-    err.remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
+    err.remainingAttempts = remainingAttempts;
     throw err;
   }
 
+  user.prior_failed_attempts = Number(user.failed_login_attempts || 0);
   await authRepository.resetFailedLogin(phone);
   return user;
 }
@@ -149,6 +153,8 @@ async function getOtpUser({ userId, phone }) {
 }
 
 const authService = {
+  verifyTotpCode,
+
   async isPhoneExist(phone) {
     if (!phone) {
       throw httpError(400, "Thiếu số điện thoại");
@@ -181,15 +187,24 @@ const authService = {
     };
   },
 
-  async login({ phone, password }) {
+  async login({ phone, password, riskChallenge = false }) {
     const user = await checkCredentials(phone, password);
+
+    const hasApprovedCccd = Boolean(
+      user.cccd_number && String(user.cccd_number).trim().length >= 4,
+    );
+    const requireCccdLast4 =
+      hasApprovedCccd &&
+      (Boolean(riskChallenge) || Number(user.prior_failed_attempts || 0) >= 2);
+    const otpExtra = requireCccdLast4 ? { require_cccd_last4: true } : {};
 
     // Đã bật Google Authenticator: không gửi email, người dùng nhập mã từ ứng dụng
     if (user.totp_enabled) {
       return {
-        otp_token: tokenUtil.generateOtpToken(user),
+        otp_token: tokenUtil.generateOtpToken(user, undefined, otpExtra),
         masked_email: maskEmail(user.email),
         otp_method: "totp",
+        require_cccd_last4: requireCccdLast4,
       };
     }
 
@@ -200,9 +215,10 @@ const authService = {
     }
 
     return {
-      otp_token: tokenUtil.generateOtpToken(user),
+      otp_token: tokenUtil.generateOtpToken(user, undefined, otpExtra),
       masked_email: maskEmail(user.email),
       otp_method: "email",
+      require_cccd_last4: requireCccdLast4,
     };
   },
 
@@ -223,8 +239,30 @@ const authService = {
     };
   },
 
-  async verifyLoginOtp({ userId, phone, otp }) {
+  async verifyLoginOtp({
+    userId,
+    phone,
+    otp,
+    cccdLast4,
+    requireCccdLast4 = false,
+  }) {
     const user = await getOtpUser({ userId, phone });
+
+    if (requireCccdLast4) {
+      const inputLast4 = String(cccdLast4 ?? "").trim();
+      if (!/^\d{4}$/.test(inputLast4)) {
+        throw httpError(
+          400,
+          "Vui lòng nhập đủ 4 số cuối CCCD để xác minh bảo mật",
+        );
+      }
+      const actualLast4 = String(user.cccd_number ?? "")
+        .trim()
+        .slice(-4);
+      if (!actualLast4 || inputLast4 !== actualLast4) {
+        throw httpError(400, "4 số cuối CCCD không chính xác");
+      }
+    }
 
     if (user.totp_enabled) {
       await verifyTotpCode({

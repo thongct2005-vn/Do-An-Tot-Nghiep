@@ -25,6 +25,8 @@ const createLimiter = ({
     standardHeaders: true,
     legacyHeaders: false,
     skipSuccessfulRequests,
+    requestWasSuccessful: (req, res) =>
+      res.statusCode < 400 || Boolean(req.risk?.blocked),
     ...(keyGenerator && { keyGenerator }),
     handler: (req, res, next) => {
       const err = new Error("Bạn thao tác quá nhiều lần, vui lòng thử lại sau");
@@ -36,24 +38,29 @@ const createLimiter = ({
 /* ============================================================
  * Hàm lấy khóa đếm (keyGenerator)
  * ============================================================ */
-// Chuẩn hóa SĐT (+84912... -> 0912...) để tránh lách bằng cách đổi đầu số
+// Chuẩn hóa SĐT (+84912... / 84912... -> 0912...) để tránh lách bằng cách đổi đầu số
 const normalizePhone = (phone) => {
-  if (!phone) return "";
-  return String(phone)
+  if (!phone || phone === "INVALID" || typeof phone === "object") return "";
+  const digits = String(phone)
     .trim()
     .replace(/^\+84/, "0")
     .replace(/\D/g, "")
     .slice(0, 15);
+  if (digits.length === 11 && digits.startsWith("84")) {
+    return `0${digits.slice(2)}`;
+  }
+  return digits;
 };
 
 // Trích xuất định danh tài khoản mục tiêu khi chưa đăng nhập (ưu tiên phone -> email)
 const extractTarget = (req) => {
   const phone = normalizePhone(req.body?.phone);
   if (phone) return `phone:${phone}`;
-  const email = String(req.body?.email ?? "")
-    .trim()
-    .toLowerCase()
-    .slice(0, 100);
+  const rawEmail = req.body?.email;
+  if (!rawEmail || rawEmail === "INVALID" || typeof rawEmail !== "string") {
+    return null;
+  }
+  const email = rawEmail.trim().toLowerCase().slice(0, 100);
   if (email) return `email:${email}`;
   return null;
 };

@@ -46,12 +46,15 @@ async function checkAdminCredentials(email, password) {
       lockMinutes: LOGIN_LOCK_MINUTES,
     });
     const attempts = Number(row?.failed_login_attempts ?? MAX_LOGIN_ATTEMPTS);
+    const remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
     const isLocked = attempts >= MAX_LOGIN_ATTEMPTS;
     const err = httpError(
       isLocked ? 403 : 400,
-      isLocked ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
+      isLocked
+        ? `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản bị tạm khóa ${LOGIN_LOCK_MINUTES} phút`
+        : `Mật khẩu không chính xác. Bạn còn ${remainingAttempts} lần thử`,
     );
-    err.remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
+    err.remainingAttempts = remainingAttempts;
     throw err;
   }
 

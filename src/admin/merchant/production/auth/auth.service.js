@@ -69,16 +69,21 @@ async function checkCredentials(phone, password) {
       lockMinutes: LOGIN_LOCK_MINUTES,
     });
     const attempts = Number(row?.failed_login_attempts ?? MAX_LOGIN_ATTEMPTS);
+    const remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
     const isLocked = attempts >= MAX_LOGIN_ATTEMPTS;
     const err = httpError(
       isLocked ? 403 : 400,
-      isLocked ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
+      isLocked
+        ? `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản bị tạm khóa ${LOGIN_LOCK_MINUTES} phút`
+        : `Mật khẩu không chính xác. Bạn còn ${remainingAttempts} lần thử`,
     );
-    err.remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
+    err.remainingAttempts = remainingAttempts;
     throw err;
   }
 
+  const priorFailedAttempts = Number(user.failed_login_attempts || 0);
   await merchantAuthRepository.resetFailedLogin(phone);
+  user.prior_failed_attempts = priorFailedAttempts;
   return user;
 }
 
@@ -162,15 +167,26 @@ const merchantAuthService = {
     await verifyTotpCode({ userId, code, requireEnabled: true });
   },
 
-  async login({ phone, password }) {
+  async login({ phone, password, riskChallenge = false }) {
     const user = await checkCredentials(phone, password);
+
+    const hasTaxCode = Boolean(
+      user.tax_code && String(user.tax_code).trim().length >= 4,
+    );
+    const requireTaxCodeLast4 =
+      Boolean(riskChallenge || (user.prior_failed_attempts >= 2)) && hasTaxCode;
+
+    const otpToken = tokenUtil.generateOtpToken(user, "login_otp", {
+      require_tax_code_last4: requireTaxCodeLast4,
+    });
 
     // Đã bật Google Authenticator: không gửi email, merchant nhập mã từ ứng dụng
     if (user.totp_enabled) {
       return {
-        otp_token: tokenUtil.generateOtpToken(user),
+        otp_token: otpToken,
         masked_email: maskEmail(user.email),
         otp_method: "totp",
+        require_tax_code_last4: requireTaxCodeLast4,
       };
     }
 
@@ -181,9 +197,10 @@ const merchantAuthService = {
     }
 
     return {
-      otp_token: tokenUtil.generateOtpToken(user),
+      otp_token: otpToken,
       masked_email: maskEmail(user.email),
       otp_method: "email",
+      require_tax_code_last4: requireTaxCodeLast4,
     };
   },
 
@@ -204,8 +221,31 @@ const merchantAuthService = {
     };
   },
 
-  async verifyLoginOtp({ userId, phone, otp }) {
+  async verifyLoginOtp({
+    userId,
+    phone,
+    otp,
+    taxCodeLast4 = null,
+    requireTaxCodeLast4 = false,
+  }) {
     const user = await getOtpMerchant({ userId, phone });
+
+    if (requireTaxCodeLast4) {
+      const expectedLast4 = user.tax_code
+        ? String(user.tax_code).trim().slice(-4)
+        : null;
+      if (expectedLast4) {
+        if (!taxCodeLast4 || !/^\d{4}$/.test(String(taxCodeLast4).trim())) {
+          throw httpError(
+            400,
+            "Vui lòng nhập kèm 4 số cuối Mã số thuế để xác minh bảo mật",
+          );
+        }
+        if (String(taxCodeLast4).trim() !== expectedLast4) {
+          throw httpError(400, "4 số cuối Mã số thuế không chính xác");
+        }
+      }
+    }
 
     if (user.totp_enabled) {
       await verifyTotpCode({

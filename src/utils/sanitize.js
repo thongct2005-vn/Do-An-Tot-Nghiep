@@ -96,7 +96,7 @@ function sanitizeSearch(value, { maxLength = 100 } = {}) {
   return escapeLike(cleaned);
 }
 
-/** Số điện thoại: chỉ giữ chữ số (cho phép nhập "0912 345 678", "0912.345.678") */
+/** Số điện thoại: chỉ giữ chữ số (cho phép nhập "0912 345 678", "+84912345678") */
 function sanitizePhone(value) {
   if (value === undefined || value === null) return value;
   if (typeof value === "string" && value.trim() === "") return "";
@@ -104,7 +104,12 @@ function sanitizePhone(value) {
   if (str === null) return "INVALID";
   // \D = mọi ký tự không phải chữ số; tối đa 15 chữ số (chuẩn E.164)
   const digits = str.replace(/\D/g, "").slice(0, 15);
-  return digits || "INVALID";
+  if (!digits) return "INVALID";
+  // Chuẩn hóa đầu số quốc tế Việt Nam (+84 / 84 + 9 chữ số -> 0 + 9 chữ số)
+  if (digits.length === 11 && digits.startsWith("84")) {
+    return `0${digits.slice(2)}`;
+  }
+  return digits;
 }
 
 /** Email: bỏ khoảng trắng, ký tự điều khiển và ký tự không thể có trong email */

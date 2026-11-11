@@ -1,6 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const userService = require("./user.service");
-const { recordFailure } = require("../../utils/risk");
+const { recordFailure, clearFailure } = require("../../utils/risk");
 
 const userController = {
   async findUserByPhone(req, res, next) {
@@ -126,6 +126,7 @@ const userController = {
         type,
         otp,
       });
+      clearFailure(phone);
       return successResponse(res, 200, "Xác thực OTP thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {

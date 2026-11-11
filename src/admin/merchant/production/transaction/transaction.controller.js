@@ -6,6 +6,7 @@ const { emitToUser } = require("../../../../utils/socket");
 const {
   sendPushNotification,
 } = require("../../../../utils/firebaseNotification");
+const { recordFailure, clearFailure } = require("../../../../utils/risk");
 const merchantTransactionController = {
   async transferMoney(req, res, next) {
     try {
@@ -297,9 +298,11 @@ const merchantTransactionController = {
   async sendTransactionOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.user;
+      const riskChallenge = Boolean(req.risk?.challenge);
       const result = await merchantTransactionService.sendTransactionOtp({
         userId,
         phone,
+        riskChallenge,
       });
       return successResponse(
         res,
@@ -315,9 +318,11 @@ const merchantTransactionController = {
   async resendTransactionOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.user;
+      const riskChallenge = Boolean(req.risk?.challenge);
       const result = await merchantTransactionService.resendTransactionOtp({
         userId,
         phone,
+        riskChallenge,
       });
       return successResponse(res, 200, "Đã gửi lại mã OTP", result);
     } catch (e) {
@@ -328,7 +333,15 @@ const merchantTransactionController = {
   async verifyTransactionOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.user;
-      const { otp, idempotency_key: idempotencyKey, action, params } = req.body;
+      const {
+        otp,
+        idempotency_key: idempotencyKey,
+        action,
+        params,
+        tax_code_last4: taxCodeLast4,
+        cccd_last4: cccdLast4,
+      } = req.body;
+      const riskChallenge = Boolean(req.risk?.challenge);
       const result = await merchantTransactionService.verifyTransactionOtp({
         userId,
         phone,
@@ -336,9 +349,15 @@ const merchantTransactionController = {
         idempotencyKey,
         action,
         params,
+        taxCodeLast4: taxCodeLast4 ?? cccdLast4,
+        riskChallenge,
       });
+      clearFailure(phone);
       return successResponse(res, 200, "Xác thực OTP thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
       next(e);
     }
   },

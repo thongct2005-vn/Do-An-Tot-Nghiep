@@ -1,5 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const adminMerchantsService = require("./merchants.service");
+const adminUserService = require("../user/user.service");
 
 const adminMerchantsController = {
   async getMerchants(req, res, next) {
@@ -49,6 +50,30 @@ const adminMerchantsController = {
         res,
         200,
         "Lấy thông tin chi tiết đối tác merchant thành công",
+        result
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async updateMerchantStatus(req, res, next) {
+    try {
+      const adminId = req.user?.user_id;
+      const { id: userId } = req.params;
+      const { status, reason } = req.body;
+      const result = await adminUserService.updateUserStatus({
+        adminId,
+        userId,
+        status,
+        reason,
+      });
+      return successResponse(
+        res,
+        200,
+        status === "BLOCKED"
+          ? "Đã khóa tài khoản đối tác merchant"
+          : "Đã mở khóa tài khoản đối tác merchant",
         result
       );
     } catch (e) {

@@ -1,7 +1,7 @@
 const { successResponse } = require("../../../../utils/apiResponse");
 const merchantAuthService = require("./auth.service");
 const tokenUtil = require("../../../../utils/jwt");
-const { recordFailure } = require("../../../../utils/risk");
+const { recordFailure, clearFailure } = require("../../../../utils/risk");
 
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -31,7 +31,13 @@ const merchantAuthController = {
   async login(req, res, next) {
     try {
       const { phone, password } = req.body;
-      const result = await merchantAuthService.login({ phone, password });
+      const riskChallenge = Boolean(req.risk?.challenge);
+      const result = await merchantAuthService.login({
+        phone,
+        password,
+        riskChallenge,
+      });
+      clearFailure(phone);
       return successResponse(
         res,
         200,
@@ -61,13 +67,21 @@ const merchantAuthController = {
 
   async verifyLoginOtp(req, res, next) {
     try {
-      const { otp } = req.body;
-      const { user_id: userId, phone } = req.otpUser;
+      const { otp, tax_code_last4: taxCodeLast4, cccd_last4: cccdLast4 } =
+        req.body;
+      const {
+        user_id: userId,
+        phone,
+        require_tax_code_last4: requireTaxCodeLast4,
+      } = req.otpUser;
       const result = await merchantAuthService.verifyLoginOtp({
         userId,
         phone,
         otp,
+        taxCodeLast4: taxCodeLast4 ?? cccdLast4,
+        requireTaxCodeLast4: Boolean(requireTaxCodeLast4 || req.risk?.challenge),
       });
+      clearFailure(phone);
       setRefreshCookie(res, result.token.refresh_token);
       return successResponse(res, 200, "Đăng nhập thành công", {
         ...result,
@@ -141,6 +155,7 @@ const merchantAuthController = {
         callbackUrl,
         storeName,
       });
+      clearFailure(phone);
       return successResponse(res, 200, "Đăng ký tài khoản thành công", {
         ...result,
         token: publicToken(result.token),
@@ -178,30 +193,42 @@ const merchantAuthController = {
         phone,
         password,
       });
+      clearFailure(phone);
       return successResponse(res, 200, "Tạo mã QR thành công", result);
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
       next(e);
     }
   },
 
   async enableTotp(req, res, next) {
     try {
-      const { user_id: userId } = req.user;
+      const { user_id: userId, phone } = req.user;
       const { code } = req.body;
       await merchantAuthService.enableTotp({ userId, code });
+      clearFailure(phone);
       return successResponse(res, 200, "Đã bật Google Authenticator");
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
       next(e);
     }
   },
 
   async disableTotp(req, res, next) {
     try {
-      const { user_id: userId } = req.user;
+      const { user_id: userId, phone } = req.user;
       const { code } = req.body;
       await merchantAuthService.disableTotp({ userId, code });
+      clearFailure(phone);
       return successResponse(res, 200, "Đã tắt Google Authenticator");
     } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
       next(e);
     }
   },

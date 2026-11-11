@@ -9,8 +9,9 @@ const merchantAuthRepository = {
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key,
-             u.totp_enabled
+             u.totp_enabled, k.id AS tax_code
       FROM users u
+      LEFT JOIN user_kyc k ON k.user_id = u.id AND k.status = 'APPROVED'
       WHERE u.phone = $1
       `,
       [phone],

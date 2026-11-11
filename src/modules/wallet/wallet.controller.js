@@ -1,6 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const walletService = require("./wallet.service");
-const { recordFailure } = require("../../utils/risk");
+const { recordFailure, clearFailure } = require("../../utils/risk");
 
 const walletController = {
   async getWalletByUserId(req, res, next) {
@@ -35,12 +35,53 @@ const walletController = {
         idempotencyKey,
         action,
         params,
+        riskChallenge: Boolean(req.risk?.challenge),
       });
+      if (result.is_correct === false) {
+        recordFailure(req.user?.phone);
+      } else if (!result.challenge_required) {
+        clearFailure(req.user?.phone);
+      }
       return successResponse(res, 200, "Kiểm tra mã PIN thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {
         recordFailure(req.user?.phone);
       }
+      next(e);
+    }
+  },
+  async verifyPinChallenge(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { otp } = req.body;
+      const result = await walletService.verifyPinChallenge({
+        userId,
+        otpUser: req.otpUser,
+        otp,
+      });
+      clearFailure(req.user?.phone);
+      return successResponse(
+        res,
+        200,
+        "Xác thực bảo mật bổ sung thành công",
+        result,
+      );
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
+      next(e);
+    }
+  },
+  async resendPinChallenge(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await walletService.resendPinChallenge({
+        userId,
+        otpUser: req.otpUser,
+      });
+      return successResponse(res, 200, "Đã gửi lại mã OTP xác thực", result);
+    } catch (e) {
       next(e);
     }
   },

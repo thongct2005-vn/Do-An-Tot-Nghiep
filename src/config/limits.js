@@ -30,9 +30,18 @@ module.exports = {
   HISTORY_PAGE_LIMIT: 20,
   CONTACT_CHECK_MAX_PHONES: 500,
 
-  // Xuất Excel lịch sử giao dịch
   EXPORT: {
-    MAX_DAYS: 31, // tối đa 31 ngày mỗi lần xuất
-    MAX_ROWS: 10_000, // tối đa 10.000 dòng mỗi file
+    MAX_DAYS: 31,
+    MAX_ROWS: 10_000,
+  },
+
+  RISK_THRESHOLDS: {
+    DEFAULT: { challenge: 40, block: 70 },
+    LOGIN: { challenge: 40, block: 70 },
+    REGISTER: { challenge: 35, block: 60 },
+    SEND_OTP: { challenge: 30, block: 55 },
+    OTP: { challenge: 35, block: 60 },
+    FORGOT: { challenge: 35, block: 60 },
+    TRANSACTION: { challenge: 35, block: 65 },
   },
 };

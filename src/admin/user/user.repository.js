@@ -104,7 +104,7 @@ const adminUserRepository = {
         u.failed_login_attempts,
         u.locked_until
       FROM users u
-      WHERE u.id = $1 AND u.role = 'USER'
+      WHERE u.id = $1 AND u.role IN ('USER', 'MERCHANT')
       `,
       [userId]
     );
@@ -349,12 +349,19 @@ const adminUserRepository = {
       if (status === "BLOCKED") {
         updateFields.push("refresh_token = NULL");
         updateFields.push("fcm_token = NULL");
+      } else if (status === "ACTIVE") {
+        updateFields.push("failed_login_attempts = 0");
+        updateFields.push("locked_until = NULL");
+        updateFields.push("pin_failed_attempts = 0");
+        updateFields.push("pin_locked_until = NULL");
+        updateFields.push("totp_failed_attempts = 0");
+        updateFields.push("totp_locked_until = NULL");
       }
 
       const updateQuery = `
         UPDATE users
         SET ${updateFields.join(", ")}
-        WHERE id = $2 AND role = 'USER'
+        WHERE id = $2 AND role IN ('USER', 'MERCHANT')
         RETURNING id, full_name, email, phone, status
       `;
       const userRes = await client.query(updateQuery, updateParams);

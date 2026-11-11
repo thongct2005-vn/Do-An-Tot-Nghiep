@@ -1,6 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const authService = require("./auth.service");
-const { recordFailure } = require("../../utils/risk");
+const { recordFailure, clearFailure } = require("../../utils/risk");
 
 const authController = {
   async isPhoneExist(req, res, next) {
@@ -31,7 +31,12 @@ const authController = {
   async login(req, res, next) {
     try {
       const { phone, password } = req.body;
-      const result = await authService.login({ phone, password });
+      const result = await authService.login({
+        phone,
+        password,
+        riskChallenge: Boolean(req.risk?.challenge),
+      });
+      clearFailure(phone);
       return successResponse(
         res,
         200,
@@ -58,9 +63,20 @@ const authController = {
 
   async verifyLoginOtp(req, res, next) {
     try {
-      const { otp } = req.body;
-      const { user_id: userId, phone } = req.otpUser;
-      const result = await authService.verifyLoginOtp({ userId, phone, otp });
+      const { otp, cccd_last4: cccdLast4 } = req.body;
+      const {
+        user_id: userId,
+        phone,
+        require_cccd_last4: requireCccdLast4,
+      } = req.otpUser;
+      const result = await authService.verifyLoginOtp({
+        userId,
+        phone,
+        otp,
+        cccdLast4,
+        requireCccdLast4: Boolean(requireCccdLast4),
+      });
+      clearFailure(phone);
       return successResponse(res, 200, "Đăng nhập thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {
@@ -137,6 +153,7 @@ const authController = {
         otp,
         password,
       });
+      clearFailure(phone);
       return successResponse(res, 200, "Đăng ký tài khoản thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {
@@ -151,6 +168,7 @@ const authController = {
     try {
       const { phone, password } = req.body;
       const result = await authService.setupTotp({ phone, password });
+      clearFailure(phone);
       return successResponse(res, 200, "Tạo mã QR thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {
@@ -164,6 +182,7 @@ const authController = {
     try {
       const { phone, password } = req.body;
       const result = await authService.recoverTotp({ phone, password });
+      clearFailure(phone);
       return successResponse(res, 200, "Lấy lại mã QR thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {

@@ -1,6 +1,8 @@
 const { ipKeyGenerator } = require("express-rate-limit");
 const { sanitizePhone } = require("./sanitize");
 const { isValidPhone } = require("./validators");
+const pool = require("../config/database");
+const { emitToUser } = require("./socket");
 
 /* ============================================================================
  * BẢNG CÔNG THỨC TÍNH ĐIỂM RỦI RO (RISK SCORING) & ĐIỀU KIỆN KHÓA / CHẶN
@@ -21,10 +23,10 @@ const { isValidPhone } = require("./validators");
  *    |                                          | >= 6 số khác nhau       | +40 điểm      |
  *    |------------------------------------------|-------------------------|---------------|
  *    | (3) 1 SĐT bị nhiều nguồn/IP thử (trong 10p)| >= 3 nguồn khác nhau  | +20 điểm      |
- *    |                                          | >= 5 nguồn khác nhau    | +35 điểm      |
+ *    |                                          | >= 5 nguồn khác nhau    | +30 điểm      |
  *    |------------------------------------------|-------------------------|---------------|
  *    | (4) Số lần login/OTP sai của SĐT (15p)   | >= 3 lần                | +20 điểm      |
- *    |                                          | >= 5 lần                | +35 điểm      |
+ *    |                                          | >= 5 lần                | +28 điểm      |
  *    |------------------------------------------|-------------------------|---------------|
  *    | (5) Dữ liệu sai hình dạng                | SĐT sai định dạng VN    | +15 điểm      |
  *    |                                          | Body/Phone sai kiểu dữ  | +30 điểm      |
@@ -72,10 +74,12 @@ const RULES = {
   IP_MULTI_PHONE: { mid: 3, high: 6, midScore: 20, highScore: 40 },
 
   // 3. Một SĐT bị nhiều IP / thiết bị cùng thử trong 10 phút
-  PHONE_MULTI_SOURCE: { mid: 3, high: 5, midScore: 20, highScore: 35 },
+  PHONE_MULTI_SOURCE: { mid: 3, high: 5, midScore: 20, highScore: 30 },
 
   // 4. Số lần đăng nhập / OTP thất bại gần đây của SĐT đó trong 15 phút
-  PHONE_FAILURES: { mid: 3, high: 5, midScore: 20, highScore: 35 },
+  // Tổng (3) + (4) tối đa = 30 + 28 = 58 (< 60), đảm bảo chủ acc thật trên App chính chủ (botScore = 0, IP sạch)
+  // không bị khóa oan khi có botnet ở IP khác cố tình bắn sai vào SĐT của họ.
+  PHONE_FAILURES: { mid: 3, high: 5, midScore: 20, highScore: 28 },
 
   // 5. Dữ liệu sai hình dạng (SĐT sai chuẩn VN / body sai kiểu dữ liệu)
   MALFORMED: { lightScore: 15, heavyScore: 30 },
@@ -171,6 +175,11 @@ function createMemoryStore({ cleanupIntervalMs = MINUTE } = {}) {
     clear() {
       counters.clear();
       sets.clear();
+    },
+
+    del(key) {
+      counters.delete(key);
+      sets.delete(key);
     },
   };
 }
@@ -299,6 +308,54 @@ function recordFailure(phone) {
   return store.incr(`phone:fail:${normalized}`, WINDOWS.PHONE_FAILURES_MS);
 }
 
+/**
+ * Xóa bộ đếm thất bại và nguồn thử của SĐT sau khi xác thực thành công hoặc được Admin mở khóa.
+ */
+function clearFailure(phone) {
+  const normalized = normalizeVnPhone(phone);
+  if (!normalized) return;
+  store.del(`phone:fail:${normalized}`);
+  store.del(`phone:sources:${normalized}`);
+}
+
+/**
+ * Khóa tài khoản trong bảng users (status = 'BLOCKED') khi SĐT bị chặn bởi Risk / RateLimit.
+ * Giúp Admin nhìn thấy trạng thái BLOCKED trên trang quản trị và có thể mở khóa lại.
+ */
+async function blockAccountByPhone(phone) {
+  const normalized = normalizeVnPhone(phone);
+  if (!normalized || !isValidPhone(normalized)) return null;
+  try {
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET status = 'BLOCKED',
+          refresh_token = NULL,
+          fcm_token = NULL,
+          updated_at = NOW()
+      WHERE phone = $1
+        AND role IN ('USER', 'MERCHANT')
+        AND status = 'ACTIVE'
+      RETURNING id, phone, role, status
+      `,
+      [normalized],
+    );
+    const blockedUser = result.rows[0] || null;
+    if (blockedUser?.id) {
+      try {
+        emitToUser(blockedUser.id, "force_logout", {
+          reason:
+            "Tài khoản của bạn đã bị khóa do phát hiện hành vi bất thường",
+        });
+      } catch (_) {}
+    }
+    return blockedUser;
+  } catch (err) {
+    console.error("[RISK] Lỗi khi cập nhật status BLOCKED theo phone:", err.message);
+    return null;
+  }
+}
+
 /* ============================================================================
  * Các hàm chấm điểm từng nhóm tín hiệu tĩnh (5, 6, 7)
  * ============================================================================ */
@@ -328,7 +385,11 @@ function evaluatePayloadShape(req, reasons) {
     ) {
       score += RULES.MALFORMED.heavyScore;
       reasons.push("malformed_phone_wrong_type");
-    } else {
+    } else if (
+      rawPhone !== null &&
+      rawPhone !== undefined &&
+      String(rawPhone).trim() !== ""
+    ) {
       const normalized = normalizeVnPhone(rawPhone);
       if (!normalized || !isValidPhone(normalized)) {
         score += RULES.MALFORMED.lightScore;
@@ -458,6 +519,8 @@ module.exports = {
   risk,
   record,
   recordFailure,
+  clearFailure,
+  blockAccountByPhone,
   resetRiskStore,
   RULES,
 };

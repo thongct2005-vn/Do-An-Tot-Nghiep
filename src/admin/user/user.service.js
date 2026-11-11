@@ -5,6 +5,7 @@ const { httpError } = require("../../utils/httpError");
 const { emitToUser } = require("../../utils/socket");
 const { isValidPhone, isValidEmail } = require("../../utils/validators");
 const { maskPhone } = require("../../utils/mask");
+const { clearFailure } = require("../../utils/risk");
 
 const MAX_ADMIN_AUTH_ATTEMPTS = 5;
 const ADMIN_LOCK_MINUTES = 30;
@@ -160,7 +161,13 @@ const adminUserService = {
       throw httpError(404, "Không tìm thấy người dùng");
     }
 
-    if (existingUser.status === status) {
+    const isTempLocked =
+      existingUser.locked_until &&
+      new Date(existingUser.locked_until) > new Date();
+    if (
+      existingUser.status === status &&
+      !(status === "ACTIVE" && isTempLocked)
+    ) {
       throw httpError(400, `Người dùng hiện đã ở trạng thái ${status}`);
     }
 
@@ -184,6 +191,8 @@ const adminUserService = {
       } catch (e) {
         console.error("Emit force_logout error:", e.message);
       }
+    } else if (status === "ACTIVE" && updatedUser.phone) {
+      clearFailure(updatedUser.phone);
     }
 
     return {

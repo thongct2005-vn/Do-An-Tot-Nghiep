@@ -7,12 +7,14 @@ function createDashboardRoutes(dashboardController) {
     "/info",
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),
+    authMiddleware.requireActiveMerchant,
     dashboardController.getMerchantInfoById,
   );
   router.patch(
     "/callback",
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),
+    authMiddleware.requireActiveMerchant,
     dashboardController.updateCallBackUrl,
   );
 
@@ -20,6 +22,7 @@ function createDashboardRoutes(dashboardController) {
     "/reset-apikey",
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),
+    authMiddleware.requireActiveMerchant,
     resetApiKey,
     dashboardController.resetApiKey,
   );
@@ -28,6 +31,7 @@ function createDashboardRoutes(dashboardController) {
     "/reset-secretkey",
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),
+    authMiddleware.requireActiveMerchant,
     resetSecretKey,
     dashboardController.resetSecretKey,
   );

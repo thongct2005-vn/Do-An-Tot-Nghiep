@@ -4,4 +4,14 @@ node_modules/
 firebase-service-account.json
 app_test_apk/
 private/
-tests/
+tests/*
+!tests/admin_merchants_status.test.js
+!tests/admin_merchants_query.test.js
+!tests/admin_merchants_integration.test.js
+!tests/admin_merchants_profile.test.js
+!tests/email_claim_integration.test.js
+!tests/merchant_test_database.js
+!tests/merchant_test_schema.sql
+!tests/admin_merchant_status_migration.test.js
+!tests/admin_merchant_block_unlock.test.js
+!tests/merchant_blocked_access.test.js

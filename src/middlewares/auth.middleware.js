@@ -259,6 +259,21 @@ const authMiddleware = {
     }
   },
 
+  async requireActiveMerchant(req, res, next) {
+    try {
+      if (req.user?.type !== "MERCHANT" || !req.user.user_id) {
+        throw httpError(403, "Bạn không có quyền truy cập chức năng này");
+      }
+      const merchant = await dashboardRepository.getMerchantAccountStatus(req.user.user_id);
+      if (!merchant || merchant.role !== "MERCHANT" || merchant.status !== "ACTIVE") {
+        throw httpError(403, "Tài khoản merchant đang bị khoá hoặc không khả dụng");
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  },
+
   requireRole(role) {
     return (req, res, next) => {
       if (!req.user || req.user.type !== role) {

@@ -200,11 +200,11 @@ async function validateUrlForSave(
  * Đặt ALLOW_PRIVATE_CALLBACKS=true (máy dev) thì chỉ kiểm tra cú pháp.
  * Trả về URL đã trim để lưu; lỗi ném httpError 400 (hoặc 503 khi DNS tạm thời lỗi).
  */
-async function validateCallbackUrlForSave(raw) {
+async function validateCallbackUrlForSave(raw, options = {}) {
   return validateUrlForSave(raw, {
     label: "Callback URL",
-    maxLength: 2048,
-    allowPrivate: allowPrivate(),
+    maxLength: options.maxLength ?? 2048,
+    allowPrivate: options.allowPrivate ?? allowPrivate(),
   });
 }
 

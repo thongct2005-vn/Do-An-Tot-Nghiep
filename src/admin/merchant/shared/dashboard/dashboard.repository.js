@@ -5,6 +5,11 @@ const {
 } = require("../../../../utils/hashSecretKey");
 
 const dashboardRepository = {
+  async getMerchantAccountStatus(userId) {
+    const result = await pool.query("SELECT id, role, status FROM users WHERE id=$1", [userId]);
+    return result.rows[0] ?? null;
+  },
+
   async getMerchantInfoById(userId) {
     const result = await pool.query(
       `

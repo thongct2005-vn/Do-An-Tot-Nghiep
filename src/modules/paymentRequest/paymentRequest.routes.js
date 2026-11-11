@@ -17,6 +17,9 @@ router.get(
 router.post(
   "/qr/dynamic",
   authMiddleware.verifyAccessToken,
+  (req, res, next) => req.user.type === "MERCHANT"
+    ? authMiddleware.requireActiveMerchant(req, res, next)
+    : next(),
   paymentRequestController.createDynamicQRToken,
 );
 

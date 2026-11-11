@@ -1,4 +1,5 @@
 const pool = require("../../../../config/database");
+const { claimEmail } = require("../../../../utils/emailClaim");
 const tokenUtil = require("../../../../utils/jwt");
 const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
 
@@ -107,7 +108,8 @@ const merchantAuthRepository = {
     const client = await pool.connect();
 
     try {
-      await client.query("BEGIN");
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      email = await claimEmail(client, email);
 
       await client.query(
         `

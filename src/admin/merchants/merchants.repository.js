@@ -1,4 +1,8 @@
 const pool = require("../../config/database");
+const crypto = require("node:crypto");
+const { httpError } = require("../../utils/httpError");
+const { claimEmail } = require("../../utils/emailClaim");
+const { PROFILE_FIELDS, comparableProfileValue } = require("./merchants.profile");
 
 const KYC_LATERAL_JOIN = `
   LEFT JOIN LATERAL (
@@ -27,46 +31,157 @@ const KYC_LATERAL_JOIN = `
 `;
 
 const APPROVAL_STATUS_EXPR = `COALESCE(k.approval_status, 'PENDING')`;
+const CONFIGURED_EXPR = `(u.api_key IS NOT NULL AND u.secret_key IS NOT NULL
+  AND u.call_back_url IS NOT NULL AND TRIM(u.call_back_url) <> '')`;
+const LINKED_EXPR = `(u.status = 'ACTIVE' AND ${CONFIGURED_EXPR})`;
+const UNCONFIGURED_EXPR = `(u.status = 'ACTIVE' AND NOT ${CONFIGURED_EXPR})`;
+const SUSPENDED_EXPR = `u.status IN ('SUSPENDED', 'BLOCKED')`;
+const PENDING_EXPR = `${APPROVAL_STATUS_EXPR} = 'PENDING'`;
 
 const OPERATIONAL_STATUS_EXPR = `
   CASE
-    WHEN COALESCE(k.approval_status, 'PENDING') = 'PENDING' THEN 'PENDING_ACTIVATION'
-    WHEN COALESCE(k.approval_status, 'PENDING') = 'REJECTED' THEN 'DISABLED'
     WHEN u.status IN ('SUSPENDED', 'BLOCKED') THEN 'SUSPENDED'
-    ELSE 'ACTIVE'
+    WHEN u.status = 'ACTIVE' THEN 'ACTIVE'
+    ELSE 'UNKNOWN'
   END
 `;
 
 const API_STATUS_EXPR = `
   CASE
     WHEN u.status IN ('SUSPENDED', 'BLOCKED') THEN 'LOCKED'
-    WHEN COALESCE(k.approval_status, 'PENDING') <> 'APPROVED' THEN 'NOT_CONNECTED'
+    WHEN u.status IS DISTINCT FROM 'ACTIVE' THEN 'NOT_CONNECTED'
     WHEN u.api_key IS NULL OR u.secret_key IS NULL THEN 'PENDING_KEY'
+    WHEN NOT ${CONFIGURED_EXPR} THEN 'NOT_CONNECTED'
     ELSE 'LINKED'
   END
 `;
 
 const adminMerchantsRepository = {
-  async getMerchantStats() {
-    const result = await pool.query(`
+  async updateMerchantStatus({ merchantId, adminId, status, expectedStatus, reason }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      const locked = await client.query(
+        "SELECT id, status FROM users WHERE id=$1 AND role='MERCHANT' FOR UPDATE",
+        [merchantId],
+      );
+      const current = locked.rows[0];
+      if (!current) throw httpError(404, "Không tìm thấy đối tác merchant");
+      if (current.status !== expectedStatus) {
+        throw httpError(409, "Trạng thái merchant đã thay đổi, vui lòng tải lại thông tin");
+      }
+      if (current.status === status) {
+        throw httpError(409, "Tài khoản merchant hiện đã ở trạng thái này");
+      }
+      const updated = await client.query(
+        `UPDATE users SET status=$2::varchar, updated_at=NOW(),
+          refresh_token=CASE WHEN $2::varchar='BLOCKED' THEN NULL ELSE refresh_token END
+         WHERE id=$1 AND role='MERCHANT' RETURNING id, status, updated_at`,
+        [merchantId, status],
+      );
+      const action = status === "BLOCKED" ? "MERCHANT_BLOCKED" : "MERCHANT_UNBLOCKED";
+      const audit = await client.query(
+        `INSERT INTO admin_user_change_history
+          (admin_id, user_id, action, reason, old_values, new_values, created_at)
+         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,NOW())
+         RETURNING id, action, reason, created_at`,
+        [adminId, merchantId, action, reason,
+          JSON.stringify({ status: current.status }), JSON.stringify({ status })],
+      );
+      await client.query("COMMIT");
+      return { merchant: updated.rows[0], audit: audit.rows[0] };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async updateMerchantProfile({ merchantId, adminId, values, reason }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      // Check the target before exposing identity conflicts; take the email lock
+      // before the row lock, consistently with all other application writers.
+      const target = await client.query("SELECT id FROM users WHERE id=$1 AND role='MERCHANT'", [merchantId]);
+      if (!target.rowCount) throw httpError(404, "Không tìm thấy đối tác merchant");
+      if (values.email !== undefined) await claimEmail(client, values.email, merchantId);
+      const locked = await client.query(`SELECT id, full_name, phone, email, call_back_url
+        FROM users WHERE id=$1 AND role='MERCHANT' FOR UPDATE`, [merchantId]);
+      const current = locked.rows[0];
+      if (!current) throw httpError(404, "Không tìm thấy đối tác merchant");
+      const oldValues = {}, newValues = {};
+      for (const field of PROFILE_FIELDS) {
+        if (Object.hasOwn(values, field) &&
+            comparableProfileValue(field, current[field]) !== values[field]) {
+          oldValues[field] = current[field] ?? null;
+          newValues[field] = values[field];
+        }
+      }
+      if (!Object.keys(newValues).length) throw httpError(400, "Không có thông tin nào thay đổi so với hiện tại");
+      const revokeSession = Object.hasOwn(newValues, "phone") || Object.hasOwn(newValues, "email");
+      const params = Object.values(newValues);
+      const assignments = Object.keys(newValues).map((field, i) => `${field}=$${i + 1}`);
+      if (Object.hasOwn(newValues, "phone")) {
+        params.push(crypto.createHash("sha256").update(newValues.phone).digest("hex"));
+        assignments.push(`phone_hash=$${params.length}`);
+      }
+      if (revokeSession) assignments.push("refresh_token=NULL", "fcm_token=NULL");
+      assignments.push("updated_at=NOW()");
+      params.push(merchantId);
+      const updated = await client.query(`UPDATE users SET ${assignments.join(", ")}
+        WHERE id=$${params.length} AND role='MERCHANT'
+        RETURNING id, full_name, phone, email, call_back_url, updated_at`, params);
+      const audit = await client.query(`INSERT INTO admin_user_change_history
+        (admin_id, user_id, action, reason, old_values, new_values, created_at)
+        VALUES($1,$2,'USER_PROFILE_UPDATED',$3,$4::jsonb,$5::jsonb,NOW())
+        RETURNING id, action, reason, created_at`,
+      [adminId, merchantId, reason, JSON.stringify(oldValues), JSON.stringify(newValues)]);
+      await client.query("COMMIT");
+      return { merchant: updated.rows[0], audit: audit.rows[0], revokeSession };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error.code === "23505" && error.table === "users" && /phone|email/.test(error.constraint || "")) {
+        throw httpError(409, "Số điện thoại hoặc email đã được đăng ký bởi tài khoản khác");
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getMerchantListSnapshot(options) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const stats = await this.getMerchantStats(client);
+      const list = await this.getMerchants(options, client);
+      await client.query('COMMIT');
+      return { stats, ...list };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getMerchantStats(db = pool) {
+    const result = await db.query(`
       SELECT
         COUNT(*)::INT AS total_merchants,
         COUNT(*) FILTER (
-          WHERE ${APPROVAL_STATUS_EXPR} = 'APPROVED'
-            AND u.status = 'ACTIVE'
-            AND u.api_key IS NOT NULL
-            AND u.secret_key IS NOT NULL
+          WHERE ${LINKED_EXPR}
         )::INT AS linked_merchants,
         COUNT(*) FILTER (
-          WHERE ${APPROVAL_STATUS_EXPR} = 'PENDING'
+          WHERE ${PENDING_EXPR}
         )::INT AS pending_merchants,
         COUNT(*) FILTER (
-          WHERE ${APPROVAL_STATUS_EXPR} = 'APPROVED'
-            AND u.status = 'ACTIVE'
-            AND (u.api_key IS NULL OR u.secret_key IS NULL OR u.call_back_url IS NULL OR TRIM(u.call_back_url) = '')
+          WHERE ${UNCONFIGURED_EXPR}
         )::INT AS unconfigured_merchants,
         COUNT(*) FILTER (
-          WHERE u.status IN ('SUSPENDED', 'BLOCKED')
+          WHERE ${SUSPENDED_EXPR}
         )::INT AS suspended_merchants
       FROM users u
       ${KYC_LATERAL_JOIN}
@@ -93,23 +208,23 @@ const adminMerchantsRepository = {
     endDate,
     limit = 10,
     offset = 0,
-  }) {
+  }, db = pool) {
     const conditions = ["u.role = 'MERCHANT'"];
     const params = [];
 
     if (tab && tab !== "ALL") {
       if (tab === "LINKED") {
         conditions.push(
-          `${APPROVAL_STATUS_EXPR} = 'APPROVED' AND u.status = 'ACTIVE' AND u.api_key IS NOT NULL AND u.secret_key IS NOT NULL`
+          LINKED_EXPR
         );
       } else if (tab === "PENDING") {
-        conditions.push(`${APPROVAL_STATUS_EXPR} = 'PENDING'`);
+        conditions.push(PENDING_EXPR);
       } else if (tab === "UNCONFIGURED") {
         conditions.push(
-          `${APPROVAL_STATUS_EXPR} = 'APPROVED' AND u.status = 'ACTIVE' AND (u.api_key IS NULL OR u.secret_key IS NULL OR u.call_back_url IS NULL OR TRIM(u.call_back_url) = '')`
+          UNCONFIGURED_EXPR
         );
       } else if (tab === "SUSPENDED") {
-        conditions.push(`u.status IN ('SUSPENDED', 'BLOCKED')`);
+        conditions.push(SUSPENDED_EXPR);
       }
     }
 
@@ -123,7 +238,7 @@ const adminMerchantsRepository = {
         conditions.push(`u.status IN ('SUSPENDED', 'BLOCKED')`);
       } else if (status === "ACTIVE") {
         conditions.push(
-          `u.status = 'ACTIVE' AND ${APPROVAL_STATUS_EXPR} = 'APPROVED'`
+          `u.status = 'ACTIVE'`
         );
       } else if (status === "PENDING_ACTIVATION") {
         conditions.push(`${APPROVAL_STATUS_EXPR} = 'PENDING'`);
@@ -147,7 +262,7 @@ const adminMerchantsRepository = {
 
     if (endDate) {
       params.push(endDate);
-      conditions.push(`u.created_at <= $${params.length}`);
+      conditions.push(`u.created_at < $${params.length}`);
     }
 
     if (search && search.trim() !== "") {
@@ -168,7 +283,7 @@ const adminMerchantsRepository = {
 
     const whereClause = conditions.join(" AND ");
 
-    const countResult = await pool.query(
+    const countResult = await db.query(
       `
       SELECT COUNT(*)::INT AS total
       FROM users u
@@ -183,7 +298,7 @@ const adminMerchantsRepository = {
     const limitIdx = queryParams.length - 1;
     const offsetIdx = queryParams.length;
 
-    const itemsResult = await pool.query(
+    const itemsResult = await db.query(
       `
       SELECT
         u.id,
@@ -214,7 +329,7 @@ const adminMerchantsRepository = {
         LIMIT 1
       ) lb ON true
       WHERE ${whereClause}
-      ORDER BY u.created_at DESC
+      ORDER BY u.created_at DESC, u.id DESC
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       queryParams
@@ -306,6 +421,7 @@ const adminMerchantsRepository = {
           FROM admin_user_change_history h
           JOIN users a ON h.admin_id = a.id
           WHERE h.user_id = $1
+            AND h.action <> 'USER_PROFILE_UPDATED'
           ORDER BY h.created_at DESC
           LIMIT 1
           `,

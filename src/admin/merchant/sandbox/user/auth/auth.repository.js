@@ -1,4 +1,5 @@
 const pool = require("../../../../../config/database");
+const { claimEmail } = require("../../../../../utils/emailClaim");
 
 const authRepository = {
   async findUserByPhone(phone) {
@@ -78,7 +79,8 @@ const authRepository = {
   async createUserWithKyc({ userId, phone, phoneHash, email, passwordHash, status = "APPROVED" }) {
     const client = await pool.connect();
     try {
-      await client.query("BEGIN");
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      email = await claimEmail(client, email);
 
       await client.query(
         `

@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const { claimEmail } = require("../../utils/emailClaim");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
 const { httpError } = require("../../utils/httpError");
 const { maskPhone } = require("../../utils/mask");
@@ -292,42 +293,52 @@ const adminUserRepository = {
     phoneHash,
     revokeSession = false,
   }) {
-    const updateFields = [];
-    const updateValues = [];
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      email = await claimEmail(client, email, userId);
+      const updateFields = [];
+      const updateValues = [];
 
-    if (fullName !== undefined) {
-      updateValues.push(fullName);
-      updateFields.push(`full_name = $${updateValues.length}`);
-    }
-
-    if (phone !== undefined) {
-      updateValues.push(phone);
-      updateFields.push(`phone = $${updateValues.length}`);
-      if (phoneHash) {
-        updateValues.push(phoneHash);
-        updateFields.push(`phone_hash = $${updateValues.length}`);
+      if (fullName !== undefined) {
+        updateValues.push(fullName);
+        updateFields.push(`full_name = $${updateValues.length}`);
       }
+
+      if (phone !== undefined) {
+        updateValues.push(phone);
+        updateFields.push(`phone = $${updateValues.length}`);
+        if (phoneHash) {
+          updateValues.push(phoneHash);
+          updateFields.push(`phone_hash = $${updateValues.length}`);
+        }
+      }
+
+      if (email !== undefined) {
+        updateValues.push(email);
+        updateFields.push(`email = $${updateValues.length}`);
+      }
+
+      if (revokeSession) {
+        updateFields.push(`refresh_token = NULL`);
+        updateFields.push(`fcm_token = NULL`);
+      }
+
+      updateFields.push(`updated_at = NOW()`);
+      updateValues.push(userId);
+      const userIdIdx = updateValues.length;
+
+      await client.query(
+        `UPDATE users SET ${updateFields.join(", ")} WHERE id = $${userIdIdx} AND role = 'USER'`,
+        updateValues
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-
-    if (email !== undefined) {
-      updateValues.push(email);
-      updateFields.push(`email = $${updateValues.length}`);
-    }
-
-    if (revokeSession) {
-      updateFields.push(`refresh_token = NULL`);
-      updateFields.push(`fcm_token = NULL`);
-    }
-
-    updateFields.push(`updated_at = NOW()`);
-    updateValues.push(userId);
-    const userIdIdx = updateValues.length;
-
-    await pool.query(
-      `UPDATE users SET ${updateFields.join(", ")} WHERE id = $${userIdIdx} AND role = 'USER'`,
-      updateValues
-    );
-
     return this.getUserDetail(userId);
   },
 
@@ -405,7 +416,8 @@ const adminUserRepository = {
   }) {
     const client = await pool.connect();
     try {
-      await client.query("BEGIN");
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      email = await claimEmail(client, email, userId);
 
       const updateFields = [];
       const updateValues = [];

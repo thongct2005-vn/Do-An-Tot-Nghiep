@@ -1,5 +1,9 @@
 const adminMerchantsRepository = require("./merchants.repository");
 const { httpError } = require("../../utils/httpError");
+const { parseMerchantQuery } = require("./merchants.query");
+const { parseProfilePatch } = require("./merchants.profile");
+const { parseStatusPatch } = require("./merchants.status");
+const socket = require("../../utils/socket");
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,78 +36,58 @@ function maskApiKey(apiKey) {
   return `${apiKey.slice(0, 10)}...${apiKey.slice(-4)}`;
 }
 
-function resolveDateRange({ period, startDate, endDate }) {
-  let start = startDate || null;
-  let end = endDate || null;
-
-  if (!start && !end && period && period !== "ALL") {
-    const now = new Date();
-    const normalized = String(period).toUpperCase();
-    if (normalized === "TODAY" || normalized === "DAY") {
-      const s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      start = s.toISOString();
-    } else if (normalized === "THIS_WEEK" || normalized === "WEEK") {
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-      const s = new Date(now.getFullYear(), now.getMonth(), diff);
-      start = s.toISOString();
-    } else if (normalized === "THIS_MONTH" || normalized === "MONTH") {
-      const s = new Date(now.getFullYear(), now.getMonth(), 1);
-      start = s.toISOString();
-    }
-  }
-
-  return { startDate: start, endDate: end };
-}
-
 const adminMerchantsService = {
-  async getMerchants({
-    page = 1,
-    limit = 10,
-    search,
-    tab,
-    approval_status,
-    status,
-    api_status,
-    period,
-    start_date,
-    end_date,
-  }) {
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
-    const offset = (pageNum - 1) * limitNum;
+  async updateMerchantStatus({ adminId, merchantId, body }) {
+    if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
+    if (typeof merchantId !== "string" || !UUID_REGEX.test(merchantId.trim())) {
+      throw httpError(400, "Định danh đối tác merchant không hợp lệ");
+    }
+    const id = merchantId.trim().toLowerCase();
+    const patch = parseStatusPatch(body);
+    const result = await adminMerchantsRepository.updateMerchantStatus({ merchantId: id, adminId, ...patch });
+    if (patch.status === "BLOCKED") {
+      try {
+        await socket.emitToUser(id, "force_logout", {
+          reason: "Tài khoản merchant đã bị quản trị viên khóa. Vui lòng liên hệ hỗ trợ.",
+        });
+      } catch (error) {
+        // The database has committed; notification failure must not invite a retry.
+        console.error("Không gửi được thông báo khóa merchant");
+      }
+    }
+    return result;
+  },
 
-    const normalizedTab = tab ? String(tab).trim().toUpperCase() : "ALL";
-    const normalizedApproval = approval_status
-      ? String(approval_status).trim().toUpperCase()
-      : "ALL";
-    const normalizedStatus = status
-      ? String(status).trim().toUpperCase()
-      : "ALL";
-    const normalizedApiStatus = api_status
-      ? String(api_status).trim().toUpperCase()
-      : "ALL";
-
-    const { startDate, endDate } = resolveDateRange({
-      period,
-      startDate: start_date,
-      endDate: end_date,
+  async updateMerchantProfile({ adminId, merchantId, body }) {
+    if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
+    if (typeof merchantId !== "string" || !UUID_REGEX.test(merchantId.trim())) {
+      throw httpError(400, "Định danh đối tác merchant không hợp lệ");
+    }
+    const id = merchantId.trim().toLowerCase();
+    const patch = await parseProfilePatch(body);
+    const result = await adminMerchantsRepository.updateMerchantProfile({
+      merchantId: id, adminId, ...patch,
     });
+    if (result.revokeSession) {
+      try {
+        socket.emitToUser(id, "force_logout", {
+          reason: "Thông tin tài khoản đã được quản trị viên cập nhật. Vui lòng đăng nhập lại.",
+        });
+      } catch (error) {
+        // A delivery failure must not turn a committed update into an API failure.
+        console.error("Không gửi được thông báo đăng xuất merchant");
+      }
+    }
+    return {
+      merchant: { ...result.merchant, store_name: result.merchant.full_name },
+      audit: result.audit,
+    };
+  },
 
-    const [stats, listResult] = await Promise.all([
-      adminMerchantsRepository.getMerchantStats(),
-      adminMerchantsRepository.getMerchants({
-        search,
-        tab: normalizedTab,
-        approvalStatus: normalizedApproval,
-        status: normalizedStatus,
-        apiStatus: normalizedApiStatus,
-        startDate,
-        endDate,
-        limit: limitNum,
-        offset,
-      }),
-    ]);
+  async getMerchants(query = {}) {
+    const options = parseMerchantQuery(query);
+    const { page: pageNum, limit: limitNum } = options;
+    const { stats, ...listResult } = await adminMerchantsRepository.getMerchantListSnapshot(options);
 
     const items = listResult.items.map((item) => ({
       id: item.id,

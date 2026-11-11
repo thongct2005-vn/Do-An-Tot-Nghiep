@@ -1,4 +1,5 @@
 const pool = require("../../config/database");
+const { claimEmail } = require("../../utils/emailClaim");
 const tokenUtil = require("../../utils/jwt");
 const authRepository = {
   async findUserByPhone(phone) {
@@ -171,13 +172,24 @@ const authRepository = {
   },
 
   async addUser({ userId, phone, phoneHash, email, passwordHash }) {
-    await pool.query(
-      `
-      INSERT INTO users(id, phone, phone_hash, email, password_hash)
-      VALUES ($1, $2, $3, $4, $5)
-      `,
-      [userId, phone, phoneHash, email, passwordHash],
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      email = await claimEmail(client, email);
+      await client.query(
+        `
+        INSERT INTO users(id, phone, phone_hash, email, password_hash)
+        VALUES ($1, $2, $3, $4, $5)
+        `,
+        [userId, phone, phoneHash, email, passwordHash],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async logout(userId) {

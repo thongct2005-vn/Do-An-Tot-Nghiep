@@ -6,6 +6,7 @@ const {
   isValidPhone,
   isValidPasswordMerchant,
   isValidEmail,
+  isValidOtp,
 } = require("../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../../utils/jwt");
@@ -30,8 +31,8 @@ async function checkCredentials(phone, password) {
     throw httpError(400, "Thiếu số điện thoại hoặc mật khẩu");
   }
 
-  if (!isValidPhone(phone) || !isValidPasswordMerchant(password)) {
-    throw httpError(400, "Số điện thoại hoặc mật khẩu không hợp lệ");
+  if (!isValidPhone(phone)) {
+    throw httpError(400, "Số điện thoại không hợp lệ");
   }
 
   const user = await merchantAuthRepository.findMerchantByPhone(phone);
@@ -140,6 +141,27 @@ async function verifyTotpCode({ userId, code, requireEnabled }) {
   });
   if (!consumed) {
     throw httpError(400, "Mã đã được sử dụng, vui lòng đợi mã mới");
+  }
+}
+
+function assertMerchantForgotEligible(user) {
+  if (!user) {
+    throw httpError(404, "Số điện thoại chưa đăng ký tài khoản");
+  }
+  if (user.role !== "MERCHANT") {
+    throw httpError(403, "Tài khoản không hợp lệ");
+  }
+  if (user.status !== "ACTIVE") {
+    throw httpError(403, "Tài khoản bị khóa");
+  }
+  if (!user.email) {
+    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
+  }
+  if (!user.tax_code) {
+    throw httpError(
+      403,
+      "Tài khoản chưa có mã số thuế định danh (KYC), vui lòng liên hệ hỗ trợ",
+    );
   }
 }
 
@@ -424,7 +446,10 @@ const merchantAuthService = {
     }
 
     if (!isValidPasswordMerchant(password)) {
-      throw httpError(400, "Mật khẩu không hợp lệ");
+      throw httpError(
+        400,
+        "Mật khẩu phải từ 8 đến 15 ký tự, có ít nhất 1 chữ hoa, 1 chữ thường, 1 chữ số, 1 ký tự đặc biệt và không chứa khoảng trắng",
+      );
     }
 
     if (!taxCode) {
@@ -483,6 +508,361 @@ const merchantAuthService = {
       },
     };
   },
+
+  // ===== Quên mật khẩu Merchant (Email OTP hoặc Google Authenticator + Mã số thuế KYC) =====
+
+  async forgotPasswordRequest({ phone }) {
+    if (!phone) {
+      throw httpError(400, "Thiếu số điện thoại");
+    }
+    if (!isValidPhone(phone)) {
+      throw httpError(400, "Số điện thoại không hợp lệ");
+    }
+
+    const user =
+      await merchantAuthRepository.findMerchantForForgotByPhone(phone);
+    assertMerchantForgotEligible(user);
+
+    const otpToken = tokenUtil.generateOtpToken(user, "merchant_forgot_otp");
+
+    if (user.totp_enabled) {
+      return {
+        otp_token: otpToken,
+        otp_method: "totp",
+        masked_email: maskEmail(user.email),
+      };
+    }
+
+    try {
+      await otpService.generateAndSaveOtp({ email: user.email });
+    } catch (e) {
+      if (e.statusCode !== 429) throw e;
+    }
+
+    return {
+      otp_token: otpToken,
+      otp_method: "email",
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  async forgotPasswordResendOtp({ userId, phone }) {
+    const user =
+      await merchantAuthRepository.findMerchantForForgotByPhone(phone);
+    if (!user || user.id !== userId) {
+      throw httpError(401, "Phiên xác thực không hợp lệ");
+    }
+    assertMerchantForgotEligible(user);
+
+    if (user.totp_enabled) {
+      throw httpError(
+        400,
+        "Tài khoản đang dùng Google Authenticator, không có mã gửi qua email",
+      );
+    }
+
+    await otpService.generateAndSaveOtp({ email: user.email });
+
+    return {
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  async forgotPasswordVerify({ userId, phone, otp, taxCode }) {
+    const code = String(otp ?? "").trim();
+    const normalizedTaxCode = String(taxCode ?? "").trim();
+
+    if (!code) {
+      throw httpError(400, "Vui lòng nhập mã xác thực");
+    }
+    if (!isValidOtp(code)) {
+      throw httpError(400, "Mã xác thực phải gồm 6 chữ số");
+    }
+    if (!normalizedTaxCode) {
+      throw httpError(400, "Vui lòng nhập mã số thuế");
+    }
+
+    const user =
+      await merchantAuthRepository.findMerchantForForgotByPhone(phone);
+    if (!user || user.id !== userId) {
+      throw httpError(401, "Phiên xác thực không hợp lệ");
+    }
+    assertMerchantForgotEligible(user);
+
+    if (normalizedTaxCode !== String(user.tax_code).trim()) {
+      throw httpError(400, "Mã số thuế không chính xác");
+    }
+
+    if (user.totp_enabled) {
+      await verifyTotpCode({
+        userId: user.id,
+        code,
+        requireEnabled: true,
+      });
+    } else {
+      await otpService.verifyOtp({ email: user.email, otp: code });
+    }
+
+    const version = tokenUtil.credentialVersion(user.password_hash);
+    return {
+      otp_token: tokenUtil.generateOtpToken(
+        user,
+        "merchant_forgot_otp_verified",
+        { pv: version },
+        "10m",
+      ),
+      tax_code_token: tokenUtil.generateTaxCodeToken({
+        userId: user.id,
+        taxCode: user.tax_code,
+        version,
+      }),
+    };
+  },
+
+  async forgotPasswordReset({
+    userId,
+    version,
+    taxCodeHash,
+    password,
+    confirmPassword,
+  }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    if (!password) {
+      throw httpError(400, "Thiếu mật khẩu mới");
+    }
+    if (!confirmPassword) {
+      throw httpError(400, "Vui lòng xác nhận lại mật khẩu");
+    }
+    if (password !== confirmPassword) {
+      throw httpError(400, "Mật khẩu xác nhận không khớp");
+    }
+    if (!isValidPasswordMerchant(password)) {
+      throw httpError(
+        400,
+        "Mật khẩu phải từ 8 đến 15 ký tự, có ít nhất 1 chữ hoa, 1 chữ thường, 1 chữ số, 1 ký tự đặc biệt và không chứa khoảng trắng",
+      );
+    }
+
+    const user = await merchantAuthRepository.findMerchantForResetById(userId);
+    if (!user) {
+      throw httpError(404, "Không tìm thấy tài khoản");
+    }
+    if (user.role !== "MERCHANT" || user.status !== "ACTIVE") {
+      throw httpError(403, "Tài khoản không hợp lệ hoặc đã bị khóa");
+    }
+    if (
+      !user.tax_code ||
+      tokenUtil.hashToken(String(user.tax_code).trim()) !== taxCodeHash
+    ) {
+      throw httpError(401, "Phiên xác thực mã số thuế không hợp lệ");
+    }
+    if (tokenUtil.credentialVersion(user.password_hash) !== version) {
+      throw httpError(
+        401,
+        "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại",
+      );
+    }
+
+    if (
+      user.password_hash &&
+      (await bcrypt.compare(password, user.password_hash))
+    ) {
+      throw httpError(400, "Mật khẩu mới không được trùng mật khẩu hiện tại");
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+    const updated = await merchantAuthRepository.resetPassword({
+      userId,
+      passwordHash,
+      oldPasswordHash: user.password_hash,
+    });
+    if (!updated) {
+      throw httpError(
+        401,
+        "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại",
+      );
+    }
+
+    emitToUser(userId, "force_logout", {
+      reason: "Mật khẩu của tài khoản vừa được đặt lại. Vui lòng đăng nhập lại",
+    });
+  },
+
+  // ===== Đổi mật khẩu Merchant khi đã đăng nhập (OTP Email hoặc Google Authenticator -> mật khẩu cũ + mới) =====
+
+  async changePasswordRequest({ userId }) {
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+
+    const otpToken = tokenUtil.generateOtpToken(
+      user,
+      "merchant_change_password_otp",
+    );
+
+    if (user.totp_enabled) {
+      return {
+        otp_token: otpToken,
+        otp_method: "totp",
+        masked_email: user.email ? maskEmail(user.email) : "",
+      };
+    }
+
+    if (!user.email) {
+      throw httpError(404, "Không tìm thấy email liên kết với tài khoản");
+    }
+
+    try {
+      await otpService.generateAndSaveOtp({ email: user.email });
+    } catch (e) {
+      if (e.statusCode !== 429) throw e;
+    }
+
+    return {
+      otp_token: otpToken,
+      otp_method: "email",
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  async changePasswordResendOtp({ userId }) {
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+
+    if (user.totp_enabled) {
+      throw httpError(
+        400,
+        "Tài khoản đang dùng Google Authenticator, không có mã gửi qua email",
+      );
+    }
+    if (!user.email) {
+      throw httpError(404, "Không tìm thấy email liên kết với tài khoản");
+    }
+
+    await otpService.generateAndSaveOtp({ email: user.email });
+
+    return {
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  async changePasswordVerify({ userId, otp }) {
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+
+    await verifyMerchantOtpOrTotp(user, otp);
+
+    const version = tokenUtil.credentialVersion(user.password_hash);
+    return {
+      otp_token: tokenUtil.generateOtpToken(
+        user,
+        "merchant_change_password_verified",
+        { pv: version },
+        "10m",
+      ),
+    };
+  },
+
+  async changePasswordReset({
+    userId,
+    version,
+    oldPassword,
+    newPassword,
+    confirmPassword,
+  }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    if (!oldPassword) {
+      throw httpError(400, "Vui lòng nhập mật khẩu hiện tại");
+    }
+    if (!newPassword) {
+      throw httpError(400, "Thiếu mật khẩu mới");
+    }
+    if (!confirmPassword) {
+      throw httpError(400, "Vui lòng xác nhận lại mật khẩu");
+    }
+    if (newPassword !== confirmPassword) {
+      throw httpError(400, "Mật khẩu xác nhận không khớp");
+    }
+    if (!isValidPasswordMerchant(newPassword)) {
+      throw httpError(
+        400,
+        "Mật khẩu phải từ 8 đến 15 ký tự, có ít nhất 1 chữ hoa, 1 chữ thường, 1 chữ số, 1 ký tự đặc biệt và không chứa khoảng trắng",
+      );
+    }
+    if (oldPassword === newPassword) {
+      throw httpError(400, "Mật khẩu mới không được trùng mật khẩu hiện tại");
+    }
+
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+
+    if (tokenUtil.credentialVersion(user.password_hash) !== version) {
+      throw httpError(
+        403,
+        "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại",
+      );
+    }
+
+    const isOldCorrect = user.password_hash
+      ? await bcrypt.compare(oldPassword, user.password_hash)
+      : false;
+    if (!isOldCorrect) {
+      throw httpError(400, "Mật khẩu hiện tại không chính xác");
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+    const updated = await merchantAuthRepository.resetPassword({
+      userId,
+      passwordHash,
+      oldPasswordHash: user.password_hash,
+    });
+    if (!updated) {
+      throw httpError(
+        403,
+        "Phiên đặt lại mật khẩu đã hết hiệu lực, vui lòng thực hiện lại",
+      );
+    }
+
+    emitToUser(userId, "force_logout", {
+      reason: "Mật khẩu của tài khoản vừa được đặt lại. Vui lòng đăng nhập lại",
+    });
+  },
 };
+
+function assertActiveMerchantUser(user) {
+  if (!user) {
+    throw httpError(404, "Không tìm thấy tài khoản");
+  }
+  if (user.role !== "MERCHANT" || user.status !== "ACTIVE") {
+    throw httpError(403, "Tài khoản không hợp lệ hoặc đã bị khóa");
+  }
+}
+
+async function verifyMerchantOtpOrTotp(user, otp) {
+  const code = String(otp ?? "").trim();
+  if (!code) {
+    throw httpError(400, "Vui lòng nhập mã xác thực");
+  }
+  if (!isValidOtp(code)) {
+    throw httpError(400, "Mã xác thực phải gồm 6 chữ số");
+  }
+  if (user.totp_enabled) {
+    await verifyTotpCode({
+      userId: user.id,
+      code,
+      requireEnabled: true,
+    });
+    return;
+  }
+  if (!user.email) {
+    throw httpError(404, "Không tìm thấy email liên kết với tài khoản");
+  }
+  await otpService.verifyOtp({ email: user.email, otp: code });
+}
 
 module.exports = merchantAuthService;

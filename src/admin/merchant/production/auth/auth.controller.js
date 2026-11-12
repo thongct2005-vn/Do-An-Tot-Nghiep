@@ -232,6 +232,149 @@ const merchantAuthController = {
       next(e);
     }
   },
+
+  // ===== Quên mật khẩu Merchant =====
+  async forgotRequest(req, res, next) {
+    try {
+      const { phone } = req.body;
+      const result = await merchantAuthService.forgotPasswordRequest({ phone });
+      clearFailure(phone);
+      const message =
+        result.otp_method === "totp"
+          ? "Vui lòng nhập mã Google Authenticator và mã số thuế để xác nhận"
+          : "Vui lòng nhập mã OTP email và mã số thuế để xác nhận";
+      return successResponse(res, 200, message, result);
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.body?.phone);
+      }
+      next(e);
+    }
+  },
+
+  async forgotResendOtp(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.otpUser;
+      const result = await merchantAuthService.forgotPasswordResendOtp({
+        userId,
+        phone,
+      });
+      return successResponse(res, 200, "Đã gửi lại mã OTP", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async forgotVerify(req, res, next) {
+    try {
+      const { otp, tax_code: taxCode } = req.body;
+      const { user_id: userId, phone } = req.otpUser;
+      const result = await merchantAuthService.forgotPasswordVerify({
+        userId,
+        phone,
+        otp,
+        taxCode,
+      });
+      clearFailure(phone);
+      return successResponse(res, 200, "Xác thực thành công", result);
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.otpUser?.phone);
+      }
+      next(e);
+    }
+  },
+
+  async forgotResetPassword(req, res, next) {
+    try {
+      const { password, confirm_password: confirmPassword } = req.body;
+      const {
+        user_id: userId,
+        pv: version,
+        tax_code_hash: taxCodeHash,
+      } = req.resetUser;
+      await merchantAuthService.forgotPasswordReset({
+        userId,
+        version,
+        taxCodeHash,
+        password,
+        confirmPassword,
+      });
+      return successResponse(res, 200, "Đặt lại mật khẩu thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  // ===== Đổi mật khẩu Merchant khi đã đăng nhập =====
+  async changePasswordRequest(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await merchantAuthService.changePasswordRequest({
+        userId,
+      });
+      const message =
+        result.otp_method === "totp"
+          ? "Vui lòng nhập mã Google Authenticator để xác nhận"
+          : "Vui lòng nhập mã OTP gửi về email để xác nhận";
+      return successResponse(res, 200, message, result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async changePasswordResendOtp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await merchantAuthService.changePasswordResendOtp({
+        userId,
+      });
+      return successResponse(res, 200, "Đã gửi lại mã OTP", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async changePasswordVerify(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const { otp } = req.body;
+      const result = await merchantAuthService.changePasswordVerify({
+        userId,
+        otp,
+      });
+      clearFailure(phone);
+      return successResponse(res, 200, "Xác thực thành công", result);
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
+      next(e);
+    }
+  },
+
+  async changePasswordReset(req, res, next) {
+    try {
+      const {
+        old_password: oldPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      } = req.body;
+      const { user_id: userId } = req.user;
+      const { pv: version } = req.otpUser;
+      await merchantAuthService.changePasswordReset({
+        userId,
+        version,
+        oldPassword,
+        newPassword,
+        confirmPassword,
+      });
+      clearRefreshCookie(res);
+      return successResponse(res, 200, "Đổi mật khẩu thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = merchantAuthController;

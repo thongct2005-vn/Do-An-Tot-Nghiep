@@ -209,6 +209,8 @@ const merchantTransactionController = {
         type,
         start_date: startDate,
         end_date: endDate,
+        sort,
+        product_id: productId,
       } = req.query;
 
       const result = await merchantTransactionService.getTransferHistory(
@@ -220,6 +222,8 @@ const merchantTransactionController = {
           type,
           startDate,
           endDate,
+          sort,
+          productId,
         },
       );
 
@@ -242,6 +246,7 @@ const merchantTransactionController = {
         type,
         start_date: startDate,
         end_date: endDate,
+        product_id: productId,
       } = req.query;
 
       const file = await merchantTransactionService.exportHistory(userId, {
@@ -249,6 +254,7 @@ const merchantTransactionController = {
         type,
         startDate,
         endDate,
+        productId,
       });
 
       return sendXlsx(res, file);

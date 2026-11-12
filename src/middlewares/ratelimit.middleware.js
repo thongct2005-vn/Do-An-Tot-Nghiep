@@ -305,22 +305,6 @@ const contactLimiters = {
 };
 
 /* ============================================================
- * MODULE 6: Merchant (đổi API key / secret key)
- * ============================================================ */
-const merchantLimiters = {
-  resetApiKey: createLimiter({
-    windowMs: WEEK,
-    limit: 1,
-    keyGenerator: byUser,
-  }),
-  resetSecretKey: createLimiter({
-    windowMs: WEEK,
-    limit: 1,
-    keyGenerator: byUser,
-  }),
-};
-
-/* ============================================================
  * MODULE 7: Xuất dữ liệu (Excel...)
  * ============================================================ */
 const exportLimiters = {
@@ -340,6 +324,5 @@ module.exports = {
   ...accountLimiters,
   ...transactionLimiters,
   ...contactLimiters,
-  ...merchantLimiters,
   ...exportLimiters,
 };

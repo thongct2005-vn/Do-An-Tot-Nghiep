@@ -42,7 +42,6 @@ function buildSignedReturnUrl({
     "|",
   );
   const signature = computeSignature(secretKey, timestamp, data);
-
   u.searchParams.set("order_id", orderId);
   u.searchParams.set("payment_id", paymentId);
   u.searchParams.set("amount", String(amount));

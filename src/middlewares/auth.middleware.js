@@ -104,6 +104,63 @@ const authMiddleware = {
     }
   },
 
+  verifyMerchantForgotOtpToken(req, res, next) {
+    try {
+      const otpToken = req.headers["x-otp-token"];
+      if (!otpToken) {
+        throw httpError(401, "Thiếu thông tin xác thực");
+      }
+      req.otpUser = tokenUtil.verifyOtpToken(otpToken, "merchant_forgot_otp");
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
+  verifyMerchantChangePasswordOtpToken: verifyScopedOtpToken(
+    "merchant_change_password_otp",
+  ),
+  verifyMerchantChangePasswordVerifiedToken: verifyScopedOtpToken(
+    "merchant_change_password_verified",
+  ),
+
+  verifyMerchantForgotResetTokens(req, res, next) {
+    try {
+      const otpToken = req.headers["x-otp-token"];
+      const taxCodeToken = req.headers["x-tax-code-token"];
+      if (!otpToken || !taxCodeToken) {
+        throw httpError(
+          401,
+          "Thiếu thông tin xác thực đặt lại mật khẩu (X-Otp-Token và X-Tax-Code-Token)",
+        );
+      }
+
+      const otpPayload = tokenUtil.verifyOtpToken(
+        otpToken,
+        "merchant_forgot_otp_verified",
+      );
+      const taxCodePayload = tokenUtil.verifyTaxCodeToken(taxCodeToken);
+
+      if (
+        !otpPayload.user_id ||
+        otpPayload.user_id !== taxCodePayload.user_id ||
+        !otpPayload.pv ||
+        otpPayload.pv !== taxCodePayload.pv
+      ) {
+        throw httpError(403, "Mã xác thực không khớp hoặc không hợp lệ");
+      }
+
+      req.resetUser = {
+        user_id: otpPayload.user_id,
+        pv: otpPayload.pv,
+        tax_code_hash: taxCodePayload.tax_code_hash,
+      };
+      next();
+    } catch (e) {
+      handleTokenError(e, next);
+    }
+  },
+
   verifyPinChallengeToken(req, res, next) {
     try {
       const otpToken = req.headers["x-otp-token"];
@@ -342,6 +399,30 @@ function getCookie(req, name) {
     }
   }
   return null;
+}
+
+function verifyScopedOtpToken(purpose) {
+  return (req, res, next) => {
+    try {
+      const otpToken = req.headers["x-otp-token"];
+      if (!otpToken) {
+        throw httpError(403, "Thiếu thông tin xác thực OTP");
+      }
+      let payload;
+      try {
+        payload = tokenUtil.verifyOtpToken(otpToken, purpose);
+      } catch (_) {
+        throw httpError(403, "Phiên xác thực OTP không hợp lệ hoặc đã hết hạn");
+      }
+      if (req.user && payload.user_id !== req.user.user_id) {
+        throw httpError(403, "Mã xác thực OTP không hợp lệ");
+      }
+      req.otpUser = payload;
+      next();
+    } catch (e) {
+      next(e);
+    }
+  };
 }
 
 function handleTokenError(e, next) {

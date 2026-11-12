@@ -13,6 +13,7 @@ const LOGIN_OTP_PURPOSE = "login_otp";
 const PIN_VERIFIED_PURPOSE = "pin_verified";
 const TRANSACTION_OTP_PURPOSE = "transaction_otp";
 const FORGOT_KYC_PURPOSE = "forgot_kyc";
+const MERCHANT_TAX_CODE_PURPOSE = "merchant_forgot_tax_code";
 
 // Kiểm tra khóa bí mật có tồn tại không.
 // Nếu thiếu biến môi trường thì báo lỗi rõ ràng, tránh ký token bằng khóa rỗng.
@@ -97,9 +98,14 @@ const tokenUtil = {
     );
   },
 
-  // Tạo OTP token (hạn 5 phút): bằng chứng "user đã được gửi OTP",
+  // Tạo OTP token (hạn mặc định 5 phút): bằng chứng "user đã được gửi/xác thực OTP",
   // gắn với một mục đích (mặc định là đăng nhập). "extra" để nhét thêm dữ liệu tùy bước.
-  generateOtpToken(user, purpose = LOGIN_OTP_PURPOSE, extra = {}) {
+  generateOtpToken(
+    user,
+    purpose = LOGIN_OTP_PURPOSE,
+    extra = {},
+    expiresIn = "5m",
+  ) {
     const payload = {
       ...extra,
       user_id: user.id,
@@ -108,7 +114,7 @@ const tokenUtil = {
       purpose: purpose,
     };
     return jwt.sign(payload, OTP_SECRET, {
-      expiresIn: "5m",
+      expiresIn,
       algorithm: "HS256",
     });
   },
@@ -142,6 +148,36 @@ const tokenUtil = {
     });
     if (payload.purpose !== FORGOT_KYC_PURPOSE) {
       const err = new Error("Mã xác thực không đúng loại");
+      err.name = "JsonWebTokenError";
+      throw err;
+    }
+    return payload;
+  },
+
+  // Tạo token xác nhận mã số thuế cho luồng quên mật khẩu merchant (hạn 10 phút).
+  // Lưu hash của tax_code để không lộ mã số thuế thô trong JWT, kèm pv để vô hiệu hóa sau khi đổi MK.
+  generateTaxCodeToken({ userId, taxCode, version }) {
+    return jwt.sign(
+      {
+        user_id: userId,
+        tax_code_hash: tokenUtil.hashToken(String(taxCode).trim()),
+        purpose: MERCHANT_TAX_CODE_PURPOSE,
+        pv: version,
+      },
+      requireSecret(RESET_SECRET, "RESET_SECRET"),
+      { expiresIn: "10m", algorithm: "HS256" },
+    );
+  },
+
+  // Xác thực tax code token và kiểm tra đúng purpose "merchant_forgot_tax_code"
+  verifyTaxCodeToken(token) {
+    const payload = jwt.verify(
+      token,
+      requireSecret(RESET_SECRET, "RESET_SECRET"),
+      { algorithms: ["HS256"] },
+    );
+    if (payload.purpose !== MERCHANT_TAX_CODE_PURPOSE) {
+      const err = new Error("Mã xác thực mã số thuế không đúng loại");
       err.name = "JsonWebTokenError";
       throw err;
     }

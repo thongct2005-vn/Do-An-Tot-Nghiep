@@ -266,6 +266,80 @@ const merchantAuthRepository = {
     );
     return result.rows[0];
   },
+
+  // Lấy thông tin tài khoản merchant theo userId
+  async findMerchantById(userId) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.role,
+             u.totp_enabled
+      FROM users u
+      WHERE u.id = $1
+      `,
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  // Lấy thông tin merchant + mã số thuế (user_kyc) theo SĐT cho luồng quên mật khẩu
+  async findMerchantForForgotByPhone(phone) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.role,
+             u.totp_enabled, k.id AS tax_code
+      FROM users u
+      LEFT JOIN LATERAL (
+        SELECT yk.id
+        FROM user_kyc yk
+        WHERE yk.user_id = u.id
+          AND yk.status IN ('APPROVED', 'APPPROVED')
+        ORDER BY yk.updated_at DESC NULLS LAST, yk.created_at DESC NULLS LAST
+        LIMIT 1
+      ) k ON true
+      WHERE u.phone = $1
+      `,
+      [phone],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  // Lấy trạng thái bảo mật hiện tại + mã số thuế theo userId khi đặt lại mật khẩu
+  async findMerchantForResetById(userId) {
+    const result = await pool.query(
+      `
+      SELECT u.id, u.phone, u.role, u.status, u.password_hash, k.id AS tax_code
+      FROM users u
+      LEFT JOIN LATERAL (
+        SELECT yk.id
+        FROM user_kyc yk
+        WHERE yk.user_id = u.id
+          AND yk.status IN ('APPROVED', 'APPPROVED')
+        ORDER BY yk.updated_at DESC NULLS LAST, yk.created_at DESC NULLS LAST
+        LIMIT 1
+      ) k ON true
+      WHERE u.id = $1
+      `,
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  // Cập nhật mật khẩu mới (kiểm tra oldPasswordHash để chống dùng lại token), xóa refresh_token & mở khóa đăng nhập sai
+  async resetPassword({ userId, passwordHash, oldPasswordHash }) {
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET password_hash = $1,
+          refresh_token = NULL,
+          failed_login_attempts = 0,
+          locked_until = NULL
+      WHERE id = $2 AND password_hash IS NOT DISTINCT FROM $3
+      RETURNING id
+      `,
+      [passwordHash, userId, oldPasswordHash],
+    );
+    return result.rows[0] ?? null;
+  },
 };
 
 module.exports = merchantAuthRepository;

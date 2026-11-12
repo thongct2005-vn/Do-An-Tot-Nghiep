@@ -502,6 +502,8 @@ const merchantTransactionRepository = {
       type = null,
       startDate = null,
       endDate = null,
+      sort = "DESC",
+      productId = null,
     } = {},
   ) {
     const hasCursor = Boolean(cursorId);
@@ -509,6 +511,8 @@ const merchantTransactionRepository = {
     const hasType = Boolean(type);
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
+    const hasProductId = Boolean(productId);
+    const isAsc = String(sort).toUpperCase() === "ASC";
 
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
@@ -556,7 +560,7 @@ const merchantTransactionRepository = {
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
-        AND ($2::boolean = false OR t.id < $3)
+        AND ($2::boolean = false OR ${isAsc ? "t.id > $3" : "t.id < $3"})
         AND (
           $5::boolean = false
           OR (
@@ -579,7 +583,16 @@ const merchantTransactionRepository = {
           $11::boolean = false
           OR t.transaction_type = ($12::text)::transaction_type_enum
         )
-      ORDER BY t.id DESC
+        AND (
+          $13::boolean = false
+          OR EXISTS (
+            SELECT 1
+            FROM payment_request_items pri
+            WHERE pri.payment_request_id = pr.id
+              AND pri.product_id = $14::text
+          )
+        )
+      ORDER BY t.id ${isAsc ? "ASC" : "DESC"}
       LIMIT $4
       `,
       [
@@ -595,6 +608,8 @@ const merchantTransactionRepository = {
         endDate,
         hasType,
         type,
+        hasProductId,
+        productId,
       ],
     );
 
@@ -613,10 +628,11 @@ const merchantTransactionRepository = {
    */
   async exportHistory(
     userId,
-    { keyword = null, type = null, startDate, endDate, limit },
+    { keyword = null, type = null, startDate, endDate, productId = null, limit },
   ) {
     const hasKeyword = Boolean(keyword && keyword.trim());
     const hasType = Boolean(type);
+    const hasProductId = Boolean(productId);
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
@@ -677,10 +693,19 @@ const merchantTransactionRepository = {
           $6::boolean = false
           OR t.transaction_type = ($7::text)::transaction_type_enum
         )
+        AND (
+          $9::boolean = false
+          OR EXISTS (
+            SELECT 1
+            FROM payment_request_items pri
+            WHERE pri.payment_request_id = pr.id
+              AND pri.product_id = $10::text
+          )
+        )
       ORDER BY t.created_at ASC, t.id ASC
       LIMIT $8::int
       `,
-      [userId, hasKeyword, safeKeyword, startDate, endDate, hasType, type, limit],
+      [userId, hasKeyword, safeKeyword, startDate, endDate, hasType, type, limit, hasProductId, productId],
     );
 
     return result.rows;

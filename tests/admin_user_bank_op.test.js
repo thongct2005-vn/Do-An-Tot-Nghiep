@@ -10,7 +10,7 @@ const adminUserRepository = require("../src/admin/user/user.repository");
 const adminUserService = require("../src/admin/user/user.service");
 const adminUserController = require("../src/admin/user/user.controller");
 const socketUtil = require("../src/utils/socket");
-const firebaseNotification = require("../src/utils/fireBaseNotification");
+const firebaseNotification = require("../src/utils/firebaseNotification");
 
 describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Suite", () => {
   const originalPoolQuery = pool.query.bind(pool);
@@ -402,7 +402,7 @@ describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Sui
             params
           );
         },
-        release: () => {},
+        release: () => { },
       };
     };
   });

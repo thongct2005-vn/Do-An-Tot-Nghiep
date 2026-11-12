@@ -12,7 +12,7 @@ const isValidPasswordOrPin = (data) => {
 
 const isValidPasswordMerchant = (data) => {
   if (typeof data !== "string" || !data) return false;
-  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,15}$/;
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{8,15}$/;
   return passwordRegex.test(data);
 };
 

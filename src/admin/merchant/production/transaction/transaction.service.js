@@ -60,6 +60,16 @@ async function getOtpMerchant({ userId, phone }) {
   return user;
 }
 
+function normalizeProductIdFilter(productId) {
+  if (productId === undefined || productId === null) return null;
+  const trimmed = String(productId).trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 100) {
+    throw httpError(400, "Mã sản phẩm không hợp lệ");
+  }
+  return trimmed;
+}
+
 const merchantTransactionService = {
   async transferMoney({
     sourceUserId,
@@ -175,13 +185,14 @@ const merchantTransactionService = {
   },
 
   // Xuất lịch sử giao dịch ra file Excel (web merchant)
-  async exportHistory(userId, { keyword, type, startDate, endDate }) {
+  async exportHistory(userId, { keyword, type, startDate, endDate, productId }) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để xuất lịch sử giao dịch");
     }
 
     const range = resolveExportRange(startDate, endDate);
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+    const normalizedProductId = normalizeProductIdFilter(productId);
     const normalizedType =
       type && String(type).trim() ? String(type).trim().toUpperCase() : null;
     if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
@@ -193,6 +204,7 @@ const merchantTransactionService = {
       type: normalizedType,
       startDate: range.startDate,
       endDate: range.endDate,
+      productId: normalizedProductId,
       limit: EXPORT.MAX_ROWS + 1,
     });
     if (rows.length > EXPORT.MAX_ROWS) {
@@ -204,6 +216,7 @@ const merchantTransactionService = {
 
     const filters = [];
     if (normalizedType) filters.push(`loại ${normalizedType}`);
+    if (normalizedProductId) filters.push(`sản phẩm ${normalizedProductId}`);
     if (normalizedKeyword) filters.push(`từ khóa "${normalizedKeyword}"`);
 
     const buffer = await buildTransactionsXlsx({
@@ -222,6 +235,7 @@ const merchantTransactionService = {
         end_date: range.endDate,
         type: normalizedType,
         keyword: normalizedKeyword,
+        product_id: normalizedProductId,
         row_count: rows.length,
       },
     });
@@ -234,7 +248,7 @@ const merchantTransactionService = {
 
   async getTransferHistory(
     userId,
-    { cursorId, limit, keyword, type, startDate, endDate },
+    { cursorId, limit, keyword, type, startDate, endDate, sort, productId },
   ) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
@@ -245,11 +259,20 @@ const merchantTransactionService = {
       HISTORY_PAGE_LIMIT,
     );
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+    const normalizedProductId = normalizeProductIdFilter(productId);
 
     const normalizedType =
       type && String(type).trim() ? String(type).trim().toUpperCase() : null;
     if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
       throw httpError(400, "Loại giao dịch không hợp lệ");
+    }
+
+    const normalizedSort =
+      sort !== undefined && sort !== null && String(sort).trim()
+        ? String(sort).trim().toUpperCase()
+        : "DESC";
+    if (!["ASC", "DESC"].includes(normalizedSort)) {
+      throw httpError(400, "Thứ tự sắp xếp không hợp lệ");
     }
 
     // Ngày được giữ dạng chuỗi YYYY-MM-DD, repository sẽ tính theo giờ Việt Nam
@@ -293,6 +316,8 @@ const merchantTransactionService = {
         type: normalizedType,
         startDate: startDay,
         endDate: endDay,
+        sort: normalizedSort,
+        productId: normalizedProductId,
       },
     );
 

@@ -12,7 +12,7 @@ const adminUserService = require("../src/admin/user/user.service");
 const adminUserController = require("../src/admin/user/user.controller");
 const authMiddleware = require("../src/middlewares/auth.middleware");
 const socketUtil = require("../src/utils/socket");
-const firebaseNotification = require("../src/utils/fireBaseNotification");
+const firebaseNotification = require("../src/utils/firebaseNotification");
 
 describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Scenarios)", () => {
   const originalPoolQuery = pool.query.bind(pool);
@@ -191,7 +191,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       const isStalePending =
         row.status === "PENDING" &&
         Date.now() - new Date(row.create_at).getTime() >
-          Number(staleSeconds) * 1000;
+        Number(staleSeconds) * 1000;
       if (
         String(row.actor_id) === String(actorId) &&
         row.request_path === requestPath &&
@@ -398,8 +398,8 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
   beforeEach(() => {
     resetDbState();
 
-    socketUtil.emitToUser = () => {};
-    firebaseNotification.sendPushNotification = async () => {};
+    socketUtil.emitToUser = () => { };
+    firebaseNotification.sendPushNotification = async () => { };
 
     pool.query = async (sql, params) => executeSql(dbState, sql, params);
 
@@ -431,7 +431,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
           }
           return executeSql(dbState, sql, params);
         },
-        release() {},
+        release() { },
       };
     };
   });
@@ -443,7 +443,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
     firebaseNotification.sendPushNotification = originalSendPush;
     try {
       await pool.end();
-    } catch (_) {}
+    } catch (_) { }
   });
 
   // =========================================================================

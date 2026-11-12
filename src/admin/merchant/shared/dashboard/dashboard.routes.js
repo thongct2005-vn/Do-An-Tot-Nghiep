@@ -1,6 +1,5 @@
 const express = require("express");
 const authMiddleware = require("../../../../middlewares/auth.middleware");
-const { resetApiKey, resetSecretKey } = require("../../../../middlewares/ratelimit.middleware");
 function createDashboardRoutes(dashboardController) {
   const router = express.Router();
   router.get(
@@ -23,7 +22,6 @@ function createDashboardRoutes(dashboardController) {
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),
     authMiddleware.requireActiveMerchant,
-    resetApiKey,
     dashboardController.resetApiKey,
   );
 
@@ -32,7 +30,6 @@ function createDashboardRoutes(dashboardController) {
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),
     authMiddleware.requireActiveMerchant,
-    resetSecretKey,
     dashboardController.resetSecretKey,
   );
   return router;

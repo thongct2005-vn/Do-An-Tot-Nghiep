@@ -5,8 +5,8 @@ const tokenUtil = require("../../../../utils/jwt");
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
-  path: "/api/v2/merchant/sandbox/auth",
+  sameSite: "lax",
+  path: "/sb/api/v2/merchant/sandbox/auth",
 };
 
 function setRefreshCookie(res, refreshToken) {

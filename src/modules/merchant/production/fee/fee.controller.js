@@ -31,47 +31,20 @@ const merchantFeeController = {
     }
   },
 
-  async selectFeePlan(req, res, next) {
-    try {
-      const { user_id: userId } = req.user;
-      const feePlan = req.body?.fee_plan;
-      const result = await merchantFeeService.selectFeePlan(userId, { feePlan });
-
-      const message =
-        result.action === "CANCELLED_PENDING_CHANGE"
-          ? `Đã hủy lịch đổi gói thu phí. Bạn tiếp tục áp dụng ${result.current_plan_name}`
-          : `Đã chọn ${result.pending_plan_name}. Hiện tại vẫn áp dụng ${result.current_plan_name}, gói mới sẽ áp dụng từ tháng sau (${result.effective_from_date})`;
-
-      return successResponse(res, 200, message, result);
-    } catch (e) {
-      next(e);
-    }
-  },
-
-  async cancelPendingFeePlan(req, res, next) {
-    try {
-      const { user_id: userId } = req.user;
-      const result = await merchantFeeService.cancelPendingFeePlan(userId);
-      return successResponse(
-        res,
-        200,
-        `Đã hủy lịch đổi gói thu phí. Bạn tiếp tục áp dụng ${result.current_plan_name}`,
-        result,
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
-
   async previewFee(req, res, next) {
     try {
       const { user_id: userId } = req.user;
-      const { transaction_type: transactionType = "WITHDRAW", amount } = req.body || {};
+      const {
+        transaction_type: transactionType = "WITHDRAW",
+        amount,
+        destination_user_id: destinationUserId,
+        merchant_user_id: merchantUserId,
+      } = req.body || {};
       const result = await merchantFeeService.previewTransactionFee({
         transactionType,
         amount,
         actorUser: { id: userId, role: "MERCHANT" },
-        merchantUserId: userId,
+        merchantUserId: destinationUserId || merchantUserId || null,
         role: "MERCHANT",
       });
       return successResponse(

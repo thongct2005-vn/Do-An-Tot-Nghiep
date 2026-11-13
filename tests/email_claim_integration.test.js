@@ -20,9 +20,9 @@ describe('Shared email claims across real application writers', {
     adminId = crypto.randomUUID();
     await pool.query("INSERT INTO users(id,role) VALUES($1,'ADMIN')", [adminId]);
     const user = require('../src/modules/auth/auth.repository');
-    const merchant = require('../src/admin/merchant/production/auth/auth.repository');
-    const sandboxMerchant = require('../src/admin/merchant/sandbox/auth/auth.repository');
-    const sandboxUser = require('../src/admin/merchant/sandbox/user/auth/auth.repository');
+    const merchant = require('../src/modules/merchant/production/auth/auth.repository');
+    const sandboxMerchant = require('../src/modules/merchant/sandbox/auth/auth.repository');
+    const sandboxUser = require('../src/modules/merchant/sandbox/user/auth/auth.repository');
     const adminUser = require('../src/admin/user/user.repository');
     writers = [
       ['USER registration', args => user.addUser(args)],

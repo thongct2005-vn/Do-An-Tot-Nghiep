@@ -1,7 +1,7 @@
 const pool = require("../../../../config/database");
 const { httpError } = require("../../../../utils/httpError");
 const { assertDailyLimit } = require("../../../../utils/dailyLimit");
-const transactionRepository = require("../../../../modules/transaction/transaction.repository");
+const transactionRepository = require("../../../transaction/transaction.repository");
 
 const merchantTransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
@@ -111,10 +111,6 @@ const merchantTransactionRepository = {
     } finally {
       client.release();
     }
-  },
-
-  async processQRPayment(params) {
-    return transactionRepository.processQRPayment(params);
   },
 
   async getTransferHistory(
@@ -242,38 +238,38 @@ const merchantTransactionRepository = {
       `,
       isAmountSort
         ? [
-            userId,
-            hasCursor,
-            cursorId,
-            limit,
-            hasKeyword,
-            safeKeyword,
-            hasStartDate,
-            startDate,
-            hasEndDate,
-            endDate,
-            hasType,
-            type,
-            hasProductId,
-            productId,
-            hasCursor ? Number(cursorAmount || 0) : 0,
-          ]
+          userId,
+          hasCursor,
+          cursorId,
+          limit,
+          hasKeyword,
+          safeKeyword,
+          hasStartDate,
+          startDate,
+          hasEndDate,
+          endDate,
+          hasType,
+          type,
+          hasProductId,
+          productId,
+          hasCursor ? Number(cursorAmount || 0) : 0,
+        ]
         : [
-            userId,
-            hasCursor,
-            cursorId,
-            limit,
-            hasKeyword,
-            safeKeyword,
-            hasStartDate,
-            startDate,
-            hasEndDate,
-            endDate,
-            hasType,
-            type,
-            hasProductId,
-            productId,
-          ],
+          userId,
+          hasCursor,
+          cursorId,
+          limit,
+          hasKeyword,
+          safeKeyword,
+          hasStartDate,
+          startDate,
+          hasEndDate,
+          endDate,
+          hasType,
+          type,
+          hasProductId,
+          productId,
+        ],
     );
 
     const rows = result.rows;
@@ -467,7 +463,7 @@ const merchantTransactionRepository = {
     END), 0) AS total_expense,
     COALESCE(SUM(CASE
       WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
+      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
       WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
       ELSE 0
     END), 0) AS total_income

@@ -1,65 +1,119 @@
 const { httpError } = require("../../utils/httpError");
+require("dotenv").config();
 
-const SYSTEM_FEE_WALLET_ID = "00000000-0000-7000-8000-000000000001";
-const SYSTEM_FEE_WALLET_PHONE = "SYS_FEE_01";
+// Biểu thức chính quy kiểm tra định dạng UUID (v4 / v7) hợp lệ
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Mã định danh (UUID) của ví thu phí hệ thống đọc từ biến môi trường
+const SYSTEM_FEE_WALLET_ID =
+  String(process.env.SYSTEM_FEE_WALLET_ID || "").trim() || undefined;
+
+// Số điện thoại của ví thu phí hệ thống đọc từ biến môi trường (ví dụ: SYS_FEE_01)
+const SYSTEM_FEE_WALLET_PHONE =
+  String(process.env.SYSTEM_FEE_WALLET_PHONE || "").trim() || undefined;
+
+// Khoảng chênh lệch thời gian múi giờ Việt Nam (UTC+7) tính bằng mili-giây
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 
+/**
+ * Kiểm tra cấu hình ví thu phí hệ thống từ biến môi trường lúc khởi động hoặc khi xử lý phí.
+ * Ném lỗi nếu thiếu hoặc sai định dạng UUID.
+ * @returns {{ walletId: string, walletPhone: string }}
+ */
+function assertSystemFeeWalletConfigured() {
+  const walletId = String(
+    ("SYSTEM_FEE_WALLET_ID" in process.env
+      ? process.env.SYSTEM_FEE_WALLET_ID
+      : SYSTEM_FEE_WALLET_ID) || "",
+  ).trim();
+  const walletPhone = String(
+    ("SYSTEM_FEE_WALLET_PHONE" in process.env
+      ? process.env.SYSTEM_FEE_WALLET_PHONE
+      : SYSTEM_FEE_WALLET_PHONE) || "",
+  ).trim();
+
+  if (!walletId || !UUID_RE.test(walletId)) {
+    throw new Error(
+      "Thiếu hoặc sai định dạng SYSTEM_FEE_WALLET_ID (mã ví hệ thống) trong biến môi trường",
+    );
+  }
+  if (!walletPhone) {
+    throw new Error(
+      "Thiếu SYSTEM_FEE_WALLET_PHONE (số điện thoại ví hệ thống) trong biến môi trường",
+    );
+  }
+  return { walletId, walletPhone };
+}
+
+// Danh mục định danh các loại phí giao dịch trong toàn bộ hệ thống
 const FEE_TYPES = Object.freeze({
-  QR_FEE: "QR_FEE",
-  USER_FEE: "USER_FEE",
-  WITHDRAW_FEE: "WITHDRAW_FEE",
-  MONTHLY_PLAN_FEE: "MONTHLY_PLAN_FEE",
+  QR_FEE: "QR_FEE",                     // Phí nhận tiền qua mã QR của merchant
+  USER_FEE: "USER_FEE",                 // Phí dịch vụ hoặc phí chuyển tiền người gửi trả
+  WITHDRAW_FEE: "WITHDRAW_FEE",         // Phí rút tiền về ngân hàng
+  MONTHLY_PLAN_FEE: "MONTHLY_PLAN_FEE", // Phí duy trì gói cước theo tháng
 });
 
+// Danh mục các trạng thái gói thu phí theo tháng của merchant
 const MONTHLY_STATUS = Object.freeze({
-  INACTIVE: "INACTIVE",
-  ACTIVE: "ACTIVE",
-  PENDING_ACTIVATE: "PENDING_ACTIVATE",
-  PAST_DUE: "PAST_DUE",
+  INACTIVE: "INACTIVE",                 // Không kích hoạt gói tháng (áp dụng phí từng giao dịch)
+  ACTIVE: "ACTIVE",                     // Đang kích hoạt gói tháng
+  PENDING_ACTIVATE: "PENDING_ACTIVATE", // Chờ kích hoạt
+  PAST_DUE: "PAST_DUE",                 // Quá hạn thanh toán gói tháng (trong thời gian ân hạn)
 });
 
+// Bảng bậc thang tỷ lệ phí QR lũy tiến mặc định của Merchant theo doanh số tháng (dự phòng)
+// 0 -> 50tr: 1.00% (100 bps); 50tr -> 200tr: 0.80% (80 bps); trên 200tr: 0.60% (60 bps)
 const DEFAULT_MERCHANT_FEE_TIERS = Object.freeze([
   Object.freeze({ from_amount: 0, rate_bps: 100 }),
   Object.freeze({ from_amount: 50_000_000, rate_bps: 80 }),
   Object.freeze({ from_amount: 200_000_000, rate_bps: 60 }),
 ]);
 
+// Cấu hình biểu phí mặc định cho Merchant (dự phòng khi cơ sở dữ liệu chưa có cấu hình)
 const DEFAULT_MERCHANT_FEE_CONFIG = Object.freeze({
-  rate_bps: 100,
-  min_fee: 200,
-  max_fee: null,
-  max_fee_unbounded: true,
-  free_threshold_amount: 0,
-  transfer_fee_bps: 0,
-  transfer_min_fee: 0,
-  transfer_max_fee: null,
-  transfer_max_fee_unbounded: true,
-  withdraw_fee_bps: 50,
-  withdraw_free_quota_per_month: 50_000_000,
-  monthly_plan_enabled: false,
-  monthly_plan_fee: 0,
-  monthly_grace_days: 7,
-  tiers: DEFAULT_MERCHANT_FEE_TIERS,
+  rate_bps: 100,                               // Tỷ lệ phí cơ bản mặc định: 1.00% (100 bps)
+  min_fee: 200,                                // Mức phí tối thiểu mỗi giao dịch: 200 VND
+  max_fee: null,                               // Mức phí tối đa mỗi giao dịch: không giới hạn
+  max_fee_unbounded: true,                     // Cờ đánh dấu không giới hạn trần phí
+  free_threshold_amount: 0,                    // Ngưỡng miễn phí đơn hàng nhỏ: 0 (không áp dụng)
+  transfer_fee_bps: 0,                         // Phí chuyển P2P chiều đi của merchant: 0%
+  transfer_min_fee: 0,                         // Mức phí chuyển P2P tối thiểu: 0 VND
+  transfer_max_fee: null,                      // Mức phí chuyển P2P tối đa: không giới hạn
+  transfer_max_fee_unbounded: true,            // Cờ không giới hạn trần phí chuyển P2P
+  withdraw_fee_bps: 50,                        // Tỷ lệ phí rút tiền về ngân hàng: 0.50% (50 bps)
+  withdraw_free_quota_per_month: 50_000_000,   // Hạn mức rút tiền miễn phí mỗi tháng: 50 triệu VND
+  monthly_plan_enabled: false,                 // Gói thuê bao tháng: tắt mặc định
+  monthly_plan_fee: 0,                         // Cước thuê bao tháng: 0 VND
+  monthly_grace_days: 7,                       // Số ngày ân hạn khi quá cước tháng: 7 ngày
+  tiers: DEFAULT_MERCHANT_FEE_TIERS,           // Bảng phân bậc doanh số mặc định
 });
 
+// Cấu hình biểu phí mặc định cho User cá nhân (miễn phí tất cả các luồng)
 const DEFAULT_USER_FEE_CONFIG = Object.freeze({
-  rate_bps: 0,
-  min_fee: 0,
-  max_fee: null,
-  max_fee_unbounded: true,
-  free_threshold_amount: 0,
-  transfer_fee_bps: 0,
-  transfer_min_fee: 0,
-  transfer_max_fee: null,
-  transfer_max_fee_unbounded: true,
-  withdraw_fee_bps: 0,
-  withdraw_free_quota_per_month: 0,
-  monthly_plan_enabled: false,
-  monthly_plan_fee: 0,
-  monthly_grace_days: 7,
-  tiers: [],
+  rate_bps: 0,                                 // Tỷ lệ phí giao dịch: 0%
+  min_fee: 0,                                  // Mức phí tối thiểu: 0 VND
+  max_fee: null,                               // Mức phí tối đa: không giới hạn
+  max_fee_unbounded: true,                     // Cờ không giới hạn trần phí
+  free_threshold_amount: 0,                    // Ngưỡng miễn phí: 0 VND
+  transfer_fee_bps: 0,                         // Tỷ lệ phí chuyển tiền P2P: 0%
+  transfer_min_fee: 0,                         // Mức phí chuyển P2P tối thiểu: 0 VND
+  transfer_max_fee: null,                      // Mức phí chuyển P2P tối đa: không giới hạn
+  transfer_max_fee_unbounded: true,            // Cờ không giới hạn trần phí chuyển P2P
+  withdraw_fee_bps: 0,                         // Tỷ lệ phí rút tiền về ngân hàng: 0% (miễn phí)
+  withdraw_free_quota_per_month: 0,            // Hạn mức rút miễn phí: 0 (mặc định đã miễn phí hoàn toàn)
+  monthly_plan_enabled: false,                 // Không áp dụng gói tháng
+  monthly_plan_fee: 0,                         // Cước tháng: 0 VND
+  monthly_grace_days: 7,                       // Số ngày ân hạn: 7 ngày
+  tiers: [],                                   // Không phân bậc doanh số
 });
 
+/**
+ * Kiểm tra và ép kiểu giá trị đầu vào thành số nguyên không âm (>= 0).
+ * Ném lỗi 400 nếu dữ liệu không phải số hợp lệ hoặc nhỏ hơn 0.
+ * @param {any} raw - Dữ liệu thô cần kiểm tra
+ * @param {string} fieldName - Tên trường dùng để báo lỗi
+ * @returns {number}
+ */
 function parseStrictNonNegativeInt(raw, fieldName) {
   if (raw === undefined || raw === null || typeof raw === "boolean") {
     throw httpError(400, `${fieldName} phải là số nguyên không âm`);
@@ -76,6 +130,12 @@ function parseStrictNonNegativeInt(raw, fieldName) {
   return num;
 }
 
+/**
+ * Kiểm tra số tiền giao dịch phải là số nguyên dương lớn hơn 0 (> 0).
+ * @param {any} raw - Dữ liệu thô cần kiểm tra
+ * @param {string} fieldName - Tên trường dùng để báo lỗi
+ * @returns {number}
+ */
 function assertPositiveIntegerAmount(raw, fieldName = "Số tiền giao dịch") {
   if (raw === undefined || raw === null || typeof raw === "boolean") {
     throw httpError(400, `${fieldName} phải là số nguyên dương lớn hơn 0`);
@@ -92,6 +152,14 @@ function assertPositiveIntegerAmount(raw, fieldName = "Số tiền giao dịch")
   return num;
 }
 
+/**
+ * Quy đổi tỷ lệ phần trăm (0..100%) sang đơn vị basis points (bps, 1% = 100 bps).
+ * Kiểm tra nghiêm ngặt: chỉ hỗ trợ tối đa 2 chữ số thập phân (bội số 0.01%).
+ * Ví dụ: 1 -> 100; 0.85 -> 85; 0.05 -> 5.
+ * @param {number|string} rawPercent - Tỷ lệ phần trăm
+ * @param {string} fieldName - Tên trường báo lỗi
+ * @returns {number} Giá trị bps nguyên (0..10000)
+ */
 function percentToBpsStrict(rawPercent, fieldName = "Tỉ lệ phí (%)") {
   if (rawPercent === undefined || rawPercent === null || typeof rawPercent === "boolean") {
     throw httpError(400, `${fieldName} không hợp lệ`);
@@ -115,6 +183,14 @@ function percentToBpsStrict(rawPercent, fieldName = "Tỉ lệ phí (%)") {
   return rounded;
 }
 
+/**
+ * Chuẩn hóa tỷ lệ phí giữa 2 cách biểu diễn: điểm cơ bản (bps) và phần trăm (%).
+ * Nếu truyền cả hai thì bắt buộc phải khớp nhau về mặt giá trị toán học.
+ * @param {number|string} bpsRaw - Giá trị bps (0..10000)
+ * @param {number|string} percentRaw - Giá trị phần trăm (0..100)
+ * @param {string} fieldName - Tên trường báo lỗi
+ * @returns {number|undefined} Giá trị bps đã chuẩn hóa
+ */
 function normalizeRateBps(bpsRaw, percentRaw, fieldName = "rate_bps") {
   const hasBps = bpsRaw !== undefined && bpsRaw !== null;
   const hasPercent = percentRaw !== undefined && percentRaw !== null;
@@ -148,6 +224,12 @@ function normalizeRateBps(bpsRaw, percentRaw, fieldName = "rate_bps") {
   return hasBps ? bpsFromBps : bpsFromPercent;
 }
 
+/**
+ * Chuẩn hóa và kiểm tra danh sách các bậc thang doanh số đầu vào khi cập nhật biểu phí.
+ * Sắp xếp các bậc theo mốc `from_amount` tăng dần và chặn trùng lặp mốc.
+ * @param {Array<object>} rawTiers - Mảng các bậc doanh số thô
+ * @returns {Array<{ from_amount: number, rate_bps: number, rate_percent: number }>}
+ */
 function normalizeTiersInput(rawTiers) {
   if (rawTiers === undefined || rawTiers === null) {
     return [];
@@ -187,6 +269,13 @@ function normalizeTiersInput(rawTiers) {
   return mapped;
 }
 
+/**
+ * Ép kiểu an toàn dữ liệu bậc thang đọc từ JSON cơ sở dữ liệu sang mảng định dạng chuẩn.
+ * Nếu dữ liệu không hợp lệ thì fallback về danh sách mặc định.
+ * @param {Array<object>} rawTiers - Dữ liệu bậc thang lưu trong DB
+ * @param {Array<object>} fallbackTiers - Danh sách dự phòng
+ * @returns {Array<{ from_amount: number, rate_bps: number, rate_percent: number }>}
+ */
 function coerceStoredTiers(rawTiers, fallbackTiers = []) {
   const source = rawTiers !== undefined ? rawTiers : fallbackTiers;
   if (!Array.isArray(source)) {
@@ -213,7 +302,14 @@ function coerceStoredTiers(rawTiers, fallbackTiers = []) {
 }
 
 /**
- * Chuẩn hóa raw JSON từ system_configs (hỗ trợ cả định dạng mới phẳng và định dạng cũ PER_TRANSACTION/MONTHLY).
+ * Chuẩn hóa đối tượng JSON cấu hình biểu phí thô đọc từ bảng `system_configs`.
+ * - Hỗ trợ cả định dạng phẳng mới và định dạng cũ (lồng trong `PER_TRANSACTION` / `MONTHLY`).
+ * - Áp dụng các giá trị dự phòng (fallback) theo `role` (MERCHANT hoặc USER) nếu dữ liệu thiếu trường.
+ * - Đảm bảo các trường số luôn nguyên, không âm, tỷ lệ bps nằm trong khoảng 0..10000 (0..100%).
+ * 
+ * @param {object} raw - Dữ liệu JSON thô từ DB hoặc API
+ * @param {string} [role="MERCHANT"] - Vai trò đối tượng áp dụng ('MERCHANT' hoặc 'USER')
+ * @returns {object} Cấu hình chuẩn hóa với đầy đủ các trường
  */
 function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
   const normalizedRole = String(role || "").toUpperCase();
@@ -332,7 +428,17 @@ function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
 }
 
 /**
- * Validate dữ liệu đầu vào khi Admin API / CLI cập nhật cấu hình mặc định hoặc riêng theo merchant.
+ * Xác thực và chuẩn hóa toàn bộ dữ liệu khi Admin API / CLI cập nhật cấu hình biểu phí.
+ * - Kiểm tra tính hợp lệ của từng trường (rate_bps, min_fee, max_fee, tiers, withdraw, transfer).
+ * - Kiểm tra bất biến: min_fee <= max_fee và transfer_min_fee <= transfer_max_fee.
+ * - Kiểm tra effective_from không được đặt ở quá khứ nếu là cấu hình override.
+ * 
+ * @param {object} input - Dữ liệu cập nhật từ client
+ * @param {object} [options]
+ * @param {boolean} [options.isOverride=false] - Cờ đánh dấu có phải là override theo lịch hay không
+ * @param {Date} [options.now=new Date()] - Thời điểm hiện tại dùng để so sánh mốc effective_from
+ * @param {object} [options.baseConfig=null] - Cấu hình nền dùng để kiểm tra tính hợp lệ sau khi kế thừa
+ * @returns {object} Đối tượng cấu hình đã chuẩn hóa và xác thực
  */
 function validateFeeConfigInput(
   input,
@@ -399,10 +505,10 @@ function validateFeeConfigInput(
       input.transfer_fee_bps === null && isOverride
         ? null
         : normalizeRateBps(
-            input.transfer_fee_bps,
-            input.transfer_fee_percent,
-            "transfer_fee_percent / transfer_fee_bps",
-          );
+          input.transfer_fee_bps,
+          input.transfer_fee_percent,
+          "transfer_fee_percent / transfer_fee_bps",
+        );
   }
 
   if (input.transfer_min_fee !== undefined) {
@@ -446,10 +552,10 @@ function validateFeeConfigInput(
       input.withdraw_fee_bps === null && isOverride
         ? null
         : normalizeRateBps(
-            input.withdraw_fee_bps,
-            input.withdraw_fee_percent,
-            "withdraw_fee_percent / withdraw_fee_bps",
-          );
+          input.withdraw_fee_bps,
+          input.withdraw_fee_percent,
+          "withdraw_fee_percent / withdraw_fee_bps",
+        );
   }
 
   if (input.withdraw_free_quota_per_month !== undefined) {
@@ -457,9 +563,9 @@ function validateFeeConfigInput(
       input.withdraw_free_quota_per_month === null && isOverride
         ? null
         : parseStrictNonNegativeInt(
-            input.withdraw_free_quota_per_month,
-            "withdraw_free_quota_per_month",
-          );
+          input.withdraw_free_quota_per_month,
+          "withdraw_free_quota_per_month",
+        );
   }
 
   if (input.monthly_plan_enabled !== undefined) {
@@ -582,7 +688,14 @@ function validateFeeConfigInput(
 }
 
 /**
- * Gộp cấu hình mặc định hệ thống với bản ghi override theo lịch của merchant.
+ * Gộp cấu hình mặc định hệ thống với bản ghi cấu hình theo lịch (schedule override) của merchant.
+ * - Các trường trong scheduleOverride nếu khác null/undefined sẽ ghi đè giá trị tương ứng của hệ thống.
+ * - Các trường còn lại sẽ kế thừa từ biểu phí mặc định của hệ thống.
+ * 
+ * @param {object} systemConfig - Cấu hình mặc định hệ thống (MERCHANT_FEE_CONFIG)
+ * @param {object|null} [scheduleOverride=null] - Bản ghi cấu hình biểu phí theo lịch của merchant
+ * @param {string} [role="MERCHANT"] - Vai trò đối tượng áp dụng
+ * @returns {object} Cấu hình hiệu lực hoàn chỉnh sau khi gộp
  */
 function mergeEffectiveFeeConfig(systemConfig, scheduleOverride = null, role = "MERCHANT") {
   const base = normalizeSystemFeeConfig(systemConfig, role);
@@ -610,43 +723,43 @@ function mergeEffectiveFeeConfig(systemConfig, scheduleOverride = null, role = "
       : base.max_fee;
   const freeThresholdAmount =
     scheduleOverride.free_threshold_amount !== null &&
-    scheduleOverride.free_threshold_amount !== undefined
+      scheduleOverride.free_threshold_amount !== undefined
       ? Number(scheduleOverride.free_threshold_amount)
       : base.free_threshold_amount;
   const transferFeeBps =
     scheduleOverride.transfer_fee_bps !== null &&
-    scheduleOverride.transfer_fee_bps !== undefined
+      scheduleOverride.transfer_fee_bps !== undefined
       ? Number(scheduleOverride.transfer_fee_bps)
       : base.transfer_fee_bps;
   const transferMinFee =
     scheduleOverride.transfer_min_fee !== null &&
-    scheduleOverride.transfer_min_fee !== undefined
+      scheduleOverride.transfer_min_fee !== undefined
       ? Number(scheduleOverride.transfer_min_fee)
       : base.transfer_min_fee;
   const transferMaxFee = scheduleOverride.transfer_max_fee_unbounded
     ? null
     : scheduleOverride.transfer_max_fee !== null &&
-        scheduleOverride.transfer_max_fee !== undefined
+      scheduleOverride.transfer_max_fee !== undefined
       ? Number(scheduleOverride.transfer_max_fee)
       : base.transfer_max_fee;
   const withdrawFeeBps =
     scheduleOverride.withdraw_fee_bps !== null &&
-    scheduleOverride.withdraw_fee_bps !== undefined
+      scheduleOverride.withdraw_fee_bps !== undefined
       ? Number(scheduleOverride.withdraw_fee_bps)
       : base.withdraw_fee_bps;
   const withdrawFreeQuotaPerMonth =
     scheduleOverride.withdraw_free_quota_per_month !== null &&
-    scheduleOverride.withdraw_free_quota_per_month !== undefined
+      scheduleOverride.withdraw_free_quota_per_month !== undefined
       ? Number(scheduleOverride.withdraw_free_quota_per_month)
       : base.withdraw_free_quota_per_month;
   const monthlyPlanEnabled =
     scheduleOverride.monthly_plan_enabled !== null &&
-    scheduleOverride.monthly_plan_enabled !== undefined
+      scheduleOverride.monthly_plan_enabled !== undefined
       ? Boolean(scheduleOverride.monthly_plan_enabled)
       : base.monthly_plan_enabled;
   const monthlyPlanFee =
     scheduleOverride.monthly_plan_fee !== null &&
-    scheduleOverride.monthly_plan_fee !== undefined
+      scheduleOverride.monthly_plan_fee !== undefined
       ? Number(scheduleOverride.monthly_plan_fee)
       : base.monthly_plan_fee;
 
@@ -696,7 +809,13 @@ function mergeEffectiveFeeConfig(systemConfig, scheduleOverride = null, role = "
 }
 
 /**
- * Chọn biểu phí đang hiệu lực tại thời điểm `atDate` và biểu phí sắp tới (nếu có).
+ * Chọn biểu phí đang hiệu lực tại thời điểm `atDate` và biểu phí kế tiếp trong tương lai (nếu có).
+ * - Biểu phí hiệu lực: có `effective_from <= atDate` và có mốc áp dụng gần thời điểm xét nhất.
+ * - Biểu phí sắp tới: có `effective_from > atDate` và có mốc áp dụng sớm nhất trong tương lai.
+ * 
+ * @param {Array<object>} schedules - Danh sách các bản ghi lịch biểu phí
+ * @param {Date} [atDate=new Date()] - Thời điểm cần tra cứu hiệu lực
+ * @returns {{ effectiveSchedule: object|null, upcomingSchedule: object|null }}
  */
 function pickEffectiveSchedule(schedules = [], atDate = new Date()) {
   const targetMs = (atDate instanceof Date ? atDate : new Date(atDate)).getTime();
@@ -734,7 +853,13 @@ function pickEffectiveSchedule(schedules = [], atDate = new Date()) {
 }
 
 /**
- * Nhân tỉ lệ theo basis points bằng BigInt thuần và làm tròn gần nhất (half-up = Math.round cho số dương).
+ * Nhân số tiền gốc với tỷ lệ điểm cơ bản (bps) bằng BigInt thuần và làm tròn nửa lên (HALF-UP = Math.round cho số dương).
+ * Công thức: Math.floor((base * bps + 5000) / 10000).
+ * Tránh hoàn toàn sai số dấu phẩy động của JavaScript khi xử lý tiền tệ lớn.
+ * 
+ * @param {number|bigint} baseInt - Số tiền gốc (VND)
+ * @param {number|bigint} bpsInt - Tỷ lệ tính theo basis points (1% = 100 bps)
+ * @returns {number} Số tiền phí sau khi làm tròn
  */
 function roundBpsBigInt(baseInt, bpsInt) {
   const base = BigInt(baseInt);
@@ -743,10 +868,12 @@ function roundBpsBigInt(baseInt, bpsInt) {
 }
 
 /**
- * Công thức chuẩn:
- * - Nếu gói tháng đang hiệu lực (ACTIVE hoặc trong grace period PAST_DUE): fee = 0
- * - Nếu amount < free_threshold_amount (khi free_threshold_amount > 0): fee = 0
- * - Ngược lại: fee = clamp(round(amount * rate_bps / 10000), min_fee, max_fee)
+ * Lấy bảng bậc thang tính phí có hiệu lực từ đối tượng cấu hình.
+ * - Chuẩn hóa và sắp xếp các mốc `from_amount` tăng dần.
+ * - Luôn đảm bảo mốc bắt đầu đầu tiên `from_amount = 0` được gán tỷ lệ mặc định nếu mảng không bắt đầu từ 0.
+ * 
+ * @param {object} cfg - Đối tượng cấu hình biểu phí
+ * @returns {Array<{ from_amount: number, rate_bps: number }>}
  */
 function getEffectiveTierSchedule(cfg) {
   const rawTiers = Array.isArray(cfg.tiers) ? cfg.tiers : [];
@@ -766,56 +893,99 @@ function getEffectiveTierSchedule(cfg) {
   return normalized;
 }
 
+/**
+ * Hàm tính phí lũy tiến bậc thang theo doanh số nhận QR trong tháng (chưa áp sàn/trần).
+ * 
+ * Nguyên tắc:
+ * - Doanh số tích lũy tính trên số tiền gốc của giao dịch (chưa trừ phí).
+ * - Nếu giao dịch vượt qua mốc bậc thang (ví dụ từ 49tr lên 52tr), giao dịch sẽ được tách đôi:
+ *   + Khúc 1tr lấp đầy 50tr chịu 1%.
+ *   + Khúc 2tr vượt 50tr chịu 0.8%.
+ * - Làm tròn tiền phí một lần duy nhất ở cuối theo công thức HALF-UP: (tổng_bps + 5000) / 10000.
+ *
+ * @param {number} amount - Số tiền của giao dịch hiện tại (VND nguyên dương).
+ * @param {number} alreadyMonthlyGross - Doanh số nhận QR tích lũy trong tháng tính đến trước giao dịch này.
+ * @param {object} cfg - Cấu hình phí của đối tượng (chứa bảng tiers hoặc rate_bps cơ bản).
+ * @returns {object} { rawFee, effectiveRateBps, effectiveRatePercent, monthlyGrossBefore, monthlyGrossAfter, breakdown }
+ */
 function calculateProgressiveRawFee(amount, alreadyMonthlyGross, cfg) {
+  // 1. Kiểm tra và chuẩn hóa doanh số tháng trước giao dịch thành số nguyên không âm
   const validGrossBefore = parseStrictNonNegativeInt(
     alreadyMonthlyGross,
     "alreadyMonthlyGross",
   );
-  const start = BigInt(validGrossBefore);
-  const end = start + BigInt(amount);
+
+  // 2. Chuyển sang BigInt để tránh tràn số và sai số số thực khi tính toán với số tiền lớn
+  const start = BigInt(validGrossBefore);      // Điểm bắt đầu của giao dịch trên trục doanh số tháng
+  const end = start + BigInt(amount);          // Điểm kết thúc của giao dịch sau khi cộng thêm số tiền này
+
+  // 3. Lấy bảng phân bậc có hiệu lực (ví dụ: [0->50tr: 100 bps], [50tr->200tr: 80 bps], [200tr+: 60 bps])
   const schedule = getEffectiveTierSchedule(cfg);
 
-  let totalWeightedBps = 0n;
-  let singleRateBps = null;
-  const breakdown = [];
+  let totalWeightedBps = 0n; // Tổng tích lũy của (slice_amount * rate_bps) dùng để tính phí làm tròn một lần ở cuối
+  let singleRateBps = null;  // Lưu rate_bps nếu giao dịch nằm trọn vẹn trong duy nhất 1 bậc
+  const breakdown = [];      // Danh sách chi tiết các khúc tiền rơi vào từng bậc thang
 
+  // 4. Lặp qua từng bậc để cắt lát (slice) số tiền giao dịch
   for (let i = 0; i < schedule.length; i += 1) {
-    const tierStart = BigInt(schedule[i].from_amount);
-    const tierEnd = i + 1 < schedule.length ? BigInt(schedule[i + 1].from_amount) : null;
-    const segStart = start > tierStart ? start : tierStart;
-    const segEnd = tierEnd !== null && end > tierEnd ? tierEnd : end;
+    const tierStart = BigInt(schedule[i].from_amount); // Ngưỡng dưới của bậc hiện tại
+    const tierEnd = i + 1 < schedule.length ? BigInt(schedule[i + 1].from_amount) : null; // Ngưỡng trên (null nếu là bậc vô hạn cuối cùng)
 
+    // Xác định phần giao giữa đoạn giao dịch [start, end] và khoảng của bậc [tierStart, tierEnd]
+    const segStart = start > tierStart ? start : tierStart; // Điểm bắt đầu của khúc tiền trong bậc này
+    const segEnd = tierEnd !== null && end > tierEnd ? tierEnd : end; // Điểm kết thúc của khúc tiền trong bậc này
+
+    // Nếu có tiền rơi vào bậc này (đoạn giao hợp lệ)
     if (segEnd > segStart) {
-      const sliceAmount = segEnd - segStart;
-      const rateBps = schedule[i].rate_bps;
-      totalWeightedBps += sliceAmount * BigInt(rateBps);
-      singleRateBps = rateBps;
+      const sliceAmount = segEnd - segStart;   // Độ dài khúc tiền rơi vào bậc này
+      const rateBps = schedule[i].rate_bps;    // Tỷ lệ phí của bậc này tính theo bps (100 bps = 1%)
+
+      totalWeightedBps += sliceAmount * BigInt(rateBps); // Cộng dồn tích lũy để tính phí
+      singleRateBps = rateBps;                 // Ghi nhận rate_bps nếu chỉ có 1 bậc
+
+      // Ghi lại chi tiết khúc tiền này vào breakdown
       breakdown.push({
-        from_amount: Number(tierStart),
-        to_amount: tierEnd !== null ? Number(tierEnd) : null,
-        slice_amount: Number(sliceAmount),
-        rate_percent: Number((rateBps / 100).toFixed(2)),
+        from_amount: Number(tierStart),                       // Mốc dưới của bậc
+        to_amount: tierEnd !== null ? Number(tierEnd) : null, // Mốc trên của bậc (null nếu là bậc cuối)
+        slice_amount: Number(sliceAmount),                    // Số tiền của giao dịch rơi vào bậc này
+        rate_percent: Number((rateBps / 100).toFixed(2)),     // % phí của riêng bậc này
       });
     }
   }
 
-  // Làm tròn một lần duy nhất ở cuối phép tính lũy tiến (HALF-UP)
+  // 5. Tính phí thô bằng cách chia 10.000 với quy tắc làm tròn HALF-UP (cộng 5.000 trước khi chia nguyên)
+  // Ví dụ: 10.049 * 100 + 5000 = 1.009.900 / 10000 = 100đ; 10.050 * 100 + 5000 = 1.010.000 / 10000 = 101đ
   const rawFee = Number((totalWeightedBps + 5000n) / 10000n);
+
+  // 6. Tính tỷ lệ % hiệu dụng (effectiveRateBps) của cả đơn:
+  // - Nếu đơn chỉ rơi vào đúng 1 bậc: lấy chính xác tỷ lệ của bậc đó (ví dụ 100 bps = 1%).
+  // - Nếu đơn bắc cầu qua 2 bậc: lấy trung bình gia quyền (tổng_tích_lũy / tổng_tiền) và làm tròn HALF-UP.
+  //   LƯU Ý: Con số này chỉ dùng để ghi nhận/hiển thị tỷ lệ tương đối của đơn, không dùng để nhân ra tiền phí.
   const effectiveRateBps =
     breakdown.length === 1 && singleRateBps !== null
       ? singleRateBps
       : Number((totalWeightedBps + BigInt(Math.floor(amount / 2))) / BigInt(amount));
 
   return {
-    rawFee,
-    effectiveRateBps,
-    effectiveRatePercent: Number((effectiveRateBps / 100).toFixed(2)),
-    monthlyGrossBefore: validGrossBefore,
-    monthlyGrossAfter: validGrossBefore + amount,
-    breakdown,
+    rawFee,                                            // Phí thô tính theo tỷ lệ bậc thang (chưa áp min/max fee)
+    effectiveRateBps,                                  // Tỷ lệ hiệu dụng theo bps
+    effectiveRatePercent: Number((effectiveRateBps / 100).toFixed(2)), // Tỷ lệ hiệu dụng quy đổi ra % (ví dụ 0.87%)
+    monthlyGrossBefore: validGrossBefore,              // Doanh số tháng trước giao dịch
+    monthlyGrossAfter: validGrossBefore + amount,      // Doanh số tháng sau giao dịch
+    breakdown,                                         // Danh sách chi tiết các bậc đã cắt lát
   };
 }
 
+/**
+ * Hàm tính chi tiết phí cho một giao dịch đơn lẻ (áp dụng cho QR payment hoặc P2P).
+ * Xử lý tuần tự:
+ * 1. Kiểm tra miễn phí gói tháng (nếu có).
+ * 2. Kiểm tra miễn phí theo ngưỡng đơn hàng nhỏ (free_threshold_amount).
+ * 3. Tính phí thô theo bậc thang lũy tiến (calculateProgressiveRawFee).
+ * 4. Chặn ngưỡng sàn (min_fee) và trần (max_fee nếu có).
+ * 5. Đảm bảo bất biến: Phí không bao giờ vượt quá số tiền giao dịch (clampedFee <= validAmount), thực nhận không âm.
+ * 6. Đóng gói snapshot biểu phí để lưu DB và trả về kết quả.
+ */
 function calculatePerTransactionFeeDetails(
   amount,
   effectiveConfig,
@@ -828,25 +998,34 @@ function calculatePerTransactionFeeDetails(
     feePlan = null,
   } = {},
 ) {
+  // 1. Kiểm tra và chuẩn hóa số tiền giao dịch thành số nguyên dương
   const validAmount = assertPositiveIntegerAmount(amount);
+
+  // 2. Chuẩn hóa cấu hình biểu phí tương ứng với role (MERCHANT hoặc USER)
   const cfg = normalizeSystemFeeConfig(effectiveConfig, role);
+
+  // 3. Kiểm tra xem cấu hình có phân bậc thang hay không
   const isTiered = Array.isArray(cfg.tiers) && cfg.tiers.length > 0;
+
+  // 4. Chuẩn hóa doanh số tháng trước giao dịch
   const validGrossBefore = parseStrictNonNegativeInt(
     alreadyMonthlyGross,
     "alreadyMonthlyGross",
   );
 
+  // 5. Chuẩn bị metadata cho snapshot: schedule_id (nếu là biểu phí riêng của admin) và thông tin doanh số tháng
   const scheduleMeta = effectiveConfig?.schedule_id
     ? { schedule_id: effectiveConfig.schedule_id }
     : {};
   const isQrFee = feeType === FEE_TYPES.QR_FEE;
   const qrGrossMeta = isQrFee
     ? {
-        monthly_qr_gross_before: validGrossBefore,
-        monthly_qr_gross_after: validGrossBefore + validAmount,
-      }
+      monthly_qr_gross_before: validGrossBefore,
+      monthly_qr_gross_after: validGrossBefore + validAmount,
+    }
     : {};
 
+  // TRƯỜNG HỢP A: Miễn phí vì đang áp dụng gói tháng hoặc đang trong ân hạn
   if (monthlyPlanActive) {
     const exemptReason =
       monthlyStatus === MONTHLY_STATUS.PAST_DUE
@@ -870,6 +1049,7 @@ function calculatePerTransactionFeeDetails(
     };
   }
 
+  // TRƯỜNG HỢP B: Miễn phí nếu số tiền giao dịch nhỏ hơn ngưỡng miễn phí (nếu được cấu hình > 0)
   if (cfg.free_threshold_amount > 0 && validAmount < cfg.free_threshold_amount) {
     return {
       amount: validAmount,
@@ -893,34 +1073,50 @@ function calculatePerTransactionFeeDetails(
     };
   }
 
+  // TRƯỜNG HỢP C: Tính phí bậc thang thông thường
+  // 1. Tính phí thô theo các bậc thang doanh số
   const prog = calculateProgressiveRawFee(validAmount, validGrossBefore, cfg);
   let clampedFee = prog.rawFee;
   let clampedToMin = false;
   let clampedToMax = false;
   let clampedToAmount = false;
 
+  // 2. Chặn sàn: Nếu phí tính ra nhỏ hơn min_fee, nâng lên bằng min_fee (ví dụ phí tối thiểu 200đ)
   if (clampedFee < cfg.min_fee) {
     clampedFee = cfg.min_fee;
     clampedToMin = true;
   }
+
+  // 3. Chặn trần: Nếu có cấu hình max_fee và phí vượt trần, hạ xuống bằng max_fee
   if (cfg.max_fee !== null && clampedFee > cfg.max_fee) {
     clampedFee = cfg.max_fee;
     clampedToMax = true;
   }
+
+  // 4. Bất biến tiền tệ: Phí không bao giờ được lớn hơn số tiền giao dịch (đơn 150đ < min_fee 200đ thì phí = 150đ, net = 0đ)
   if (clampedFee > validAmount) {
     clampedFee = validAmount;
     clampedToAmount = true;
   }
 
   return {
-    amount: validAmount,
-    fee_amount: clampedFee,
-    net_amount: validAmount - clampedFee,
-    exempt_reason: null,
-    raw_fee: prog.rawFee,
-    clamped_to_min: clampedToMin,
-    clamped_to_max: clampedToMax,
-    clamped_to_amount: clampedToAmount,
+    amount: validAmount,                         // Số tiền gốc của giao dịch
+    fee_amount: clampedFee,                      // Số tiền phí thực tế phải thu sau khi đã áp sàn/trần
+    net_amount: validAmount - clampedFee,        // Số tiền thực nhận sau khi trừ phí (luôn >= 0)
+    exempt_reason: null,                         // Không được miễn phí
+    raw_fee: prog.rawFee,                        // Phí thô ban đầu trước khi kẹp sàn/trần
+    clamped_to_min: clampedToMin,                // Cờ báo: có bị ép lên mức phí tối thiểu không
+    clamped_to_max: clampedToMax,                // Cờ báo: có bị cắt xuống mức phí tối đa không
+    clamped_to_amount: clampedToAmount,          // Cờ báo: có bị giới hạn bằng số tiền giao dịch không
+    /**
+     * fee_rate_snapshot: Ảnh chụp biểu phí tại đúng thời điểm giao dịch thành công.
+     * Dùng để lưu vết đối soát và hiển thị trên Web/App:
+     * - fee_type: Loại phí ('QR_FEE', 'WITHDRAW_FEE', 'USER_FEE', 'MONTHLY_PLAN_FEE').
+     * - rate_percent: % phí hiệu dụng (nếu bắc cầu nhiều bậc thì là % bình quân gia quyền của cả đơn, ví dụ 0.87%).
+     * - min_fee, max_fee: Ngưỡng sàn/trần phí áp dụng.
+     * - tier_breakdown: Chi tiết từng khúc tiền rơi vào bậc nào (from_amount, to_amount, slice_amount, rate_percent).
+     * - monthly_qr_gross_before/after: Doanh số tháng xét bậc trước và sau khi cộng giao dịch này.
+     */
     fee_rate_snapshot: {
       fee_type: feeType,
       rate_percent: prog.effectiveRatePercent,
@@ -936,7 +1132,13 @@ function calculatePerTransactionFeeDetails(
 }
 
 /**
- * Tính phí chuyển P2P chiều đi của ví MERCHANT theo transfer_fee_bps / transfer_min_fee / transfer_max_fee.
+ * Tính chi tiết phí chuyển tiền P2P chiều đi từ ví MERCHANT sang ví khác.
+ * Áp dụng cấu hình riêng cho chuyển tiền của merchant:
+ * `transfer_fee_bps` (tỷ lệ %), `transfer_min_fee` (sàn), `transfer_max_fee` (trần).
+ * 
+ * @param {number} amount - Số tiền chuyển (VND)
+ * @param {object} effectiveConfig - Cấu hình phí hiệu lực của merchant gửi
+ * @returns {object} Chi tiết phí, thực nhận, số dư trừ và snapshot biểu phí
  */
 function calculateMerchantTransferFeeDetails(amount, effectiveConfig) {
   const cfg = normalizeSystemFeeConfig(effectiveConfig, "MERCHANT");
@@ -961,7 +1163,18 @@ function calculateMerchantTransferFeeDetails(amount, effectiveConfig) {
 }
 
 /**
- * Tính phí rút tiền chỉ trên phần vượt hạn mức miễn phí tháng hiện tại.
+ * Tính chi tiết phí rút tiền về ngân hàng liên kết.
+ * Nguyên tắc:
+ * - Chỉ tính phí trên phần tiền vượt quá hạn mức rút miễn phí tích lũy trong tháng (taxableExcessAmount).
+ * - Phần nằm trong hạn mức miễn phí (freeCoveredAmount) có phí = 0 VND.
+ * - Ví USER cá nhân mặc định miễn phí rút tiền hoàn toàn.
+ * 
+ * @param {number} amount - Số tiền muốn rút về ngân hàng (VND)
+ * @param {object} effectiveConfig - Cấu hình biểu phí của người rút
+ * @param {object} [options]
+ * @param {number} [options.alreadyWithdrawn=0] - Tổng số tiền đã rút tích lũy trong tháng hiện tại
+ * @param {string} [options.role="MERCHANT"] - Vai trò người rút ('MERCHANT' hoặc 'USER')
+ * @returns {object} Chi tiết số tiền, phí rút, tổng tiền trừ khỏi ví, hạn mức còn lại và snapshot
  */
 function calculateWithdrawFeeDetails(
   amount,
@@ -1006,9 +1219,9 @@ function calculateWithdrawFeeDetails(
       taxable_excess_amount: taxableExcessAmount,
       ...(quota > 0
         ? {
-            withdraw_free_quota_per_month: quota,
-            already_withdrawn_before: validAlreadyWithdrawn,
-          }
+          withdraw_free_quota_per_month: quota,
+          already_withdrawn_before: validAlreadyWithdrawn,
+        }
         : {}),
       ...(effectiveConfig?.schedule_id
         ? { schedule_id: effectiveConfig.schedule_id }
@@ -1018,7 +1231,28 @@ function calculateWithdrawFeeDetails(
 }
 
 /**
- * Hàm tính preview thống nhất cho App Flutter, Web Merchant và Admin --dry-run / preview.
+ * Hàm tính toán xem trước (preview) phí giao dịch thống nhất cho App Flutter, Web Merchant và Admin CLI (--dry-run).
+ * Hỗ trợ tất cả các loại giao dịch:
+ * - PAYMENT / QR_PAYMENT: Phí người nhận (Merchant) chịu theo bậc doanh số tháng hoặc gói cước tháng.
+ * - WITHDRAW: Phí người rút (Sender) chịu nếu vượt hạn mức rút miễn phí tích lũy trong tháng.
+ * - TRANSFER / P2P:
+ *   + Người gửi (Merchant hoặc User) chịu phí chuyển (nếu có cấu hình).
+ *   + Nếu người nhận là Merchant: tính thêm phí nhận QR inbound từ biểu phí của Merchant nhận.
+ * - TOPUP: Miễn phí nạp tiền (0 VND).
+ *
+ * @param {object} params
+ * @param {string} params.transactionType - Loại giao dịch ('PAYMENT', 'QR_PAYMENT', 'WITHDRAW', 'TRANSFER', 'TOPUP')
+ * @param {string} [params.role="USER"] - Vai trò của người thực hiện ('USER' hoặc 'MERCHANT')
+ * @param {number} params.amount - Số tiền giao dịch (VND)
+ * @param {object} [params.effectiveConfig] - Cấu hình biểu phí hiệu lực của người thực hiện
+ * @param {number} [params.alreadyWithdrawn=0] - Số tiền đã rút tích lũy trong tháng (dùng cho WITHDRAW)
+ * @param {number} [params.alreadyMonthlyGross=0] - Doanh số QR tích lũy trong tháng của người gửi (nếu là Merchant)
+ * @param {string} [params.destinationRole=null] - Vai trò của người nhận trong chuyển tiền P2P
+ * @param {object} [params.recipientEffectiveConfig=null] - Cấu hình biểu phí của người nhận (nếu nhận là Merchant)
+ * @param {number} [params.recipientMonthlyGross=0] - Doanh số tích lũy tháng của người nhận (nếu nhận là Merchant)
+ * @param {boolean} [params.monthlyPlanActive=false] - Trạng thái kích hoạt gói tháng của Merchant
+ * @param {string} [params.monthlyStatus=MONTHLY_STATUS.INACTIVE] - Trạng thái chi tiết gói tháng
+ * @returns {object} Chi tiết kết quả preview gồm: transaction_type, amount, fee_amount, fee_payer, net_amount, total_debit_from_payer, total_receive_by_merchant, exempt_reason, fee_rate_snapshot, withdraw_quota
  */
 function previewFeeCalculation({
   transactionType,
@@ -1088,11 +1322,11 @@ function previewFeeCalculation({
       normalizedRole === "MERCHANT"
         ? calculateMerchantTransferFeeDetails(validAmount, effectiveConfig)
         : calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
-            monthlyPlanActive: false,
-            role: "USER",
-            feeType: FEE_TYPES.USER_FEE,
-            feePlan: "USER_TRANSFER",
-          });
+          monthlyPlanActive: false,
+          role: "USER",
+          feeType: FEE_TYPES.USER_FEE,
+          feePlan: "USER_TRANSFER",
+        });
 
     const destIsMerchant =
       String(destinationRole || "").trim().toUpperCase() === "MERCHANT" &&
@@ -1127,15 +1361,15 @@ function previewFeeCalculation({
 
     const snapshot = inboundMerchantDetails
       ? {
-          ...inboundMerchantDetails.fee_rate_snapshot,
-          inbound_transfer_qr_fee: true,
-          ...(senderFee > 0
-            ? {
-                sender_fee_amount: senderFee,
-                sender_fee_snapshot: senderDetails.fee_rate_snapshot,
-              }
-            : {}),
-        }
+        ...inboundMerchantDetails.fee_rate_snapshot,
+        inbound_transfer_qr_fee: true,
+        ...(senderFee > 0
+          ? {
+            sender_fee_amount: senderFee,
+            sender_fee_snapshot: senderDetails.fee_rate_snapshot,
+          }
+          : {}),
+      }
       : senderDetails.fee_rate_snapshot;
 
     return {
@@ -1177,6 +1411,21 @@ function previewFeeCalculation({
   );
 }
 
+/**
+ * Tính toán các thông tin mốc thời gian chu kỳ tháng theo múi giờ Việt Nam (Asia/Ho_Chi_Minh, UTC+7).
+ * Phục vụ đối soát doanh số tháng, xác định hạn mức rút tiền miễn phí và chu kỳ gia hạn gói cước.
+ *
+ * @param {number} [nowMs=Date.now()] - Thời điểm cần tính (mili-giây UTC)
+ * @returns {{
+ *   currentMonth: string,        // Chuỗi tháng hiện tại định dạng "MM/YYYY" (ví dụ: "11/2026")
+ *   currentMonthKey: string,     // Khóa tháng hiện tại định dạng "YYYY-MM" (ví dụ: "2026-11")
+ *   currentMonthEndDate: string, // Ngày cuối cùng của tháng hiện tại định dạng "DD/MM/YYYY" (ví dụ: "30/11/2026")
+ *   nextMonth: string,           // Chuỗi tháng kế tiếp định dạng "MM/YYYY" (ví dụ: "12/2026")
+ *   nextMonthKey: string,        // Khóa tháng kế tiếp định dạng "YYYY-MM" (ví dụ: "2026-12")
+ *   nextMonthStart: Date,        // Đối tượng Date tại thời điểm 00:00:00 ngày đầu tiên của tháng kế tiếp (theo giờ VN)
+ *   nextMonthStartDate: string   // Ngày đầu tiên của tháng kế tiếp định dạng "01/MM/YYYY" (ví dụ: "01/12/2026")
+ * }}
+ */
 function getVnMonthMeta(nowMs = Date.now()) {
   const vnNow = new Date(nowMs + VN_OFFSET_MS);
   const year = vnNow.getUTCFullYear();
@@ -1205,6 +1454,7 @@ function getVnMonthMeta(nowMs = Date.now()) {
 module.exports = {
   SYSTEM_FEE_WALLET_ID,
   SYSTEM_FEE_WALLET_PHONE,
+  assertSystemFeeWalletConfigured,
   VN_OFFSET_MS,
   FEE_TYPES,
   MONTHLY_STATUS,

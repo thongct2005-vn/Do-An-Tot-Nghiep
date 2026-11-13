@@ -7,7 +7,7 @@ const transactionController = {
   async transferMoney(req, res, next) {
     try {
       const idempotencyKey = req.idempotencyKey;
-      const { user_id: sourceUserId } = req.user;
+      const { user_id: sourceUserId, role, type } = req.user;
       const {
         destination_user_id: destinationUserId,
         amount,
@@ -15,6 +15,7 @@ const transactionController = {
       } = req.body;
       const result = await transactionService.transferMoney({
         sourceUserId,
+        role: role || type,
         destinationUserId,
         amount,
         description,
@@ -63,11 +64,12 @@ const transactionController = {
   },
   async topupMoney(req, res, next) {
     try {
-      const { user_id: sourceUserId } = req.user;
+      const { user_id: sourceUserId, role, type } = req.user;
       const idempotencyKey = req.idempotencyKey;
       const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
       const result = await transactionService.topupMoney({
         sourceUserId,
+        role: role || type,
         amount,
         idempotencyKey,
         linkedBankAccountId,
@@ -102,11 +104,12 @@ const transactionController = {
 
   async withdrawMoney(req, res, next) {
     try {
-      const { user_id: sourceUserId } = req.user;
+      const { user_id: sourceUserId, role, type } = req.user;
       const idempotencyKey = req.idempotencyKey;
       const { linked_bank_account_id: linkedBankAccountId, amount } = req.body;
       const result = await transactionService.withdrawMoney({
         sourceUserId,
+        role: role || type,
         amount,
         idempotencyKey,
         linkedBankAccountId,

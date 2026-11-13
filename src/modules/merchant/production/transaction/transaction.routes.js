@@ -76,15 +76,6 @@ router.post(
   transactionController.withdrawMoney,
 );
 
-router.post(
-  "/qr-payment",
-  authMiddleware.verifyAccessToken,
-  moneyRisk,
-  transactionLimiter,
-  idempotencyMiddleware.checkIdempotencyKey,
-  transactionController.processQRPayment,
-);
-
 router.get(
   "/history",
   authMiddleware.verifyAccessToken,

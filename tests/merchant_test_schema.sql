@@ -82,43 +82,6 @@ CREATE TABLE transactions (
   created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at timestamptz DEFAULT NOW(),
   linked_bank_account_id uuid REFERENCES linked_bank_accounts(id)
 );
-CREATE TABLE merchant_fee_settings (
-  merchant_user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  fee_plan varchar NOT NULL DEFAULT 'PER_TRANSACTION' CHECK (fee_plan IN ('PER_TRANSACTION', 'MONTHLY')),
-  pending_fee_plan varchar CHECK (pending_fee_plan IN ('PER_TRANSACTION', 'MONTHLY')),
-  expires_at timestamptz,
-  updated_at timestamptz NOT NULL DEFAULT NOW(),
-  monthly_plan_enabled boolean NOT NULL DEFAULT false,
-  monthly_status varchar(20) NOT NULL DEFAULT 'INACTIVE' CHECK (monthly_status IN ('INACTIVE', 'ACTIVE', 'PENDING_ACTIVATE', 'PAST_DUE')),
-  grace_until timestamptz,
-  overdue_month_key varchar(7),
-  overdue_amount bigint NOT NULL DEFAULT 0 CHECK (overdue_amount >= 0),
-  CHECK (fee_plan <> 'MONTHLY' OR expires_at IS NOT NULL)
-);
-CREATE TABLE merchant_fee_schedules (
-  id uuid PRIMARY KEY,
-  merchant_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  effective_from timestamptz NOT NULL DEFAULT NOW(),
-  rate_bps integer CHECK (rate_bps IS NULL OR (rate_bps >= 0 AND rate_bps <= 10000)),
-  min_fee bigint CHECK (min_fee IS NULL OR min_fee >= 0),
-  max_fee bigint CHECK (max_fee IS NULL OR max_fee >= 0),
-  max_fee_unbounded boolean NOT NULL DEFAULT false,
-  free_threshold_amount bigint CHECK (free_threshold_amount IS NULL OR free_threshold_amount >= 0),
-  transfer_fee_bps integer CHECK (transfer_fee_bps IS NULL OR (transfer_fee_bps >= 0 AND transfer_fee_bps <= 10000)),
-  transfer_min_fee bigint CHECK (transfer_min_fee IS NULL OR transfer_min_fee >= 0),
-  transfer_max_fee bigint CHECK (transfer_max_fee IS NULL OR transfer_max_fee >= 0),
-  transfer_max_fee_unbounded boolean NOT NULL DEFAULT false,
-  withdraw_fee_bps integer CHECK (withdraw_fee_bps IS NULL OR (withdraw_fee_bps >= 0 AND withdraw_fee_bps <= 10000)),
-  withdraw_free_quota_per_month bigint CHECK (withdraw_free_quota_per_month IS NULL OR withdraw_free_quota_per_month >= 0),
-  monthly_plan_enabled boolean,
-  monthly_plan_fee bigint CHECK (monthly_plan_fee IS NULL OR monthly_plan_fee >= 0),
-  tiers jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(tiers) = 'array'),
-  reason text,
-  created_by_actor varchar(120),
-  created_at timestamptz NOT NULL DEFAULT NOW(),
-  CHECK (min_fee IS NULL OR max_fee IS NULL OR min_fee <= max_fee),
-  CHECK (transfer_min_fee IS NULL OR transfer_max_fee IS NULL OR transfer_min_fee <= transfer_max_fee)
-);
 CREATE TABLE merchant_monthly_usage (
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   month_key varchar(7) NOT NULL,
@@ -134,7 +97,6 @@ CREATE TABLE fee_ledger_entries (
   payer_user_id uuid REFERENCES users(id) ON DELETE RESTRICT,
   fee_type varchar(30) NOT NULL CHECK (fee_type IN ('QR_FEE', 'USER_FEE', 'WITHDRAW_FEE', 'MONTHLY_PLAN_FEE')),
   amount bigint NOT NULL CHECK (amount >= 0),
-  rate_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
   fee_wallet_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   fee_wallet_balance_before bigint NOT NULL,
   fee_wallet_balance_after bigint NOT NULL,

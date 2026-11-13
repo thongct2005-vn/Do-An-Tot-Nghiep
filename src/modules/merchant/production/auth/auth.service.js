@@ -1,5 +1,5 @@
 const merchantAuthRepository = require("./auth.repository");
-const otpService = require("../../../../modules/otp/otp.service");
+const otpService = require("../../../otp/otp.service");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 const {

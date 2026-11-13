@@ -14,7 +14,7 @@ const {
   calculateWithdrawFeeDetails,
   previewFeeCalculation,
   getVnMonthMeta,
-} = require("../../../../modules/fee/feeCalculator");
+} = require("../../../fee/feeCalculator");
 
 const FEE_PLANS = ["PER_TRANSACTION"];
 
@@ -118,8 +118,8 @@ function formatPlanList(feeConfig, currentPlan, pendingPlan) {
   const tierText =
     formattedTiers.length > 1
       ? `Lũy tiến theo doanh số QR tháng (${formattedTiers
-          .map((t) => `${t.rate_percent}%`)
-          .join(" → ")})`
+        .map((t) => `${t.rate_percent}%`)
+        .join(" → ")})`
       : `${percent}% / giao dịch`;
 
   return [
@@ -287,186 +287,6 @@ function buildStatusResponse({
   return payload;
 }
 
-/**
- * Thu lại phí gói tháng đang quá hạn (`PAST_DUE`), hoặc hạ về PER_TRANSACTION nếu đã hết grace_until.
- * An toàn khi gọi trong DB transaction đang khoá user & merchant_fee_settings.
- */
-async function processPastDueSettingTx(
-  client,
-  { merchantUser, setting, feeConfig, nowMs = Date.now(), triggerTransactionId = null },
-) {
-  const overdueAmount = Number(setting?.overdue_amount ?? 0);
-  const isPastDue = setting?.monthly_status === MONTHLY_STATUS.PAST_DUE;
-  if (!setting || (!isPastDue && overdueAmount <= 0)) {
-    return { setting, action: null, recovered: false };
-  }
-
-  const graceUntilMs = setting.grace_until
-    ? new Date(setting.grace_until).getTime()
-    : null;
-  const graceExpired =
-    graceUntilMs !== null && !Number.isNaN(graceUntilMs) && graceUntilMs <= nowMs;
-  const effectiveOverdueAmount =
-    overdueAmount > 0 ? overdueAmount : Number(feeConfig.monthly_plan_fee ?? 0);
-  const overdueMonthKey = setting.overdue_month_key || getVnMonthMeta(nowMs).currentMonthKey;
-
-  if (
-    effectiveOverdueAmount > 0 &&
-    Number(merchantUser.balance) >= effectiveOverdueAmount
-  ) {
-    const [yr, mo] = overdueMonthKey.split("-");
-    const monthLabel = yr && mo ? `${mo}/${yr}` : overdueMonthKey;
-    const chargeRes = await merchantFeeRepository.chargeMonthlyFeeTx(client, {
-      merchantUser,
-      amount: effectiveOverdueAmount,
-      monthLabel,
-      monthKey: overdueMonthKey,
-      idempotencyKey: `MERCHANT_FEE:${merchantUser.id}:${overdueMonthKey}`,
-      rateSnapshot: {
-        fee_type: FEE_TYPES.MONTHLY_PLAN_FEE,
-        ...(feeConfig.schedule_id ? { schedule_id: feeConfig.schedule_id } : {}),
-        month_key: overdueMonthKey,
-        monthly_plan_fee: effectiveOverdueAmount,
-        recovered_from_past_due: true,
-        downgraded_after_grace: !isPastDue || graceExpired,
-      },
-    });
-
-    if (chargeRes.charged) {
-      if (chargeRes.balanceAfter !== undefined) {
-        merchantUser.balance = chargeRes.balanceAfter;
-      }
-      const recoveredSetting = await merchantFeeRepository.upsertFeeSetting(client, {
-        merchantUserId: merchantUser.id,
-        feePlan: "PER_TRANSACTION",
-        pendingFeePlan: null,
-        expiresAt: null,
-        monthlyPlanEnabled: false,
-        monthlyStatus: MONTHLY_STATUS.INACTIVE,
-        graceUntil: null,
-        overdueMonthKey: null,
-        overdueAmount: 0,
-      });
-
-      await merchantFeeRepository.recordAudit(client, {
-        eventType: "MERCHANT_MONTHLY_FEE_RECOVERED",
-        payload: {
-          merchant_user_id: merchantUser.id,
-          month_key: overdueMonthKey,
-          amount: effectiveOverdueAmount,
-          transaction_id: chargeRes.transactionId || null,
-          trigger_transaction_id: triggerTransactionId || null,
-          kept_fee_plan: "PER_TRANSACTION",
-        },
-      });
-
-      console.info(
-        `[fee] Recovered overdue fee merchant=${merchantUser.id} month=${overdueMonthKey} amount=${effectiveOverdueAmount}`,
-      );
-      return { setting: recoveredSetting, action: "RECOVERED", recovered: true };
-    }
-  }
-
-  if (isPastDue && graceExpired) {
-    // Hạ về PER_TRANSACTION khi hết thời gian ân hạn nhưng GIỮ nguyên overdue_amount & overdue_month_key để thu bù khi có tiền vào
-    const downgraded = await merchantFeeRepository.upsertFeeSetting(client, {
-      merchantUserId: merchantUser.id,
-      feePlan: "PER_TRANSACTION",
-      pendingFeePlan: null,
-      expiresAt: null,
-      monthlyPlanEnabled: false,
-      monthlyStatus: MONTHLY_STATUS.INACTIVE,
-      graceUntil: null,
-      overdueMonthKey,
-      overdueAmount: effectiveOverdueAmount,
-    });
-
-    await merchantFeeRepository.recordAudit(client, {
-      eventType: "MERCHANT_MONTHLY_FEE_GRACE_EXPIRED",
-      payload: {
-        merchant_user_id: merchantUser.id,
-        overdue_month_key: overdueMonthKey,
-        overdue_amount: effectiveOverdueAmount,
-        downgraded_to: "PER_TRANSACTION",
-        debt_preserved: effectiveOverdueAmount > 0,
-      },
-    });
-
-    console.info(
-      `[fee] Grace period expired, downgraded merchant=${merchantUser.id} to PER_TRANSACTION overdue_month=${overdueMonthKey} kept_debt=${effectiveOverdueAmount}`,
-    );
-    return { setting: downgraded, action: "DOWNGRADED_EXPIRED_GRACE", recovered: false };
-  }
-
-  return { setting, action: isPastDue ? "STILL_PAST_DUE" : "DEBT_PENDING", recovered: false };
-}
-
-/**
- * Chuẩn hóa / chuyển kỳ về PER_TRANSACTION (tắt gia hạn/thu 300k/tháng) và xử lý nợ cũ PAST_DUE nếu có.
- * Đảm bảo đúng thứ tự khoá: `users` trước -> `merchant_fee_settings` sau -> `SYSTEM_FEE_WALLET` cuối.
- */
-async function applyDueRolloverTx(
-  client,
-  { merchantUser, setting, feeConfig, nowMs = Date.now() },
-) {
-  if (!setting) {
-    return setting;
-  }
-
-  // 1. Nếu còn trạng thái PAST_DUE hoặc còn nợ overdue_amount: xử lý thu bù hoặc hạ cấp giữ nợ
-  if (
-    setting.monthly_status === MONTHLY_STATUS.PAST_DUE ||
-    Number(setting.overdue_amount || 0) > 0
-  ) {
-    const pastDueRes = await processPastDueSettingTx(client, {
-      merchantUser,
-      setting,
-      feeConfig,
-      nowMs,
-    });
-    setting = pastDueRes.setting;
-    if (setting.monthly_status === MONTHLY_STATUS.PAST_DUE) {
-      return setting;
-    }
-  }
-
-  // 2. Ngừng thu phí gói tháng 300k/tháng: mọi bản ghi còn MONTHLY / pending_fee_plan / expires_at được đưa về PER_TRANSACTION
-  const needsNormalizationToPerTx =
-    setting.fee_plan === "MONTHLY" ||
-    Boolean(setting.pending_fee_plan) ||
-    Boolean(setting.monthly_plan_enabled) ||
-    Boolean(setting.expires_at);
-
-  if (!needsNormalizationToPerTx) {
-    return setting;
-  }
-
-  const vnMeta = getVnMonthMeta(nowMs);
-  const updated = await merchantFeeRepository.upsertFeeSetting(client, {
-    merchantUserId: merchantUser.id,
-    feePlan: "PER_TRANSACTION",
-    pendingFeePlan: null,
-    expiresAt: null,
-    monthlyPlanEnabled: false,
-    monthlyStatus: MONTHLY_STATUS.INACTIVE,
-    graceUntil: null,
-    overdueMonthKey: setting.overdue_month_key || null,
-    overdueAmount: Number(setting.overdue_amount || 0),
-  });
-
-  await merchantFeeRepository.recordAudit(client, {
-    eventType: "MERCHANT_FEE_PLAN_ROLLED_OVER",
-    payload: {
-      merchant_user_id: merchantUser.id,
-      from_plan: setting.fee_plan,
-      to_plan: "PER_TRANSACTION",
-      month: vnMeta.currentMonthKey,
-    },
-  });
-
-  return updated;
-}
-
 const merchantFeeService = {
   FEE_PLANS,
   PLAN_NAMES,
@@ -498,7 +318,7 @@ const merchantFeeService = {
   },
 
   /**
-   * Giải mã cấu hình hiệu lực tại thời điểm `atDate` cho user hoặc merchant (system default + schedule override).
+   * Giải mã cấu hình hiệu lực cho user hoặc merchant (lấy trực tiếp từ system default).
    */
   async resolveEffectiveFeeConfig(
     userId,
@@ -506,32 +326,13 @@ const merchantFeeService = {
   ) {
     const normalizedRole = String(role || "MERCHANT").toUpperCase();
     const systemConfig = await this.getSystemFeeConfig(normalizedRole, db);
-
-    if (!userId || normalizedRole !== "MERCHANT") {
-      return {
-        systemConfig,
-        effectiveConfig: mergeEffectiveFeeConfig(systemConfig, null, normalizedRole),
-        effectiveSchedule: null,
-        upcomingSchedule: null,
-      };
-    }
-
-    const schedules = await merchantFeeRepository.getSchedulesForMerchant(db, userId);
-    const { effectiveSchedule, upcomingSchedule } = pickEffectiveSchedule(
-      schedules,
-      atDate,
-    );
-    const effectiveConfig = mergeEffectiveFeeConfig(
-      systemConfig,
-      effectiveSchedule,
-      normalizedRole,
-    );
+    const effectiveConfig = mergeEffectiveFeeConfig(systemConfig, null, normalizedRole);
 
     return {
       systemConfig,
       effectiveConfig,
-      effectiveSchedule,
-      upcomingSchedule,
+      effectiveSchedule: null,
+      upcomingSchedule: null,
     };
   },
 
@@ -551,14 +352,14 @@ const merchantFeeService = {
     if (userId) {
       usage = forUpdate
         ? await merchantFeeRepository.ensureAndLockMonthlyUsageTx(db, {
-            userId,
-            monthKey: vnMeta.currentMonthKey,
-          })
+          userId,
+          monthKey: vnMeta.currentMonthKey,
+        })
         : await merchantFeeRepository.getMonthlyUsage(
-            db,
-            userId,
-            vnMeta.currentMonthKey,
-          );
+          db,
+          userId,
+          vnMeta.currentMonthKey,
+        );
     }
 
     const quota = effectiveConfig.withdraw_free_quota_per_month;
@@ -590,7 +391,7 @@ const merchantFeeService = {
 
   async initFeeSettingOnRegisterTx(
     client,
-    { merchantUserId, feePlan, nowMs = Date.now() },
+    { merchantUserId, feePlan },
   ) {
     // Đăng ký mới luôn áp dụng biểu phí PER_TRANSACTION (gói tháng đã ngừng áp dụng)
     if (feePlan !== undefined && feePlan !== null && String(feePlan).trim() !== "") {
@@ -598,29 +399,26 @@ const merchantFeeService = {
     }
     const targetPlan = "PER_TRANSACTION";
 
-    const setting = await merchantFeeRepository.upsertFeeSetting(client, {
-      merchantUserId,
-      feePlan: targetPlan,
-      pendingFeePlan: null,
-      expiresAt: null,
-      monthlyPlanEnabled: false,
-      monthlyStatus: MONTHLY_STATUS.INACTIVE,
-      graceUntil: null,
-      overdueMonthKey: null,
-      overdueAmount: 0,
-    });
-
     await merchantFeeRepository.recordAudit(client, {
       eventType: "MERCHANT_FEE_PLAN_INITIALIZED",
       payload: {
         merchant_user_id: merchantUserId,
         fee_plan: targetPlan,
         monthly_plan_enabled: false,
-        expires_at: null,
       },
     });
 
-    return setting;
+    return {
+      merchant_user_id: merchantUserId,
+      fee_plan: targetPlan,
+      pending_fee_plan: null,
+      expires_at: null,
+      monthly_plan_enabled: false,
+      monthly_status: MONTHLY_STATUS.INACTIVE,
+      grace_until: null,
+      overdue_month_key: null,
+      overdue_amount: 0,
+    };
   },
 
   async getFeePlanStatus(merchantUserId, { nowMs = Date.now() } = {}) {
@@ -635,53 +433,11 @@ const merchantFeeService = {
         db: pool,
       });
 
-    let merchantUser = await merchantFeeRepository.getMerchantUser(
+    const merchantUser = await merchantFeeRepository.getMerchantUser(
       pool,
       merchantUserId,
     );
     assertActiveMerchantRow(merchantUser);
-
-    let setting = await merchantFeeRepository.getFeeSetting(pool, merchantUserId);
-
-    const needsRollover = Boolean(
-      setting &&
-        (setting.fee_plan === "MONTHLY" ||
-          setting.pending_fee_plan ||
-          setting.monthly_plan_enabled ||
-          (setting.expires_at && new Date(setting.expires_at).getTime() <= nowMs) ||
-          setting.monthly_status === MONTHLY_STATUS.PAST_DUE ||
-          Number(setting.overdue_amount || 0) > 0),
-    );
-
-    if (needsRollover) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        merchantUser = await merchantFeeRepository.getMerchantUser(
-          client,
-          merchantUserId,
-          { forUpdate: true },
-        );
-        assertActiveMerchantRow(merchantUser);
-        setting = await merchantFeeRepository.getFeeSetting(
-          client,
-          merchantUserId,
-          { forUpdate: true },
-        );
-        setting = await applyDueRolloverTx(client, {
-          merchantUser,
-          setting,
-          feeConfig: effectiveConfig,
-          nowMs,
-        });
-        await client.query("COMMIT");
-      } catch (e) {
-        await client.query("ROLLBACK");
-        throw e;
-      } finally {
-        client.release();
-      }
-    }
 
     const vnMeta = getVnMonthMeta(nowMs);
     const usage = await merchantFeeRepository.getMonthlyUsage(
@@ -698,7 +454,7 @@ const merchantFeeService = {
     });
 
     return buildStatusResponse({
-      setting,
+      setting: null,
       merchantUser,
       feeConfig: effectiveConfig,
       systemConfig,
@@ -719,358 +475,37 @@ const merchantFeeService = {
 
   async selectFeePlan(
     merchantUserId,
-    { feePlan: rawFeePlan, nowMs = Date.now() },
+    { feePlan: rawFeePlan } = {},
   ) {
     if (!merchantUserId) {
       throw httpError(400, "Thiếu thông tin merchant");
     }
 
     const targetPlan = normalizeRequestedPlan(rawFeePlan);
-    const { systemConfig, effectiveConfig, upcomingSchedule } =
-      await this.resolveEffectiveFeeConfig(merchantUserId, {
-        role: "MERCHANT",
-        atDate: new Date(nowMs),
-        db: pool,
-      });
-    const vnMeta = getVnMonthMeta(nowMs);
+    const merchantUser = await merchantFeeRepository.getMerchantUser(
+      pool,
+      merchantUserId,
+    );
+    assertActiveMerchantRow(merchantUser);
 
-    const client = await pool.connect();
-    let finalSetting;
-    let merchantUser;
-    let action;
-
-    try {
-      await client.query("BEGIN");
-
-      merchantUser = await merchantFeeRepository.getMerchantUser(
-        client,
-        merchantUserId,
-        { forUpdate: true },
-      );
-      assertActiveMerchantRow(merchantUser);
-
-      let setting = await merchantFeeRepository.getFeeSetting(
-        client,
-        merchantUserId,
-        { forUpdate: true },
-      );
-      setting = await applyDueRolloverTx(client, {
-        merchantUser,
-        setting,
-        feeConfig: effectiveConfig,
-        nowMs,
-      });
-
-      const currentPlan = setting?.fee_plan || "PER_TRANSACTION";
-      const pendingPlan = setting?.pending_fee_plan || null;
-      const existingExpiresAt = setting?.expires_at
-        ? new Date(setting.expires_at)
-        : null;
-
-      if (targetPlan === currentPlan && !pendingPlan) {
-        throw httpError(
-          400,
-          `Bạn đang áp dụng gói ${PLAN_NAMES[currentPlan]} rồi`,
-        );
-      }
-
-      if (pendingPlan === targetPlan) {
-        throw httpError(
-          400,
-          `Gói ${PLAN_NAMES[targetPlan]} đã được lên lịch áp dụng từ tháng sau (${vnMeta.nextMonthStartDate}) rồi`,
-        );
-      }
-
-      if (pendingPlan && targetPlan === currentPlan) {
-        finalSetting = await merchantFeeRepository.upsertFeeSetting(client, {
-          merchantUserId,
-          feePlan: currentPlan,
-          pendingFeePlan: null,
-          expiresAt: currentPlan === "MONTHLY" ? existingExpiresAt : null,
-          monthlyPlanEnabled: currentPlan === "MONTHLY",
-          monthlyStatus:
-            setting?.monthly_status === MONTHLY_STATUS.PAST_DUE
-              ? MONTHLY_STATUS.PAST_DUE
-              : currentPlan === "MONTHLY"
-                ? MONTHLY_STATUS.ACTIVE
-                : MONTHLY_STATUS.INACTIVE,
-          graceUntil: setting?.grace_until || null,
-          overdueMonthKey: setting?.overdue_month_key || null,
-          overdueAmount: setting?.overdue_amount || 0,
-        });
-        action = "CANCELLED_PENDING_CHANGE";
-        await merchantFeeRepository.recordAudit(client, {
-          eventType: "MERCHANT_FEE_PLAN_CHANGE_CANCELLED",
-          payload: {
-            merchant_user_id: merchantUserId,
-            current_plan: currentPlan,
-            cancelled_pending_plan: pendingPlan,
-          },
-        });
-      } else {
-        const nextExpiresAt =
-          currentPlan === "MONTHLY" &&
-          existingExpiresAt &&
-          existingExpiresAt.getTime() > nowMs
-            ? existingExpiresAt
-            : vnMeta.nextMonthStart;
-
-        const nextMonthlyStatus =
-          setting?.monthly_status === MONTHLY_STATUS.PAST_DUE
-            ? MONTHLY_STATUS.PAST_DUE
-            : currentPlan === "MONTHLY"
-              ? MONTHLY_STATUS.ACTIVE
-              : MONTHLY_STATUS.PENDING_ACTIVATE;
-
-        finalSetting = await merchantFeeRepository.upsertFeeSetting(client, {
-          merchantUserId,
-          feePlan: currentPlan,
-          pendingFeePlan: targetPlan,
-          expiresAt: nextExpiresAt,
-          monthlyPlanEnabled: currentPlan === "MONTHLY",
-          monthlyStatus: nextMonthlyStatus,
-          graceUntil: setting?.grace_until || null,
-          overdueMonthKey: setting?.overdue_month_key || null,
-          overdueAmount: setting?.overdue_amount || 0,
-        });
-        action = "SCHEDULED_NEXT_MONTH";
-        await merchantFeeRepository.recordAudit(client, {
-          eventType: "MERCHANT_FEE_PLAN_SCHEDULED",
-          payload: {
-            merchant_user_id: merchantUserId,
-            current_plan: currentPlan,
-            pending_plan: targetPlan,
-            effective_from: nextExpiresAt.toISOString(),
-          },
-        });
-      }
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    const withdrawQuota = await this.getWithdrawQuotaStatus(merchantUserId, {
-      role: "MERCHANT",
-      nowMs,
-      db: pool,
-    });
-
-    return buildStatusResponse({
-      setting: finalSetting,
-      merchantUser,
-      feeConfig: effectiveConfig,
-      systemConfig,
-      upcomingSchedule,
-      withdrawQuota: {
-        month_key: withdrawQuota.month_key,
-        month: withdrawQuota.month,
-        quota_per_month: withdrawQuota.quota_per_month,
-        already_withdrawn: withdrawQuota.already_withdrawn,
-        remaining_free_quota: withdrawQuota.remaining_free_quota,
-        withdraw_fee_bps: withdrawQuota.withdraw_fee_bps,
-        withdraw_fee_percent: withdrawQuota.withdraw_fee_percent,
-      },
-      nowMs,
-      action,
-    });
+    throw httpError(
+      400,
+      `Bạn đang áp dụng gói ${PLAN_NAMES[targetPlan]} rồi`,
+    );
   },
 
-  async cancelPendingFeePlan(merchantUserId, { nowMs = Date.now() } = {}) {
+  async cancelPendingFeePlan(merchantUserId) {
     if (!merchantUserId) {
       throw httpError(400, "Thiếu thông tin merchant");
     }
 
-    const { systemConfig, effectiveConfig, upcomingSchedule } =
-      await this.resolveEffectiveFeeConfig(merchantUserId, {
-        role: "MERCHANT",
-        atDate: new Date(nowMs),
-        db: pool,
-      });
-    const client = await pool.connect();
-    let finalSetting;
-    let merchantUser;
-
-    try {
-      await client.query("BEGIN");
-
-      merchantUser = await merchantFeeRepository.getMerchantUser(
-        client,
-        merchantUserId,
-        { forUpdate: true },
-      );
-      assertActiveMerchantRow(merchantUser);
-
-      let setting = await merchantFeeRepository.getFeeSetting(
-        client,
-        merchantUserId,
-        { forUpdate: true },
-      );
-      setting = await applyDueRolloverTx(client, {
-        merchantUser,
-        setting,
-        feeConfig: effectiveConfig,
-        nowMs,
-      });
-
-      const currentPlan = setting?.fee_plan || "PER_TRANSACTION";
-      const pendingPlan = setting?.pending_fee_plan || null;
-
-      if (!pendingPlan || pendingPlan === currentPlan) {
-        throw httpError(400, "Hiện không có lịch đổi gói thu phí nào để hủy");
-      }
-
-      finalSetting = await merchantFeeRepository.upsertFeeSetting(client, {
-        merchantUserId,
-        feePlan: currentPlan,
-        pendingFeePlan: null,
-        expiresAt: currentPlan === "MONTHLY" ? setting.expires_at : null,
-        monthlyPlanEnabled: currentPlan === "MONTHLY",
-        monthlyStatus:
-          setting?.monthly_status === MONTHLY_STATUS.PAST_DUE
-            ? MONTHLY_STATUS.PAST_DUE
-            : currentPlan === "MONTHLY"
-              ? MONTHLY_STATUS.ACTIVE
-              : MONTHLY_STATUS.INACTIVE,
-        graceUntil: setting?.grace_until || null,
-        overdueMonthKey: setting?.overdue_month_key || null,
-        overdueAmount: setting?.overdue_amount || 0,
-      });
-
-      await merchantFeeRepository.recordAudit(client, {
-        eventType: "MERCHANT_FEE_PLAN_CHANGE_CANCELLED",
-        payload: {
-          merchant_user_id: merchantUserId,
-          current_plan: currentPlan,
-          cancelled_pending_plan: pendingPlan,
-        },
-      });
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    const withdrawQuota = await this.getWithdrawQuotaStatus(merchantUserId, {
-      role: "MERCHANT",
-      nowMs,
-      db: pool,
-    });
-
-    return buildStatusResponse({
-      setting: finalSetting,
-      merchantUser,
-      feeConfig: effectiveConfig,
-      systemConfig,
-      upcomingSchedule,
-      withdrawQuota: {
-        month_key: withdrawQuota.month_key,
-        month: withdrawQuota.month,
-        quota_per_month: withdrawQuota.quota_per_month,
-        already_withdrawn: withdrawQuota.already_withdrawn,
-        remaining_free_quota: withdrawQuota.remaining_free_quota,
-        withdraw_fee_bps: withdrawQuota.withdraw_fee_bps,
-        withdraw_fee_percent: withdrawQuota.withdraw_fee_percent,
-      },
-      nowMs,
-      action: "CANCELLED_PENDING_CHANGE",
-    });
-  },
-
-  async processDueRollovers(limit = 100, { nowMs = Date.now() } = {}) {
-    const dueIds = await merchantFeeRepository.getDueRolloverMerchantIds(
+    const merchantUser = await merchantFeeRepository.getMerchantUser(
       pool,
-      limit,
+      merchantUserId,
     );
-    if (!dueIds.length) return 0;
+    assertActiveMerchantRow(merchantUser);
 
-    let processed = 0;
-
-    for (const merchantUserId of dueIds) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const merchantUser = await merchantFeeRepository.getMerchantUser(
-          client,
-          merchantUserId,
-          { forUpdate: true },
-        );
-        if (!merchantUser || merchantUser.role !== "MERCHANT") {
-          await client.query("ROLLBACK");
-          continue;
-        }
-        const { effectiveConfig } = await this.resolveEffectiveFeeConfig(
-          merchantUserId,
-          { role: "MERCHANT", atDate: new Date(nowMs), db: client },
-        );
-        const setting = await merchantFeeRepository.getFeeSetting(
-          client,
-          merchantUserId,
-          { forUpdate: true },
-        );
-        await applyDueRolloverTx(client, {
-          merchantUser,
-          setting,
-          feeConfig: effectiveConfig,
-          nowMs,
-        });
-        await client.query("COMMIT");
-        processed++;
-      } catch (e) {
-        await client.query("ROLLBACK");
-        console.error(
-          `[merchantFeeRollover] Lỗi chuyển kỳ cho merchant ${merchantUserId}:`,
-          e.message,
-        );
-      } finally {
-        client.release();
-      }
-    }
-
-    return processed;
-  },
-
-  /**
-   * Thu lại nợ phí tháng (`PAST_DUE` hoặc nợ còn lại sau khi hết ân hạn) ngay khi ví merchant vừa nhận được tiền vào.
-   */
-  async collectOverdueMonthlyFeeOnCreditTx(
-    client,
-    { merchantUser, triggerTransactionId = null, nowMs = Date.now() },
-  ) {
-    if (!merchantUser || merchantUser.role !== "MERCHANT") {
-      return { recovered: false };
-    }
-    const setting = await merchantFeeRepository.getFeeSetting(
-      client,
-      merchantUser.id,
-      { forUpdate: true },
-    );
-    if (
-      !setting ||
-      (setting.monthly_status !== MONTHLY_STATUS.PAST_DUE &&
-        Number(setting.overdue_amount || 0) <= 0)
-    ) {
-      return { recovered: false };
-    }
-
-    const { effectiveConfig } = await this.resolveEffectiveFeeConfig(
-      merchantUser.id,
-      { role: "MERCHANT", atDate: new Date(nowMs), db: client },
-    );
-
-    return processPastDueSettingTx(client, {
-      merchantUser,
-      setting,
-      feeConfig: effectiveConfig,
-      nowMs,
-      triggerTransactionId,
-    });
+    throw httpError(400, "Hiện không có lịch đổi gói thu phí nào để hủy");
   },
 
   /**
@@ -1099,28 +534,6 @@ const merchantFeeService = {
       merchantUser.id,
       { role: "MERCHANT", atDate: new Date(nowMs), db: client },
     );
-
-    const setting = await merchantFeeRepository.getFeeSetting(
-      client,
-      merchantUser.id,
-      { forUpdate: true },
-    );
-
-    // Đưa bản ghi cũ (nếu còn MONTHLY / pending) về PER_TRANSACTION mà không trừ 300k/tháng
-    if (
-      setting &&
-      (setting.fee_plan === "MONTHLY" ||
-        setting.pending_fee_plan ||
-        setting.monthly_plan_enabled ||
-        (setting.expires_at && new Date(setting.expires_at).getTime() <= nowMs))
-    ) {
-      await applyDueRolloverTx(client, {
-        merchantUser,
-        setting,
-        feeConfig: effectiveConfig,
-        nowMs,
-      });
-    }
 
     // Khóa dòng doanh số tháng trước khi đọc qr_gross_amount để tránh race condition giữa 2 GD đồng thời
     const usage = await merchantFeeRepository.ensureAndLockMonthlyUsageTx(client, {
@@ -1211,9 +624,9 @@ const merchantFeeService = {
 
     const targetRole = String(
       resolvedSubjectRole ||
-        (txType === "PAYMENT" || txType === "QR_PAYMENT"
-          ? "MERCHANT"
-          : actorUser?.role || "USER"),
+      (txType === "PAYMENT" || txType === "QR_PAYMENT"
+        ? "MERCHANT"
+        : actorUser?.role || "USER"),
     ).toUpperCase();
 
     const { effectiveConfig } = await this.resolveEffectiveFeeConfig(subjectId, {

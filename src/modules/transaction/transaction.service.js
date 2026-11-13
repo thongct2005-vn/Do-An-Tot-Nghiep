@@ -6,7 +6,10 @@ const {
   getEffectiveTransactionLimit,
   getSystemConfig,
 } = require("../../utils/limitsDb");
-const { getTransactionLimitsSummary } = require("../../utils/dailyLimit");
+const {
+  getTransactionLimitsSummary,
+  resolveRole,
+} = require("../../utils/dailyLimit");
 const {
   resolveExportRange,
   resolveOneYearRange,
@@ -19,10 +22,17 @@ const { sendTransactionExportEmail } = require("../../utils/mailer");
 const { maskEmail } = require("../../utils/mask");
 const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
-const merchantFeeService = require("../../admin/merchant/production/fee/fee.service");
+const merchantFeeService = require("../merchant/production/fee/fee.service");
+
+async function resolveActorRole(userId, explicitRole = null) {
+  if (explicitRole) return explicitRole;
+  return (await resolveRole(pool, userId)) || "USER";
+}
+
 const TransactionService = {
   async transferMoney({
     sourceUserId,
+    role = null,
     destinationUserId,
     amount,
     description,
@@ -38,9 +48,10 @@ const TransactionService = {
 
     await assertKycBoth(sourceUserId, destinationUserId);
 
+    const actorRole = await resolveActorRole(sourceUserId, role);
     const transferRule = await getEffectiveTransactionLimit(pool, {
       userId: sourceUserId,
-      role: "USER",
+      role: actorRole,
       transactionType: "TRANSFER",
     });
     const numAmount = parseAmountInRange(amount, transferRule, "chuyển");
@@ -59,6 +70,7 @@ const TransactionService = {
 
   async topupMoney({
     sourceUserId,
+    role = null,
     amount,
     idempotencyKey,
     linkedBankAccountId,
@@ -67,9 +79,10 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
+    const actorRole = await resolveActorRole(sourceUserId, role);
     const topupRule = await getEffectiveTransactionLimit(pool, {
       userId: sourceUserId,
-      role: "USER",
+      role: actorRole,
       transactionType: "TOPUP",
     });
     const numAmount = parseAmountInRange(amount, topupRule, "nạp");
@@ -93,6 +106,7 @@ const TransactionService = {
 
   async withdrawMoney({
     sourceUserId,
+    role = null,
     amount,
     idempotencyKey,
     linkedBankAccountId,
@@ -101,9 +115,10 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
+    const actorRole = await resolveActorRole(sourceUserId, role);
     const withdrawRule = await getEffectiveTransactionLimit(pool, {
       userId: sourceUserId,
-      role: "USER",
+      role: actorRole,
       transactionType: "WITHDRAW",
     });
     const numAmount = parseAmountInRange(amount, withdrawRule, "rút");

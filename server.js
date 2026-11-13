@@ -13,13 +13,17 @@ const {
   pageRouter: payPageRouter,
 } = require("./src/modules/paymentPage/paymentPage.routes");
 const { assertPublicBaseUrlConfigured } = require("./src/utils/publicUrl");
+const {
+  assertSystemFeeWalletConfigured,
+} = require("./src/modules/fee/feeCalculator");
 const server = http.createServer(app);
 const PORT = process.env.PORT;
 require("dotenv").config();
 const environment = process.env.NODE_ENV;
-// Dừng ngay lúc khởi động nếu thiếu/sai PUBLIC_BASE_URL (bắt buộc khi NODE_ENV=production)
+// Dừng ngay lúc khởi động nếu thiếu/sai cấu hình bắt buộc
 try {
   assertPublicBaseUrlConfigured();
+  assertSystemFeeWalletConfigured();
 } catch (e) {
   console.error("Cấu hình sai:", e.message);
   process.exit(1);

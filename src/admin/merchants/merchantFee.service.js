@@ -2,9 +2,9 @@ const pool = require("../../config/database");
 const { uuidv7 } = require("uuidv7");
 const { httpError } = require("../../utils/httpError");
 const { invalidateLimitsCache, getSystemConfig } = require("../../utils/limitsDb");
-const merchantFeeService = require("../merchant/production/fee/fee.service");
+const merchantFeeService = require("../../modules/merchant/production/fee/fee.service");
 const {
-  SYSTEM_FEE_WALLET_ID,
+  assertSystemFeeWalletConfigured,
   normalizeSystemFeeConfig,
   validateFeeConfigInput,
   mergeEffectiveFeeConfig,
@@ -435,6 +435,8 @@ const adminMerchantFeeService = {
         [configKey, JSON.stringify(newPlain), adminId],
       );
 
+      const { walletId: feeWalletId } = assertSystemFeeWalletConfigured();
+
       const auditHistoryRes = await client.query(
         `INSERT INTO admin_user_change_history
            (admin_id, user_id, action, reason, old_values, new_values, created_at)
@@ -442,7 +444,7 @@ const adminMerchantFeeService = {
          RETURNING id, action, reason, created_at`,
         [
           adminId,
-          SYSTEM_FEE_WALLET_ID,
+          feeWalletId,
           cleanReason,
           JSON.stringify({ key: configKey, actor, config: oldPlain }),
           JSON.stringify({ key: configKey, actor, config: newPlain }),
@@ -515,37 +517,10 @@ const adminMerchantFeeService = {
       throw httpError(404, "Không tìm thấy tài khoản merchant");
     }
 
-    const settingRes = await pool.query(
-      `SELECT merchant_user_id, fee_plan, pending_fee_plan, expires_at, updated_at,
-              monthly_plan_enabled, monthly_status, grace_until, overdue_month_key, overdue_amount
-         FROM merchant_fee_settings
-        WHERE merchant_user_id = $1
-        LIMIT 1`,
-      [merchantId],
-    );
-
-    const schedulesRes = await pool.query(
-      `SELECT id, merchant_user_id, effective_from, rate_bps, min_fee, max_fee,
-              max_fee_unbounded, free_threshold_amount,
-              transfer_fee_bps, transfer_min_fee, transfer_max_fee, transfer_max_fee_unbounded,
-              withdraw_fee_bps, withdraw_free_quota_per_month,
-              monthly_plan_enabled, monthly_plan_fee,
-              tiers, reason, created_by_actor, created_at
-         FROM merchant_fee_schedules
-        WHERE merchant_user_id = $1
-        ORDER BY effective_from DESC, created_at DESC
-        LIMIT 50`,
-      [merchantId],
-    );
-
     const systemConfig = await merchantFeeService.getSystemFeeConfig("MERCHANT", pool);
-    const { effectiveSchedule, upcomingSchedule } = pickEffectiveSchedule(
-      schedulesRes.rows,
-      new Date(),
-    );
     const effectiveConfig = mergeEffectiveFeeConfig(
       systemConfig,
-      effectiveSchedule,
+      null,
       "MERCHANT",
     );
     const withdrawQuota = await merchantFeeService.getWithdrawQuotaStatus(
@@ -560,7 +535,7 @@ const adminMerchantFeeService = {
         status: merchant.status,
         balance: Number(merchant.balance),
       },
-      plan_setting: settingRes.rows[0] || {
+      plan_setting: {
         merchant_user_id: merchantId,
         fee_plan: "PER_TRANSACTION",
         pending_fee_plan: null,
@@ -571,9 +546,9 @@ const adminMerchantFeeService = {
       },
       system_default_config: systemConfig,
       effective_config: effectiveConfig,
-      effective_schedule: effectiveSchedule || null,
-      upcoming_schedule: upcomingSchedule || null,
-      schedules: schedulesRes.rows,
+      effective_schedule: null,
+      upcoming_schedule: null,
+      schedules: [],
       withdraw_quota: {
         month_key: withdrawQuota.month_key,
         quota_per_month: withdrawQuota.quota_per_month,
@@ -583,278 +558,12 @@ const adminMerchantFeeService = {
     };
   },
 
-  async previewMerchantFeeConfigUpdate({
-    merchantId,
-    schedule = {},
-    sampleAmounts = DEFAULT_SAMPLE_AMOUNTS,
-    now = new Date(),
-  }) {
-    const current = await this.getMerchantFeeConfig(merchantId);
-    const validated = validateFeeConfigInput(schedule, {
-      isOverride: true,
-      now,
-      baseConfig: current.effective_config,
-    });
-    const mergedOverride = buildScheduleOverrideRow(
-      validated,
-      current.effective_schedule,
-      current.effective_config,
-    );
-    const proposedSchedule = {
-      id: "PREVIEW",
-      ...mergedOverride,
-      effective_from: mergedOverride.effective_from.toISOString(),
-    };
-
-    const proposedEffective = mergeEffectiveFeeConfig(
-      current.system_default_config,
-      proposedSchedule,
-      "MERCHANT",
-    );
-    const samples = parseSampleAmounts(sampleAmounts);
-
-    return {
-      dry_run: true,
-      merchant_id: merchantId,
-      effective_from: proposedSchedule.effective_from,
-      old_effective_config: current.effective_config,
-      proposed_effective_config: proposedEffective,
-      simulation: simulateFeeSamples({
-        oldConfig: current.effective_config,
-        newConfig: proposedEffective,
-        role: "MERCHANT",
-        alreadyWithdrawn: current.withdraw_quota.already_withdrawn,
-        sampleAmounts: samples,
-      }),
-    };
+  async previewMerchantFeeConfigUpdate() {
+    throw httpError(400, "Hệ thống áp dụng biểu phí bậc thang thống nhất từ cấu hình hệ thống, không hỗ trợ cấu hình riêng cho từng merchant.");
   },
 
-  async updateMerchantFeeConfig({
-    merchantId,
-    schedule = {},
-    reason,
-    adminId,
-    actorLabel = null,
-    dryRun = false,
-    sampleAmounts = DEFAULT_SAMPLE_AMOUNTS,
-    now = new Date(),
-  }) {
-    if (!merchantId || !UUID_RE.test(String(merchantId))) {
-      throw httpError(400, "ID merchant không hợp lệ");
-    }
-    const samples = parseSampleAmounts(sampleAmounts);
-
-    if (dryRun) {
-      return this.previewMerchantFeeConfigUpdate({
-        merchantId,
-        schedule,
-        sampleAmounts: samples,
-        now,
-      });
-    }
-
-    if (!adminId) {
-      throw httpError(401, "Thiếu thông tin quản trị viên thực hiện");
-    }
-    const cleanReason = assertValidReason(reason);
-    const actor = actorLabel || `admin:${adminId}`;
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const merchantRes = await client.query(
-        `SELECT id, full_name, role, status, balance
-           FROM users
-          WHERE id = $1 AND role = 'MERCHANT'
-          FOR UPDATE`,
-        [merchantId],
-      );
-      const merchant = merchantRes.rows[0];
-      if (!merchant) {
-        throw httpError(404, "Không tìm thấy tài khoản merchant");
-      }
-
-      const systemConfig = await merchantFeeService.getSystemFeeConfig(
-        "MERCHANT",
-        client,
-      );
-      const existingSchedulesRes = await client.query(
-        `SELECT id, merchant_user_id, effective_from, rate_bps, min_fee, max_fee,
-                max_fee_unbounded, free_threshold_amount, withdraw_fee_bps,
-                withdraw_free_quota_per_month, monthly_plan_enabled, monthly_plan_fee,
-                tiers, reason, created_by_actor, created_at
-           FROM merchant_fee_schedules
-          WHERE merchant_user_id = $1
-          ORDER BY effective_from DESC, created_at DESC`,
-        [merchantId],
-      );
-      const { effectiveSchedule: prevSchedule } = pickEffectiveSchedule(
-        existingSchedulesRes.rows,
-        now,
-      );
-      const oldEffective = mergeEffectiveFeeConfig(
-        systemConfig,
-        prevSchedule,
-        "MERCHANT",
-      );
-
-      const validated = validateFeeConfigInput(schedule, {
-        isOverride: true,
-        now,
-        baseConfig: oldEffective,
-      });
-
-      const hasAnyField = [
-        "rate_bps",
-        "min_fee",
-        "max_fee",
-        "max_fee_unbounded",
-        "free_threshold_amount",
-        "transfer_fee_bps",
-        "transfer_min_fee",
-        "transfer_max_fee",
-        "transfer_max_fee_unbounded",
-        "withdraw_fee_bps",
-        "withdraw_free_quota_per_month",
-        "monthly_plan_enabled",
-        "monthly_plan_fee",
-        "tiers",
-      ].some((k) => validated[k] !== undefined);
-
-      if (!hasAnyField) {
-        throw httpError(400, "Không có trường cấu hình phí nào được cung cấp");
-      }
-
-      const mergedOverride = buildScheduleOverrideRow(
-        validated,
-        prevSchedule,
-        oldEffective,
-      );
-
-      const scheduleId = uuidv7();
-      const insertedRes = await client.query(
-        `INSERT INTO merchant_fee_schedules (
-           id, merchant_user_id, effective_from, rate_bps, min_fee, max_fee,
-           max_fee_unbounded, free_threshold_amount,
-           transfer_fee_bps, transfer_min_fee, transfer_max_fee, transfer_max_fee_unbounded,
-           withdraw_fee_bps, withdraw_free_quota_per_month,
-           monthly_plan_enabled, monthly_plan_fee,
-           tiers, reason, created_by_actor, created_at
-         )
-         VALUES ($1::uuid, $2::uuid, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, NOW())
-         RETURNING *`,
-        [
-          scheduleId,
-          merchantId,
-          mergedOverride.effective_from,
-          mergedOverride.rate_bps,
-          mergedOverride.min_fee,
-          mergedOverride.max_fee,
-          Boolean(mergedOverride.max_fee_unbounded),
-          mergedOverride.free_threshold_amount,
-          mergedOverride.transfer_fee_bps,
-          mergedOverride.transfer_min_fee,
-          mergedOverride.transfer_max_fee,
-          Boolean(mergedOverride.transfer_max_fee_unbounded),
-          mergedOverride.withdraw_fee_bps,
-          mergedOverride.withdraw_free_quota_per_month,
-          mergedOverride.monthly_plan_enabled,
-          mergedOverride.monthly_plan_fee,
-          JSON.stringify(mergedOverride.tiers ?? []),
-          cleanReason,
-          actor,
-        ],
-      );
-      const insertedSchedule = insertedRes.rows[0];
-
-      const newEffective = mergeEffectiveFeeConfig(
-        systemConfig,
-        insertedSchedule,
-        "MERCHANT",
-      );
-
-      const oldAuditPayload = {
-        actor,
-        schedule_id: prevSchedule?.id || null,
-        effective_config: oldEffective,
-      };
-      const newAuditPayload = {
-        actor,
-        schedule_id: scheduleId,
-        effective_from: new Date(insertedSchedule.effective_from).toISOString(),
-        override: validated,
-        effective_config: newEffective,
-      };
-
-      const auditHistoryRes = await client.query(
-        `INSERT INTO admin_user_change_history
-           (admin_id, user_id, action, reason, old_values, new_values, created_at)
-         VALUES ($1::uuid, $2::uuid, 'MERCHANT_FEE_CONFIG_UPDATED', $3, $4::jsonb, $5::jsonb, NOW())
-         RETURNING id, action, reason, created_at`,
-        [
-          adminId,
-          merchantId,
-          cleanReason,
-          JSON.stringify(oldAuditPayload),
-          JSON.stringify(newAuditPayload),
-        ],
-      );
-
-      await client.query(
-        `INSERT INTO audit_outbox (id, event_type, payload, created_at)
-         VALUES ($1::uuid, 'MERCHANT_FEE_CONFIG_UPDATED', $2::jsonb, NOW())`,
-        [
-          uuidv7(),
-          JSON.stringify({
-            merchant_id: merchantId,
-            admin_id: adminId,
-            actor,
-            reason: cleanReason,
-            schedule_id: scheduleId,
-            effective_from: new Date(insertedSchedule.effective_from).toISOString(),
-            old_values: oldAuditPayload,
-            new_values: newAuditPayload,
-          }),
-        ],
-      );
-
-      await client.query("COMMIT");
-      invalidateLimitsCache();
-
-      const withdrawQuota = await merchantFeeService.getWithdrawQuotaStatus(
-        merchantId,
-        { role: "MERCHANT", db: pool },
-      );
-
-      console.info(
-        `[admin-fee] MERCHANT_FEE_CONFIG_UPDATED merchant=${merchantId} actor=${actor} schedule=${scheduleId} effective_from=${new Date(insertedSchedule.effective_from).toISOString()}`,
-      );
-
-      return {
-        dry_run: false,
-        merchant_id: merchantId,
-        schedule: insertedSchedule,
-        old_effective_config: oldEffective,
-        new_effective_config: newEffective,
-        audit: {
-          ...auditHistoryRes.rows[0],
-          actor,
-        },
-        simulation: simulateFeeSamples({
-          oldConfig: oldEffective,
-          newConfig: newEffective,
-          role: "MERCHANT",
-          alreadyWithdrawn: withdrawQuota.already_withdrawn,
-          sampleAmounts: samples,
-        }),
-      };
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+  async updateMerchantFeeConfig() {
+    throw httpError(400, "Hệ thống áp dụng biểu phí bậc thang thống nhất từ cấu hình hệ thống, không hỗ trợ cấu hình riêng cho từng merchant.");
   },
 
   async getFeeConfigHistory({
@@ -910,9 +619,9 @@ const adminMerchantFeeService = {
       target_merchant:
         r.action === "MERCHANT_FEE_CONFIG_UPDATED"
           ? {
-              id: r.target_user_id,
-              full_name: r.target_name || null,
-            }
+            id: r.target_user_id,
+            full_name: r.target_name || null,
+          }
           : null,
       old_values: r.old_values,
       new_values: r.new_values,

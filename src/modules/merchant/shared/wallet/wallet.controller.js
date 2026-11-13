@@ -2,15 +2,6 @@ const { successResponse } = require("../../../../utils/apiResponse");
 
 function createWalletController(walletService) {
   return {
-    async getWalletByUserId(req, res, next) {
-      try {
-        const { user_id: userId } = req.user;
-        const result = await walletService.getWalletByUserId(userId);
-        return successResponse(res, 200, "Lấy số dư ví thành công", result);
-      } catch (e) {
-        next(e);
-      }
-    },
     async checkTransferEligibility(req, res, next) {
       try {
         const { user_id: userId } = req.user;

@@ -57,11 +57,11 @@ describe('Blocked Merchant access HTTP / PostgreSQL', {
     app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf.toString('utf8');}}));
     app.use(require('../src/middlewares/sanitize.middleware'));
     app.use('/api/v2/admin/merchants',require('../src/admin/merchants/merchants.routes'));
-    const dashboard = require('../src/admin/merchant/shared/dashboard');
+    const dashboard = require('../src/modules/merchant/shared/dashboard');
     app.use(dashboardPaths[0],dashboard('production'));
     app.use(dashboardPaths[1],dashboard('sandbox'));
-    app.use('/api/v2/merchant/auth',require('../src/admin/merchant/production/auth/auth.routes'));
-    const payments = require('../src/admin/merchant/shared/paymentRequest');
+    app.use('/api/v2/merchant/auth',require('../src/modules/merchant/production/auth/auth.routes'));
+    const payments = require('../src/modules/merchant/shared/paymentRequest');
     app.use('/api/v2/merchant',payments('production'));
     app.use('/sb/api/v2/merchant/sandbox',payments('sandbox'));
     app.use('/api/v2/payment',require('../src/modules/paymentRequest/paymentRequest.routes'));
@@ -161,7 +161,7 @@ describe('Blocked Merchant access HTTP / PostgreSQL', {
 
   it('an already admitted payment can finish after block commit without cancelling existing data', {timeout:10000}, async () => {
     const target=await merchant();
-    const repository=require('../src/admin/merchant/shared/paymentRequest/paymentRequest.repository');
+    const repository=require('../src/modules/merchant/shared/paymentRequest/paymentRequest.repository');
     const original=repository.insertMerchantPaymentRequest.bind(repository);
     let signalAdmitted, release;
     const admitted=new Promise(resolve=>{signalAdmitted=resolve;});

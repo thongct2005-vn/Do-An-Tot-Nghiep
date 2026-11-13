@@ -1,7 +1,7 @@
 const merchantTransactionRepository = require("./transaction.repository");
 const merchantAuthRepository = require("../auth/auth.repository");
 const merchantAuthService = require("../auth/auth.service");
-const otpService = require("../../../../modules/otp/otp.service");
+const otpService = require("../../../otp/otp.service");
 const tokenUtil = require("../../../../utils/jwt");
 const { httpError } = require("../../../../utils/httpError");
 const { computePinBinding } = require("../../../../utils/pinBinding");
@@ -28,11 +28,11 @@ const {
   buildRevenueStatsXlsx,
   buildExportFileName,
 } = require("../../../../utils/exportExcel");
-const userTransactionRepository = require("../../../../modules/transaction/transaction.repository");
+const userTransactionRepository = require("../../../transaction/transaction.repository");
 const {
   assertKyc,
   assertKycBoth,
-} = require("../../../../modules/kyc/kyc.guard");
+} = require("../../../kyc/kyc.guard");
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 function toNumberOrNull(value) {
@@ -173,26 +173,6 @@ const merchantTransactionService = {
       transactionType: "WITHDRAW",
       status: "SUCCESS",
       linkedBankAccountId: linkedBankAccountId,
-    });
-  },
-
-  async processQRPayment({ sourceUserId, idempotencyKey, referenceCode }) {
-    if (!sourceUserId) {
-      throw httpError(400, "Thiếu thông tin người gửi");
-    }
-
-    await assertKyc(sourceUserId);
-
-    if (!referenceCode) {
-      throw httpError(400, "Thiếu thông tin của mã QR");
-    }
-
-    return await merchantTransactionRepository.processQRPayment({
-      sourceUserId,
-      idempotencyKey,
-      referenceCode,
-      transactionType: "PAYMENT",
-      status: "SUCCESS",
     });
   },
 

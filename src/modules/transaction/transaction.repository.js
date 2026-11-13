@@ -4,7 +4,7 @@ const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
 const { assertDailyLimit } = require("../../utils/dailyLimit");
 const { uuidv7 } = require("uuidv7");
-const merchantFeeService = require("../../admin/merchant/production/fee/fee.service");
+const merchantFeeService = require("../merchant/production/fee/fee.service");
 const {
   FEE_TYPES,
   calculatePerTransactionFeeDetails,
@@ -149,13 +149,13 @@ const TransactionRepository = {
     const sourceUser = sourceIsFirst ? firstUser : secondUser;
     const destUser = sourceIsFirst ? secondUser : firstUser;
 
-    if (sourceUser.status !== "ACTIVE") {
+    if (sourceUser.status !== "ACTIVE" || sourceUser.role === "SYSTEM") {
       throw httpError(
         403,
         "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
       );
     }
-    if (destUser.status !== "ACTIVE") {
+    if (destUser.status !== "ACTIVE" || destUser.role === "SYSTEM") {
       throw httpError(422, "Tài khoản người nhận không khả dụng");
     }
 
@@ -171,11 +171,11 @@ const TransactionRepository = {
         sourceUser.role === "MERCHANT"
           ? calculateMerchantTransferFeeDetails(amountNum, senderCfg)
           : calculatePerTransactionFeeDetails(amountNum, senderCfg, {
-              monthlyPlanActive: false,
-              role: "USER",
-              feeType: FEE_TYPES.USER_FEE,
-              feePlan: "TRANSFER",
-            });
+            monthlyPlanActive: false,
+            role: "USER",
+            feeType: FEE_TYPES.USER_FEE,
+            feePlan: "TRANSFER",
+          });
       effectiveFeeNum = senderFeeDetails.fee_amount;
       senderFeeSnapshot = senderFeeDetails.fee_rate_snapshot;
     }
@@ -250,21 +250,21 @@ const TransactionRepository = {
 
     const txFeeRateSnapshot = isMerchantInboundFeeTx
       ? {
-          ...(merchantFeeDetails?.fee_rate_snapshot || {
-            fee_type: FEE_TYPES.QR_FEE,
-          }),
-          ...(transactionType === "TRANSFER"
-            ? {
-                inbound_transfer_qr_fee: true,
-                ...(effectiveFeeNum > 0
-                  ? {
-                      sender_fee_amount: effectiveFeeNum,
-                      sender_fee_snapshot: senderFeeSnapshot || null,
-                    }
-                  : {}),
+        ...(merchantFeeDetails?.fee_rate_snapshot || {
+          fee_type: FEE_TYPES.QR_FEE,
+        }),
+        ...(transactionType === "TRANSFER"
+          ? {
+            inbound_transfer_qr_fee: true,
+            ...(effectiveFeeNum > 0
+              ? {
+                sender_fee_amount: effectiveFeeNum,
+                sender_fee_snapshot: senderFeeSnapshot || null,
               }
-            : {}),
-        }
+              : {}),
+          }
+          : {}),
+      }
       : senderFeeSnapshot || null;
 
     const insertResult = await client.query(
@@ -330,21 +330,6 @@ const TransactionRepository = {
       });
     }
 
-    let finalDestBalanceAfter = destBalanceAfter;
-    if (destUser.role === "MERCHANT") {
-      const merchantShadow = { ...destUser, balance: destBalanceAfter };
-      const recovery = await merchantFeeService.collectOverdueMonthlyFeeOnCreditTx(
-        client,
-        {
-          merchantUser: merchantShadow,
-          triggerTransactionId: createdTxId,
-        },
-      );
-      if (recovery.recovered) {
-        finalDestBalanceAfter = Number(merchantShadow.balance);
-      }
-    }
-
     if (
       destUser.role === "MERCHANT" ||
       effectiveFeeNum > 0 ||
@@ -371,7 +356,7 @@ const TransactionRepository = {
         source_balance_before: sourceBalanceBefore,
         source_balance_after: sourceBalanceAfter,
         dest_balance_before: destBalanceBefore,
-        dest_balance_after: finalDestBalanceAfter,
+        dest_balance_after: destBalanceAfter,
         idempotency_key: idempotencyKey,
       },
     });
@@ -396,7 +381,7 @@ const TransactionRepository = {
       sourceBalanceBefore,
       sourceBalanceAfter,
       destBalanceBefore,
-      destBalanceAfter: finalDestBalanceAfter,
+      destBalanceAfter,
     };
   },
 
@@ -432,7 +417,7 @@ const TransactionRepository = {
       if (!sourceUser) {
         throw httpError(404, "Không tìm thấy thông tin người dùng");
       }
-      if (sourceUser.status !== "ACTIVE") {
+      if (sourceUser.status !== "ACTIVE" || sourceUser.role === "SYSTEM") {
         throw httpError(
           403,
           "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
@@ -559,19 +544,6 @@ const TransactionRepository = {
         });
       }
 
-      let finalSourceBalanceAfter = sourceBalanceAfter;
-      if (isTopup && sourceUser.role === "MERCHANT") {
-        const merchantShadow = { ...sourceUser, balance: sourceBalanceAfter };
-        const recovery =
-          await merchantFeeService.collectOverdueMonthlyFeeOnCreditTx(client, {
-            merchantUser: merchantShadow,
-            triggerTransactionId: createdTxId,
-          });
-        if (recovery.recovered) {
-          finalSourceBalanceAfter = Number(merchantShadow.balance);
-        }
-      }
-
       await TransactionRepository.recordAudit(client, {
         eventType: "TRANSACTION_COMPLETED",
         payload: {
@@ -585,7 +557,7 @@ const TransactionRepository = {
           fee_rate_snapshot: feeSnapshot,
           net_amount: amountNum,
           source_balance_before: sourceBalanceBefore,
-          source_balance_after: finalSourceBalanceAfter,
+          source_balance_after: sourceBalanceAfter,
           linked_bank_balance_before: linkedBankBalanceBefore,
           linked_bank_balance_after: linkedBankBalanceAfter,
           idempotency_key: idempotencyKey,
@@ -605,7 +577,7 @@ const TransactionRepository = {
         netAmount: amountNum,
         withdrawQuota: wdDetails?.withdraw_quota || null,
         sourceUserName: sourceUser?.full_name,
-        sourceBalanceAfter: finalSourceBalanceAfter,
+        sourceBalanceAfter,
         bankName,
       };
     } catch (e) {

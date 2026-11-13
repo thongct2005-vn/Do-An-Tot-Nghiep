@@ -176,6 +176,7 @@ function parseFilterParams({
 function calculateIntegrityAndAnomalies(t) {
   const amount = Number(t.amount || 0);
   const fee = Number(t.fee || 0);
+  const merchantFee = Number(t.merchant_fee || 0);
 
   const hasSourceBefore =
     t.source_balance_before !== null && t.source_balance_before !== undefined;
@@ -199,7 +200,10 @@ function calculateIntegrityAndAnomalies(t) {
   const isSuccess = t.status === "SUCCESS";
 
   if (isSuccess) {
-    if (t.transaction_type === "TRANSFER" || t.transaction_type === "PAYMENT") {
+    if (
+      t.transaction_type === "TRANSFER" ||
+      (t.transaction_type === "PAYMENT" && t.destination_user_id)
+    ) {
       const sourcePresent = hasSourceBefore && hasSourceAfter;
       const destPresent = hasDestBefore && hasDestAfter;
 
@@ -215,13 +219,41 @@ function calculateIntegrityAndAnomalies(t) {
       } else {
         const sourceExpected = sourceBefore - (amount + fee);
         const sourceMatches = sourceAfter === sourceExpected;
-        const destExpected = destBefore + amount;
+        const destExpected = destBefore + amount - merchantFee;
         const destMatches = destAfter === destExpected;
 
         source_snapshot_status = sourceMatches ? "VALID" : "INVALID";
         dest_snapshot_status = destMatches ? "VALID" : "INVALID";
 
         if (sourceMatches && destMatches) {
+          overall_status = "OK";
+        } else {
+          overall_status = "MISMATCH";
+          anomalies.push({
+            code: "BALANCE_MISMATCH",
+            severity: "CRITICAL",
+            message:
+              "Số dư ví sau biến động không khớp với số tiền giao dịch và phí",
+          });
+        }
+      }
+    } else if (t.transaction_type === "PAYMENT") {
+      // Thu phí hệ thống từ ví merchant (không có ví đích)
+      dest_snapshot_status = "NOT_APPLICABLE";
+      const sourcePresent = hasSourceBefore && hasSourceAfter;
+      if (!sourcePresent) {
+        overall_status = "MISSING_SNAPSHOT";
+        source_snapshot_status = "MISSING";
+        anomalies.push({
+          code: "MISSING_SNAPSHOT",
+          severity: "WARNING",
+          message: "Giao dịch thu phí thiếu dữ liệu ảnh chụp số dư nguồn",
+        });
+      } else {
+        const sourceExpected = sourceBefore - (amount + fee);
+        const sourceMatches = sourceAfter === sourceExpected;
+        source_snapshot_status = sourceMatches ? "VALID" : "INVALID";
+        if (sourceMatches) {
           overall_status = "OK";
         } else {
           overall_status = "MISMATCH";
@@ -389,6 +421,7 @@ const adminTransactionService = {
       transaction_type: t.transaction_type,
       amount: Number(t.amount || 0),
       fee: Number(t.fee || 0),
+      merchant_fee: Number(t.merchant_fee || 0),
       status: t.status,
       description: t.description || "",
       source_user: t.source_user_id
@@ -444,6 +477,7 @@ const adminTransactionService = {
 
     const amount = Number(t.amount || 0);
     const fee = Number(t.fee || 0);
+    const merchantFee = Number(t.merchant_fee || 0);
 
     const hasSourceSnapshot =
       t.source_balance_before !== null &&
@@ -562,6 +596,9 @@ const adminTransactionService = {
       status: t.status,
       amount,
       fee,
+      merchant_fee: merchantFee,
+      fee_rate_snapshot: t.fee_rate_snapshot || null,
+      net_amount: Number(t.net_amount ?? (amount - merchantFee)),
       description: t.description || "",
       idempotency_key: t.idempotency_key,
       created_at: t.created_at,
@@ -655,15 +692,17 @@ const adminTransactionService = {
             balance_after: sourceAfter,
             difference: hasSourceSnapshot ? -(amount + fee) : null,
           },
-          merchant: {
-            id: String(t.destination_user_id),
-            full_name: t.destination_user_name || "Chưa cập nhật",
-            phone: t.destination_user_phone || "",
-            email: t.destination_user_email || "",
-            balance_before: destBefore,
-            balance_after: destAfter,
-            difference: hasDestSnapshot ? amount : null,
-          },
+          merchant: t.destination_user_id
+            ? {
+                id: String(t.destination_user_id),
+                full_name: t.destination_user_name || "Chưa cập nhật",
+                phone: t.destination_user_phone || "",
+                email: t.destination_user_email || "",
+                balance_before: destBefore,
+                balance_after: destAfter,
+                difference: hasDestSnapshot ? amount - merchantFee : null,
+              }
+            : null,
           payment_request: {
             reference_code: t.reference_code || null,
             order_id: t.order_id || null,

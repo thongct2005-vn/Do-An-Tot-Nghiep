@@ -1,17 +1,25 @@
 const transactionRepository = require("./transaction.repository");
 const { httpError } = require("../../utils/httpError");
 const { parseAmountInRange } = require("../../utils/amount");
-const { AMOUNT, HISTORY_PAGE_LIMIT, EXPORT } = require("../../config/limits");
-const { resolveExportRange } = require("../../utils/exportRange");
+const pool = require("../../config/database");
+const {
+  getEffectiveTransactionLimit,
+  getSystemConfig,
+} = require("../../utils/limitsDb");
+const { getTransactionLimitsSummary } = require("../../utils/dailyLimit");
+const {
+  resolveExportRange,
+  resolveOneYearRange,
+} = require("../../utils/exportRange");
 const {
   buildTransactionsXlsx,
   buildExportFileName,
-} = require("../../utils/transactionExcel");
+} = require("../../utils/exportExcel");
 const { sendTransactionExportEmail } = require("../../utils/mailer");
 const { maskEmail } = require("../../utils/mask");
 const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
-const { isValidDateOnly } = require("../../utils/validators");
-const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
+const merchantFeeService = require("../../admin/merchant/production/fee/fee.service");
 const TransactionService = {
   async transferMoney({
     sourceUserId,
@@ -30,7 +38,12 @@ const TransactionService = {
 
     await assertKycBoth(sourceUserId, destinationUserId);
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "chuyển");
+    const transferRule = await getEffectiveTransactionLimit(pool, {
+      userId: sourceUserId,
+      role: "USER",
+      transactionType: "TRANSFER",
+    });
+    const numAmount = parseAmountInRange(amount, transferRule, "chuyển");
 
     return await transactionRepository.transferMoney({
       sourceUserId,
@@ -54,7 +67,12 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.TOPUP, "nạp");
+    const topupRule = await getEffectiveTransactionLimit(pool, {
+      userId: sourceUserId,
+      role: "USER",
+      transactionType: "TOPUP",
+    });
+    const numAmount = parseAmountInRange(amount, topupRule, "nạp");
 
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
@@ -83,7 +101,12 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.WITHDRAW, "rút");
+    const withdrawRule = await getEffectiveTransactionLimit(pool, {
+      userId: sourceUserId,
+      role: "USER",
+      transactionType: "WITHDRAW",
+    });
+    const numAmount = parseAmountInRange(amount, withdrawRule, "rút");
 
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
@@ -130,42 +153,25 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
+    const historyPageLimit = Number(
+      await getSystemConfig("HISTORY_PAGE_LIMIT", pool),
+    ) || 20;
     const maxLimit = Math.min(
-      Number(limit) || HISTORY_PAGE_LIMIT,
-      HISTORY_PAGE_LIMIT,
+      Number(limit) || historyPageLimit,
+      historyPageLimit,
     );
 
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
 
-    let startDay = null;
-    let endDay = null;
-
-    if (startDate) {
-      if (!isValidDateOnly(startDate)) {
-        throw httpError(400, "Ngày bắt đầu không hợp lệ");
-      }
-      startDay = startDate;
-    }
-    if (endDate) {
-      if (!isValidDateOnly(endDate)) {
-        throw httpError(400, "Ngày kết thúc không hợp lệ");
-      }
-      endDay = endDate;
-    }
-
-    if (startDay && endDay && startDay > endDay) {
-      throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
-    }
-    if (startDay) {
-      const oneYearAgo = new Date(Date.now() + VN_OFFSET_MS);
-      oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1);
-      if (startDay < oneYearAgo.toISOString().slice(0, 10)) {
-        throw httpError(
-          400,
+    const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
+      startDate,
+      endDate,
+      {
+        defaultToOneYear: true,
+        tooOldMessage:
           "Chỉ có thể xem lịch sử giao dịch trong vòng 1 năm gần nhất",
-        );
-      }
-    }
+      },
+    );
 
     return await transactionRepository.getTransferHistory(userId, {
       cursorId,
@@ -190,19 +196,22 @@ const TransactionService = {
       throw httpError(400, "Tài khoản chưa có email đăng ký để nhận file");
     }
 
+    const exportMaxRows = Number(
+      await getSystemConfig("EXPORT_MAX_ROWS", pool),
+    ) || 50_000;
     const rows = await transactionRepository.exportHistory(userId, {
       keyword: normalizedKeyword,
       startDate: range.startDate,
       endDate: range.endDate,
-      limit: EXPORT.MAX_ROWS + 1,
+      limit: exportMaxRows + 1,
     });
     if (rows.length === 0) {
       throw httpError(400, "Không có giao dịch nào trong khoảng thời gian này");
     }
-    if (rows.length > EXPORT.MAX_ROWS) {
+    if (rows.length > exportMaxRows) {
       throw httpError(
         400,
-        `Có hơn ${EXPORT.MAX_ROWS} giao dịch trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn`,
+        `Có hơn ${exportMaxRows.toLocaleString("vi-VN")} giao dịch trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn`,
       );
     }
 
@@ -246,6 +255,9 @@ const TransactionService = {
       createdAt: result.createdAt,
       amount: result.amount,
       fee: result.fee,
+      feeAmount: result.feeAmount ?? result.fee,
+      feeRateSnapshot: result.feeRateSnapshot || null,
+      netAmount: result.netAmount ?? result.amount,
       description: result.description,
       sourceUserName: result.sourceUserName,
       destinationUserName: result.destinationUserName,
@@ -262,6 +274,16 @@ const TransactionService = {
     };
   },
 
+  // Nội dung push thông báo nhận tiền (ghi rõ thực nhận và phí merchant nếu có)
+  formatReceiveNotificationBody(result) {
+    const netAmount = Number(result.netAmount ?? result.amount);
+    const merchantFee = Number(result.merchantFee || 0);
+    const baseText = `Bạn vừa nhận +${netAmount.toLocaleString("vi-VN")}đ từ ${result.sourceUserName}`;
+    return merchantFee > 0
+      ? `${baseText} (đã trừ phí ${merchantFee.toLocaleString("vi-VN")}đ)`
+      : baseText;
+  },
+
   // Response nạp / rút tiền
   toBankTransactionResponse(result) {
     return {
@@ -270,9 +292,54 @@ const TransactionService = {
       createdAt: result.createdAt,
       amount: result.amount,
       fee: result.fee,
+      feeAmount: result.feeAmount ?? result.fee,
+      feeRateSnapshot: result.feeRateSnapshot || null,
+      netAmount: result.netAmount ?? result.amount,
+      withdrawQuota: result.withdrawQuota || null,
       bankName: result.bankName,
       sourceBalanceAfter: result.sourceBalanceAfter,
     };
+  },
+
+  async previewTransactionFee({
+    userId,
+    role = "USER",
+    transactionType,
+    amount,
+    merchantUserId = null,
+    referenceCode = null,
+  }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+
+    let resolvedMerchantId = merchantUserId || null;
+    let resolvedAmount = amount;
+
+    if (referenceCode && typeof referenceCode === "string" && referenceCode.trim()) {
+      const pr = await paymentRequestRepository.findByReferenceCode(
+        referenceCode.trim(),
+      );
+      if (!pr) {
+        throw httpError(404, "Không tìm thấy mã thanh toán QR");
+      }
+      resolvedMerchantId = pr.destination_user_id;
+      if (resolvedAmount === undefined || resolvedAmount === null) {
+        resolvedAmount = Number(pr.amount);
+      }
+    }
+
+    const isQrType = ["PAYMENT", "QR_PAYMENT"].includes(
+      String(transactionType || "").trim().toUpperCase(),
+    );
+
+    return merchantFeeService.previewTransactionFee({
+      transactionType,
+      amount: resolvedAmount,
+      actorUser: { id: userId, role },
+      merchantUserId: resolvedMerchantId,
+      role: isQrType ? undefined : role,
+    });
   },
 
   async getCurrentMonthSummary(userId) {
@@ -286,6 +353,14 @@ const TransactionService = {
       total_expense: result.total_expense,
       total_income: result.total_income,
     };
+  },
+
+  async getTransactionLimits(userId, { role = "USER" } = {}) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin để lấy hạn mức giao dịch");
+    }
+
+    return getTransactionLimitsSummary(pool, { userId, role });
   },
 };
 

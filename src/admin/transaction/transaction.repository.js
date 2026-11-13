@@ -36,13 +36,20 @@ function buildFilterConditions({
       case "BALANCE_MISMATCH":
         conditions.push(`(
           t.status = 'SUCCESS' AND (
-            (t.transaction_type IN ('TRANSFER', 'PAYMENT') 
+            (t.transaction_type IN ('TRANSFER', 'PAYMENT')
+             AND t.destination_user_id IS NOT NULL
              AND t.source_balance_before IS NOT NULL 
              AND t.source_balance_after IS NOT NULL 
              AND t.dest_balance_before IS NOT NULL 
              AND t.dest_balance_after IS NOT NULL 
              AND ((t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after) 
-                  OR (t.dest_balance_before + t.amount != t.dest_balance_after)))
+                  OR (t.dest_balance_before + t.amount - COALESCE(t.merchant_fee, 0) != t.dest_balance_after)))
+            OR
+            (t.transaction_type = 'PAYMENT'
+             AND t.destination_user_id IS NULL
+             AND t.source_balance_before IS NOT NULL
+             AND t.source_balance_after IS NOT NULL
+             AND (t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after))
             OR
             (t.transaction_type = 'TOPUP' 
              AND t.source_balance_before IS NOT NULL 
@@ -62,7 +69,7 @@ function buildFilterConditions({
           t.status = 'SUCCESS' AND (
             t.source_balance_before IS NULL 
             OR t.source_balance_after IS NULL 
-            OR (t.transaction_type IN ('TRANSFER', 'PAYMENT') AND (t.dest_balance_before IS NULL OR t.dest_balance_after IS NULL))
+            OR (t.transaction_type IN ('TRANSFER', 'PAYMENT') AND t.destination_user_id IS NOT NULL AND (t.dest_balance_before IS NULL OR t.dest_balance_after IS NULL))
           )
         )`);
         break;
@@ -187,6 +194,9 @@ const adminTransactionRepository = {
         t.transaction_type,
         t.amount,
         t.fee,
+        t.merchant_fee,
+        t.fee_rate_snapshot,
+        t.net_amount,
         t.status,
         t.description,
         t.created_at,
@@ -233,6 +243,9 @@ const adminTransactionRepository = {
         t.transaction_type,
         t.amount,
         t.fee,
+        t.merchant_fee,
+        t.fee_rate_snapshot,
+        t.net_amount,
         t.status,
         t.description,
         t.idempotency_key,
@@ -325,6 +338,9 @@ const adminTransactionRepository = {
         t.transaction_type,
         t.amount,
         t.fee,
+        t.merchant_fee,
+        t.fee_rate_snapshot,
+        t.net_amount,
         t.status,
         t.description,
         t.created_at,

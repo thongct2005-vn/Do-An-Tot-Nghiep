@@ -7,7 +7,8 @@ const QRCode = require("qrcode");
 const { httpError } = require("../../../../utils/httpError");
 const MAX_ITEMS = 100;
 const { parseAmountInRange } = require("../../../../utils/amount");
-const { AMOUNT } = require("../../../../config/limits");
+const { getEffectiveTransactionLimit } = require("../../../../utils/limitsDb");
+const pool = require("../../../../config/database");
 const { validateReturnUrlForSave } = require("../../../../utils/urlGuard");
 
 function normalizeItems(items) {
@@ -116,7 +117,12 @@ function createPaymentRequestService({
       if (!userId || !amount || !orderId) {
         throw httpError(400, "Thiếu thông tin để tạo mã QR");
       }
-      const numAmount = parseAmountInRange(amount, AMOUNT.QR_PAYMENT, paymentVerb);
+      const qrRule = await getEffectiveTransactionLimit(pool, {
+        userId,
+        role: "MERCHANT",
+        transactionType: "QR_PAYMENT",
+      });
+      const numAmount = parseAmountInRange(amount, qrRule, paymentVerb);
 
       if (description !== undefined && description !== null) {
         if (typeof description !== "string" || description.length > 50) {

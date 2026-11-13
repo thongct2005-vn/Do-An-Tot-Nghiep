@@ -14,7 +14,7 @@ const { httpError } = require("../../utils/httpError");
 const tokenUtil = require("../../utils/jwt");
 const { emitToUser } = require("../../utils/socket");
 const { maskPhone, maskEmail } = require("../../utils/mask");
-const { CONTACT_CHECK_MAX_PHONES } = require("../../config/limits");
+const { getSystemConfig } = require("../../utils/limitsDb");
 
 async function getResettableUser(userId) {
   const user = await userRepository.getCredentialState(userId);
@@ -96,7 +96,8 @@ const userService = {
       throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
-    if (phones.length > CONTACT_CHECK_MAX_PHONES) {
+    const maxPhones = Number(await getSystemConfig("CONTACT_CHECK_MAX_PHONES")) || 500;
+    if (phones.length > maxPhones) {
       throw httpError(413, "Danh bạ quá lớn, vui lòng đồng bộ từng phần");
     }
 

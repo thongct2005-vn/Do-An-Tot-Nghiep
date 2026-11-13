@@ -6,9 +6,12 @@ const productRepository = {
     {
       startDate = null,
       endDate = null,
-      sortByQuantity = "DESC",
+      sortBy = "quantity",
+      sortDir = "DESC",
+      sortByQuantity = null,
       keyword = null,
       limit = 10,
+      cursorValue = null,
       cursorQuantity = null,
       cursorProductId = null,
     } = {},
@@ -20,17 +23,25 @@ const productRepository = {
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
 
+    const isRevenueSort = String(sortBy).toLowerCase() === "revenue";
     const safeSort =
-      String(sortByQuantity).toUpperCase() === "ASC" ? "ASC" : "DESC";
+      String(sortDir || sortByQuantity || "DESC").toUpperCase() === "ASC"
+        ? "ASC"
+        : "DESC";
+    const effectiveCursorValue = cursorValue ?? cursorQuantity;
     const hasCursor =
-      cursorQuantity !== null &&
-      cursorQuantity !== undefined &&
+      effectiveCursorValue !== null &&
+      effectiveCursorValue !== undefined &&
       Boolean(cursorProductId);
 
-  
-    const fetchLimit = limit + 1;
+    const sortExpr = isRevenueSort
+      ? "SUM(pri.quantity * pri.unit_price)"
+      : "SUM(pri.quantity)";
+    const sortAlias = isRevenueSort ? "total_revenue" : "total_quantity_sold";
 
-  
+    const fetchLimit =
+      limit === null || limit === undefined ? null : limit + 1;
+
     const result = await pool.query(
       `
       SELECT
@@ -62,39 +73,39 @@ const productRepository = {
           CASE
             WHEN $12::text = 'DESC' THEN
               (
-                SUM(pri.quantity) < $10::bigint
+                ${sortExpr} < $10::bigint
                 OR (
-                  SUM(pri.quantity) = $10::bigint
+                  ${sortExpr} = $10::bigint
                   AND pri.product_id > $11::text
                 )
               )
             ELSE
               (
-                SUM(pri.quantity) > $10::bigint
+                ${sortExpr} > $10::bigint
                 OR (
-                  SUM(pri.quantity) = $10::bigint
+                  ${sortExpr} = $10::bigint
                   AND pri.product_id > $11::text
                 )
               )
           END
         )
       )
-      ORDER BY total_quantity_sold ${safeSort}, pri.product_id ASC
+      ORDER BY ${sortAlias} ${safeSort}, pri.product_id ASC
       LIMIT $8
       `,
       [
         userId,
         hasStartDate,
         startDate,
-        hasEndDate, 
+        hasEndDate,
         endDate,
         hasKeyword,
-        safeKeyword, 
-        fetchLimit, 
-        hasCursor, 
-        hasCursor ? Number(cursorQuantity) : 0,
-        hasCursor ? String(cursorProductId) : "", 
-        safeSort, 
+        safeKeyword,
+        fetchLimit,
+        hasCursor,
+        hasCursor ? Number(effectiveCursorValue) : 0,
+        hasCursor ? String(cursorProductId) : "",
+        safeSort,
       ],
     );
 

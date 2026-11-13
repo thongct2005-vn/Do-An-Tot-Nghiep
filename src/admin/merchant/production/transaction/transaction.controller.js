@@ -1,5 +1,5 @@
 const { successResponse } = require("../../../../utils/apiResponse");
-const { sendXlsx } = require("../../../../utils/transactionExcel");
+const { sendXlsx } = require("../../../../utils/exportExcel");
 const merchantTransactionService = require("./transaction.service");
 const transactionService = require("../../../../modules/transaction/transaction.service");
 const { emitToUser } = require("../../../../utils/socket");
@@ -180,7 +180,7 @@ const merchantTransactionController = {
 
       sendPushNotification(result.destinationId, {
         title: "Nhận tiền thành công",
-        body: `Bạn vừa nhận +${Number(result.amount).toLocaleString("vi-VN")}đ từ ${result.sourceUserName}`,
+        body: transactionService.formatReceiveNotificationBody(result),
         data: {
           type: "RECEIVE_MONEY",
           transactionId: result.transactionId,
@@ -210,6 +210,7 @@ const merchantTransactionController = {
         start_date: startDate,
         end_date: endDate,
         sort,
+        sort_by: sortBy,
         product_id: productId,
       } = req.query;
 
@@ -223,6 +224,7 @@ const merchantTransactionController = {
           startDate,
           endDate,
           sort,
+          sortBy,
           productId,
         },
       );
@@ -401,6 +403,45 @@ const merchantTransactionController = {
         res,
         200,
         "Lấy số liệu thống kê thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async exportMerchantStats(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const {
+        start_date: startDate,
+        end_date: endDate,
+        sort_by: sortBy,
+        sort,
+      } = req.query;
+
+      const file = await merchantTransactionService.exportMerchantStats(
+        userId,
+        { startDate, endDate, sortBy, sort },
+      );
+
+      return sendXlsx(res, file);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getTransactionLimits(req, res, next) {
+    try {
+      const { user_id: userId, type, role } = req.user;
+      const result = await merchantTransactionService.getTransactionLimits(
+        userId,
+        { role: role || type || "MERCHANT" },
+      );
+      return successResponse(
+        res,
+        200,
+        "Lấy hạn mức giao dịch thành công",
         result,
       );
     } catch (e) {

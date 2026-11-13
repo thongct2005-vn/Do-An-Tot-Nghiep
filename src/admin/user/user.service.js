@@ -316,12 +316,16 @@ const adminUserService = {
       },
       items: items.map((t) => {
         const isOut = t.source_user_id === userId && t.transaction_type !== "TOPUP";
+        const amount = Number(t.amount || 0);
+        const merchantFee = !isOut ? Number(t.merchant_fee || 0) : 0;
         return {
           id: t.id,
           type: t.transaction_type,
           direction: isOut ? "OUT" : "IN",
-          amount: Number(t.amount || 0),
+          amount,
           fee: Number(t.fee || 0),
+          merchant_fee: merchantFee,
+          net_amount: !isOut ? Math.max(0, amount - merchantFee) : amount,
           status: t.status,
           description: t.description,
           counterparty_name: isOut

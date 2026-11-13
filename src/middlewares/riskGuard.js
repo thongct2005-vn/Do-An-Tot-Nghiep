@@ -1,6 +1,6 @@
 const { risk, blockAccountByPhone } = require("../utils/risk");
 const { maskPhone } = require("../utils/mask");
-const { RISK_THRESHOLDS } = require("../config/limits");
+const { resolveRiskThreshold } = require("../utils/limitsDb");
 
 // Kiểm tra chế độ "chỉ log, không chặn" từ biến môi trường (RISK_DRY_RUN=true hoặc 1)
 function isEnvDryRun() {
@@ -18,13 +18,11 @@ function isEnvDryRun() {
  * @param {number} [options.block=70]      Ngưỡng chặn thẳng với mã lỗi HTTP 429
  * @param {boolean} [options.dryRun]       Ghi đè chế độ chỉ log không chặn (mặc định đọc từ process.env.RISK_DRY_RUN)
  */
-function riskGuard({
-  challenge = RISK_THRESHOLDS.DEFAULT.challenge,
-  block = RISK_THRESHOLDS.DEFAULT.block,
-  dryRun,
-} = {}) {
+function riskGuard(options = {}) {
+  const { dryRun } = options || {};
   return async (req, res, next) => {
     const isDryRun = dryRun !== undefined ? Boolean(dryRun) : isEnvDryRun();
+    const { challenge, block } = await resolveRiskThreshold(options);
 
     const { score, reasons, metrics } = risk(req);
     const shouldChallenge = score >= challenge;

@@ -234,6 +234,7 @@ const adminUserRepository = {
         t.transaction_type,
         t.amount,
         t.fee,
+        t.merchant_fee,
         t.status,
         t.description,
         t.created_at,

@@ -176,7 +176,7 @@ const transactionController = {
 
       sendPushNotification(result.destinationId, {
         title: "Nhận tiền thành công",
-        body: `Bạn vừa nhận +${Number(result.amount).toLocaleString("vi-VN")}đ từ ${result.sourceUserName}`,
+        body: transactionService.formatReceiveNotificationBody(result),
         data: {
           type: "RECEIVE_MONEY",
           transactionId: result.transactionId,
@@ -261,6 +261,53 @@ const transactionController = {
         res,
         200,
         "Lấy tổng quan giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async previewFee(req, res, next) {
+    try {
+      const { user_id: userId, role, type } = req.user;
+      const {
+        transaction_type: transactionType,
+        amount,
+        merchant_user_id: merchantUserId,
+        reference_code: referenceCode,
+      } = req.body || {};
+
+      const result = await transactionService.previewTransactionFee({
+        userId,
+        role: role || type || "USER",
+        transactionType,
+        amount,
+        merchantUserId,
+        referenceCode,
+      });
+
+      return successResponse(
+        res,
+        200,
+        "Tính trước phí giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getTransactionLimits(req, res, next) {
+    try {
+      const { user_id: userId, role, type } = req.user;
+      const result = await transactionService.getTransactionLimits(userId, {
+        role: role || type || "USER",
+      });
+      return successResponse(
+        res,
+        200,
+        "Lấy hạn mức giao dịch thành công",
         result,
       );
     } catch (e) {

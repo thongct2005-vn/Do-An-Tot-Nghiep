@@ -162,6 +162,8 @@ const adminAuthService = {
     };
   },
 
+  checkAdminCredentials,
+
   async logout(adminId, refreshToken) {
     if (!adminId || !refreshToken) {
       throw httpError(401, "Thiếu thông tin xác thực");

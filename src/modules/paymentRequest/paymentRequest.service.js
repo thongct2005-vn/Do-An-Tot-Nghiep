@@ -5,7 +5,8 @@ const { uuidv7 } = require("uuidv7");
 const userRepository = require("../user/user.repository");
 const { httpError } = require("../../utils/httpError");
 const { parseAmountInRange } = require("../../utils/amount");
-const { AMOUNT } = require("../../config/limits"); // đầu file
+const { getEffectiveTransactionLimit } = require("../../utils/limitsDb");
+const pool = require("../../config/database");
 
 
 const paymentRequestService = {
@@ -57,7 +58,12 @@ const paymentRequestService = {
       throw httpError(400, "Thiếu thông tin để tạo mã QR");
     }
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "nhận");
+    const qrRule = await getEffectiveTransactionLimit(pool, {
+      userId,
+      role: "USER",
+      transactionType: "TRANSFER",
+    });
+    const numAmount = parseAmountInRange(amount, qrRule, "nhận");
 
     if (description !== undefined && description !== null) {
       if (typeof description !== "string" || description.length > 50) {

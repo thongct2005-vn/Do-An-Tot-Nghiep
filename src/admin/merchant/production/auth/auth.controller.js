@@ -143,6 +143,7 @@ const merchantAuthController = {
         tax_code: taxCode,
         call_back_url: callbackUrl,
         store_name: storeName,
+        fee_plan: feePlan,
       } = req.body;
       const { user_id: userId, phone, email } = req.otpUser;
       const result = await merchantAuthService.verifyAndCompleteRegister({
@@ -154,6 +155,7 @@ const merchantAuthController = {
         taxCode,
         callbackUrl,
         storeName,
+        feePlan,
       });
       clearFailure(phone);
       return successResponse(res, 200, "Đăng ký tài khoản thành công", {

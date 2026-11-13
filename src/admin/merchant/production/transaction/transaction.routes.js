@@ -115,4 +115,19 @@ router.get(
   authMiddleware.verifyAccessToken,
   transactionController.getMerchantStats,
 );
+
+router.get(
+  "/stats/export",
+  authMiddleware.verifyAccessToken,
+  exportLimiter,
+  transactionController.exportMerchantStats,
+);
+
+router.get(
+  "/limits",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  transactionController.getTransactionLimits,
+);
 module.exports = router;

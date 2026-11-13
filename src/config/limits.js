@@ -31,8 +31,7 @@ module.exports = {
   CONTACT_CHECK_MAX_PHONES: 500,
 
   EXPORT: {
-    MAX_DAYS: 31,
-    MAX_ROWS: 10_000,
+    MAX_ROWS: 50_000,
   },
 
   RISK_THRESHOLDS: {

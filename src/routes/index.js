@@ -23,6 +23,7 @@ const createMerchantPaymentRequestRoutes = require("../admin/merchant/shared/pay
 const merchantTransactionRoutes = require("../admin/merchant/production/transaction/transaction.routes");
 const merchantProductRoutes = require("../admin/merchant/production/product/product.routes");
 const merchantBankRoutes = require("../admin/merchant/production/bank/bank.routes");
+const merchantFeeRoutes = require("../admin/merchant/production/fee/fee.routes");
 const createMerchantWalletModule = require("../admin/merchant/shared/wallet");
 const merchantSandboxAuthRoutes = require("../admin/merchant/sandbox/auth/auth.routes");
 const userSandboxAuthRoutes = require("../admin/merchant/sandbox/user/auth/auth.routes");
@@ -64,6 +65,7 @@ router.use("/merchant", merchantPaymentRequestRoutes);
 router.use("/merchant/transaction", merchantTransactionRoutes);
 router.use("/merchant/product", merchantProductRoutes);
 router.use("/merchant/bank", merchantBankRoutes);
+router.use("/merchant/fee", merchantFeeRoutes);
 router.use("/merchant/wallet", merchantWalletRoutes);
 
 

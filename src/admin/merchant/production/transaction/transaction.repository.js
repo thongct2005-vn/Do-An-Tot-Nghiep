@@ -1,6 +1,4 @@
 const pool = require("../../../../config/database");
-const paymentRequestRepository = require("../../../../modules/paymentRequest/paymentRequest.repository");
-const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const { httpError } = require("../../../../utils/httpError");
 const { assertDailyLimit } = require("../../../../utils/dailyLimit");
 const transactionRepository = require("../../../../modules/transaction/transaction.repository");
@@ -47,312 +45,12 @@ const merchantTransactionRepository = {
     );
   },
 
-  async executeTransfer(
-    client,
-    {
-      sourceUserId,
-      destinationUserId,
-      amount,
-      fee = 0,
-      description,
-      idempotencyKey,
-      transactionType = "TRANSFER",
-      status = "SUCCESS",
-    },
-  ) {
-    const amountNum = Number(amount);
-    const feeNum = Number(fee);
-
-    if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      throw httpError(400, "Số tiền không hợp lệ");
-    }
-    if (!Number.isFinite(feeNum) || feeNum < 0) {
-      throw httpError(400, "Phí giao dịch không hợp lệ");
-    }
-    if (String(sourceUserId) === String(destinationUserId)) {
-      throw httpError(400, "Không thể chuyển tiền cho chính mình");
-    }
-
-    const [firstId, secondId] = [
-      String(sourceUserId),
-      String(destinationUserId),
-    ].sort();
-
-    const firstUserResult = await client.query(
-      `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
-      [firstId],
-    );
-    const secondUserResult = await client.query(
-      `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
-      [secondId],
-    );
-
-    const firstUser = firstUserResult.rows[0];
-    const secondUser = secondUserResult.rows[0];
-
-    if (!firstUser || !secondUser) {
-      throw httpError(
-        404,
-        "Không tìm thấy thông tin người gửi hoặc người nhận",
-      );
-    }
-
-    const sourceIsFirst = firstId === String(sourceUserId);
-    const sourceUser = sourceIsFirst ? firstUser : secondUser;
-    const destUser = sourceIsFirst ? secondUser : firstUser;
-
-    if (sourceUser.status !== "ACTIVE") {
-      throw httpError(
-        403,
-        "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
-      );
-    }
-    if (destUser.status !== "ACTIVE") {
-      throw httpError(422, "Tài khoản người nhận không khả dụng");
-    }
-
-    const totalDeduct = amountNum + feeNum;
-    const sourceBalanceBefore = Number(sourceUser.balance);
-
-    if (sourceBalanceBefore < totalDeduct) {
-      throw httpError(422, "Số dư không đủ để thực hiện giao dịch");
-    }
-
-    await assertDailyLimit(client, {
-      userId: sourceUserId,
-      role: sourceUser.role,
-      type: transactionType,
-      amount: amountNum,
-      fee: feeNum,
-    });
-
-    const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
-    const destBalanceBefore = Number(destUser.balance);
-    const destBalanceAfter = destBalanceBefore + amountNum;
-
-    await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
-      sourceBalanceAfter,
-      sourceUserId,
-    ]);
-
-    await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
-      destBalanceAfter,
-      destinationUserId,
-    ]);
-
-    const insertResult = await client.query(
-      `INSERT INTO transactions (
-        transaction_type, source_user_id, source_balance_before, source_balance_after,
-        destination_user_id, dest_balance_before, dest_balance_after,
-        amount, fee, description, idempotency_key, status
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      RETURNING id, status, created_at`,
-      [
-        transactionType,
-        sourceUserId,
-        sourceBalanceBefore,
-        sourceBalanceAfter,
-        destinationUserId,
-        destBalanceBefore,
-        destBalanceAfter,
-        amount,
-        fee,
-        description,
-        idempotencyKey,
-        status,
-      ],
-    );
-
-    await transactionRepository.recordAudit(client, {
-      eventType: "TRANSACTION_COMPLETED",
-      payload: {
-        transaction_id: insertResult.rows[0]?.id,
-        transaction_type: transactionType,
-        status: insertResult.rows[0]?.status,
-        source_user_id: sourceUserId,
-        destination_user_id: destinationUserId,
-        amount: amountNum,
-        fee: feeNum,
-        source_balance_before: sourceBalanceBefore,
-        source_balance_after: sourceBalanceAfter,
-        dest_balance_before: destBalanceBefore,
-        dest_balance_after: destBalanceAfter,
-        idempotency_key: idempotencyKey,
-      },
-    });
-
-    return {
-      transactionId: insertResult.rows[0]?.id,
-      status: insertResult.rows[0]?.status,
-      createdAt: insertResult.rows[0]?.created_at,
-      amount,
-      fee,
-      description,
-      sourceUserName: sourceUser?.full_name,
-      destinationId: destUser?.id,
-      destinationUserName: destUser?.full_name,
-      destinationPhone: destUser?.phone,
-      sourceBalanceAfter,
-      destBalanceAfter,
-    };
+  async executeTransfer(client, params) {
+    return transactionRepository.executeTransfer(client, params);
   },
 
-  async _executeBankTransaction({
-    isTopup,
-    sourceUserId,
-    amount,
-    fee = 0,
-    idempotencyKey,
-    transactionType,
-    status = "SUCCESS",
-    linkedBankAccountId = null,
-  }) {
-    const amountNum = Number(amount);
-    const feeNum = Number(fee);
-
-    if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      throw httpError(400, "Số tiền không hợp lệ");
-    }
-    if (!Number.isFinite(feeNum) || feeNum < 0) {
-      throw httpError(400, "Phí giao dịch không hợp lệ");
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const userResult = await client.query(
-        `SELECT id, role, full_name, phone, balance, status FROM users WHERE id = $1 FOR UPDATE`,
-        [sourceUserId],
-      );
-      const sourceUser = userResult.rows[0];
-      if (!sourceUser) {
-        throw httpError(404, "Không tìm thấy thông tin người dùng");
-      }
-      if (sourceUser.status !== "ACTIVE") {
-        throw httpError(
-          403,
-          "Tài khoản của bạn đang bị khoá hoặc không khả dụng",
-        );
-      }
-
-      const bankResult = await client.query(
-        `SELECT lba.balance, b.name AS bank_name
-         FROM linked_bank_accounts lba
-         LEFT JOIN banks b ON lba.bank_id = b.id
-         WHERE lba.id = $1 AND lba.user_id = $2 AND lba.status = 'ACTIVE'
-         FOR UPDATE OF lba`,
-        [linkedBankAccountId, sourceUserId],
-      );
-      const bankRow = bankResult.rows[0];
-      if (!bankRow) {
-        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
-      }
-
-      const bankName = bankRow.bank_name;
-      const totalDeduct = amountNum + feeNum;
-      const sourceBalanceBefore = Number(sourceUser.balance);
-      const linkedBankBalanceBefore = Number(bankRow.balance);
-
-      let sourceBalanceAfter;
-      let linkedBankBalanceAfter;
-
-      if (isTopup) {
-        if (linkedBankBalanceBefore < totalDeduct) {
-          throw httpError(
-            422,
-            "Số dư ngân hàng không đủ để thực hiện giao dịch",
-          );
-        }
-        sourceBalanceAfter = sourceBalanceBefore + amountNum;
-        linkedBankBalanceAfter = linkedBankBalanceBefore - totalDeduct;
-      } else {
-        if (sourceBalanceBefore < totalDeduct) {
-          throw httpError(
-            422,
-            "Số dư tài khoản không đủ để thực hiện giao dịch",
-          );
-        }
-        sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
-        linkedBankBalanceAfter = linkedBankBalanceBefore + totalDeduct;
-      }
-
-      await assertDailyLimit(client, {
-        userId: sourceUserId,
-        role: sourceUser.role,
-        type: isTopup ? "TOPUP" : "WITHDRAW",
-        amount: amountNum,
-        fee: feeNum,
-      });
-
-      await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
-        sourceBalanceAfter,
-        sourceUserId,
-      ]);
-
-      await client.query(
-        `UPDATE linked_bank_accounts SET balance = $1 WHERE id = $2`,
-        [linkedBankBalanceAfter, linkedBankAccountId],
-      );
-
-      const insertResult = await client.query(
-        `INSERT INTO transactions (
-          transaction_type, source_user_id, source_balance_before, source_balance_after,
-          amount, fee, idempotency_key, status,
-          linked_bank_account_id
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, status, created_at`,
-        [
-          transactionType,
-          sourceUserId,
-          sourceBalanceBefore,
-          sourceBalanceAfter,
-          amount,
-          fee,
-          idempotencyKey,
-          status,
-          linkedBankAccountId,
-        ],
-      );
-
-      await transactionRepository.recordAudit(client, {
-        eventType: "TRANSACTION_COMPLETED",
-        payload: {
-          transaction_id: insertResult.rows[0]?.id,
-          transaction_type: transactionType,
-          status: insertResult.rows[0]?.status,
-          source_user_id: sourceUserId,
-          linked_bank_account_id: linkedBankAccountId,
-          amount: amountNum,
-          fee: feeNum,
-          source_balance_before: sourceBalanceBefore,
-          source_balance_after: sourceBalanceAfter,
-          linked_bank_balance_before: linkedBankBalanceBefore,
-          linked_bank_balance_after: linkedBankBalanceAfter,
-          idempotency_key: idempotencyKey,
-        },
-      });
-
-      await client.query("COMMIT");
-
-      return {
-        transactionId: insertResult.rows[0]?.id,
-        status: insertResult.rows[0]?.status,
-        createdAt: insertResult.rows[0]?.created_at,
-        amount,
-        fee,
-        sourceUserName: sourceUser?.full_name,
-        sourceBalanceAfter,
-        bankName,
-      };
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+  async _executeBankTransaction(params) {
+    return transactionRepository._executeBankTransaction(params);
   },
 
   async topupMoney({
@@ -415,94 +113,22 @@ const merchantTransactionRepository = {
     }
   },
 
-  async processQRPayment({
-    sourceUserId,
-    referenceCode,
-    idempotencyKey,
-    transactionType,
-  }) {
-    const client = await pool.connect();
-    let transferResult;
-    let paymentResult;
-
-    try {
-      await client.query("BEGIN");
-
-      const paymentRequest =
-        await paymentRequestRepository.findByReferenceCodeForUpdate(
-          client,
-          referenceCode,
-        );
-      if (!paymentRequest) {
-        throw httpError(404, "Không tìm thấy mã QR");
-      }
-      if (paymentRequest.paid_at != null || paymentRequest.is_expires) {
-        throw httpError(400, "Mã QR này đã được thanh toán hoặc hết hạn");
-      }
-      if (String(sourceUserId) === String(paymentRequest.destination_user_id)) {
-        throw httpError(400, "Không thể chuyển tiền cho chính mình");
-      }
-
-      transferResult = await merchantTransactionRepository.executeTransfer(
-        client,
-        {
-          sourceUserId: sourceUserId,
-          destinationUserId: paymentRequest.destination_user_id,
-          amount: paymentRequest.amount,
-          description:
-            paymentRequest.description || `Thanh toán QR ${referenceCode}`,
-          transactionType: transactionType,
-          idempotencyKey: idempotencyKey,
-        },
-      );
-
-      paymentResult = await paymentRequestRepository.markAsPaid(client, {
-        referenceCode: referenceCode,
-        sourceUserId: sourceUserId,
-        transactionId: transferResult.transactionId,
-      });
-      if (!paymentResult) {
-        throw httpError(409, "Mã QR này đã được thanh toán hoặc hết hạn");
-      }
-
-      await webhookRepository.enqueue(client, {
-        paymentRequestId: paymentResult.id,
-        eventType: "payment.success",
-      });
-
-      await transactionRepository.recordAudit(client, {
-        eventType: "PAYMENT_PAID",
-        payload: {
-          payment_id: paymentResult.id,
-          order_id: paymentResult.order_id ?? null,
-          merchant_id: paymentResult.destination_user_id,
-          payer_user_id: sourceUserId,
-          transaction_id: transferResult.transactionId,
-          amount: Number(paymentResult.amount),
-        },
-      });
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    return transferResult;
+  async processQRPayment(params) {
+    return transactionRepository.processQRPayment(params);
   },
 
   async getTransferHistory(
     userId,
     {
       cursorId = null,
+      cursorAmount = null,
       limit,
       keyword = null,
       type = null,
       startDate = null,
       endDate = null,
       sort = "DESC",
+      sortBy = "time",
       productId = null,
     } = {},
   ) {
@@ -513,10 +139,23 @@ const merchantTransactionRepository = {
     const hasEndDate = Boolean(endDate);
     const hasProductId = Boolean(productId);
     const isAsc = String(sort).toUpperCase() === "ASC";
+    const isAmountSort = sortBy === "amount";
 
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
+
+    const cursorClause = isAmountSort
+      ? isAsc
+        ? `(t.amount > $15::bigint OR (t.amount = $15::bigint AND t.id < $3))`
+        : `(t.amount < $15::bigint OR (t.amount = $15::bigint AND t.id < $3))`
+      : isAsc
+        ? `t.id > $3`
+        : `t.id < $3`;
+
+    const orderByClause = isAmountSort
+      ? `t.amount ${isAsc ? "ASC" : "DESC"}, t.id DESC`
+      : `t.id ${isAsc ? "ASC" : "DESC"}`;
 
     const result = await pool.query(
       `
@@ -541,6 +180,12 @@ const merchantTransactionRepository = {
 
         t.amount,
         t.fee,
+        CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END AS merchant_fee,
+        t.fee_rate_snapshot,
+        COALESCE(
+          t.net_amount,
+          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
+        ) AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -560,7 +205,7 @@ const merchantTransactionRepository = {
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
-        AND ($2::boolean = false OR ${isAsc ? "t.id > $3" : "t.id < $3"})
+        AND ($2::boolean = false OR ${cursorClause})
         AND (
           $5::boolean = false
           OR (
@@ -592,29 +237,52 @@ const merchantTransactionRepository = {
               AND pri.product_id = $14::text
           )
         )
-      ORDER BY t.id ${isAsc ? "ASC" : "DESC"}
+      ORDER BY ${orderByClause}
       LIMIT $4
       `,
-      [
-        userId,
-        hasCursor,
-        cursorId,
-        limit,
-        hasKeyword,
-        safeKeyword,
-        hasStartDate,
-        startDate,
-        hasEndDate,
-        endDate,
-        hasType,
-        type,
-        hasProductId,
-        productId,
-      ],
+      isAmountSort
+        ? [
+            userId,
+            hasCursor,
+            cursorId,
+            limit,
+            hasKeyword,
+            safeKeyword,
+            hasStartDate,
+            startDate,
+            hasEndDate,
+            endDate,
+            hasType,
+            type,
+            hasProductId,
+            productId,
+            hasCursor ? Number(cursorAmount || 0) : 0,
+          ]
+        : [
+            userId,
+            hasCursor,
+            cursorId,
+            limit,
+            hasKeyword,
+            safeKeyword,
+            hasStartDate,
+            startDate,
+            hasEndDate,
+            endDate,
+            hasType,
+            type,
+            hasProductId,
+            productId,
+          ],
     );
 
     const rows = result.rows;
-    const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;
+    const lastRow = rows.length === limit ? rows[rows.length - 1] : null;
+    const nextCursor = lastRow
+      ? isAmountSort
+        ? `${lastRow.amount}:${lastRow.id}`
+        : lastRow.id
+      : null;
 
     return {
       transaction_list: rows,
@@ -628,7 +296,7 @@ const merchantTransactionRepository = {
    */
   async exportHistory(
     userId,
-    { keyword = null, type = null, startDate, endDate, productId = null, limit },
+    { keyword = null, type = null, startDate, endDate, productId = null, limit = null },
   ) {
     const hasKeyword = Boolean(keyword && keyword.trim());
     const hasType = Boolean(type);
@@ -658,6 +326,12 @@ const merchantTransactionRepository = {
         END AS destination_display_phone,
         t.amount,
         t.fee,
+        CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END AS merchant_fee,
+        t.fee_rate_snapshot,
+        COALESCE(
+          t.net_amount,
+          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
+        ) AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -720,6 +394,12 @@ const merchantTransactionRepository = {
         t.status,
         t.amount,
         t.fee,
+        CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END AS merchant_fee,
+        t.fee_rate_snapshot,
+        COALESCE(
+          t.net_amount,
+          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
+        ) AS net_amount,
         t.description,
         t.created_at,
         t.completed_at,
@@ -788,7 +468,7 @@ const merchantTransactionRepository = {
     COALESCE(SUM(CASE
       WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
       WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
-      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN amount
+      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
       ELSE 0
     END), 0) AS total_income
   FROM transactions
@@ -813,11 +493,23 @@ const merchantTransactionRepository = {
     const result = await pool.query(
       `
       SELECT
-        -- Tổng doanh thu: chỉ tính PAYMENT thành công mà merchant là bên nhận (destination_user_id)
+        -- Tổng doanh thu thực nhận sau phí: PAYMENT thành công mà merchant là bên nhận
+        COALESCE(SUM(CASE 
+          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
+          THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE 0 
+        END), 0) AS total_revenue,
+
+        -- Tổng doanh thu gộp trước phí (tổng tiền khách thanh toán)
         COALESCE(SUM(CASE 
           WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
           THEN t.amount ELSE 0 
-        END), 0) AS total_revenue,
+        END), 0) AS gross_revenue,
+
+        -- Tổng phí giao dịch đã khấu trừ của merchant
+        COALESCE(SUM(CASE 
+          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
+          THEN COALESCE(t.merchant_fee, 0) ELSE 0 
+        END), 0) AS total_merchant_fee,
         
         -- Tổng số đơn hàng thành công
         COUNT(CASE 
@@ -825,10 +517,10 @@ const merchantTransactionRepository = {
           THEN 1 ELSE NULL 
         END) AS total_orders,
 
-        -- Tổng tiền khách thanh toán trung bình mỗi đơn
+        -- Giá trị thực nhận trung bình mỗi đơn
         COALESCE(AVG(CASE 
           WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
-          THEN t.amount ELSE NULL 
+          THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE NULL 
         END), 0) AS avg_order_value
       FROM transactions t
       WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
@@ -847,7 +539,9 @@ const merchantTransactionRepository = {
       `
       SELECT
         TO_CHAR(t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date_str,
-        COALESCE(SUM(t.amount), 0) AS revenue,
+        COALESCE(SUM(t.amount - COALESCE(t.merchant_fee, 0)), 0) AS revenue,
+        COALESCE(SUM(t.amount), 0) AS gross_revenue,
+        COALESCE(SUM(COALESCE(t.merchant_fee, 0)), 0) AS merchant_fee,
         COUNT(t.id) AS order_count
       FROM transactions t
       WHERE t.destination_user_id = $1

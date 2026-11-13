@@ -2,6 +2,7 @@ const pool = require("../../../../config/database");
 const { claimEmail } = require("../../../../utils/emailClaim");
 const tokenUtil = require("../../../../utils/jwt");
 const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
+const merchantFeeService = require("../fee/fee.service");
 
 const merchantAuthRepository = {
   // Lấy thông tin merchant theo phone
@@ -118,6 +119,7 @@ const merchantAuthRepository = {
     apiKey,
     secretKey,
     status = "APPROVED",
+    feePlan = "PER_TRANSACTION",
   }) {
     const client = await pool.connect();
 
@@ -151,6 +153,11 @@ const merchantAuthRepository = {
         `,
         [taxCode, userId, status],
       );
+
+      await merchantFeeService.initFeeSettingOnRegisterTx(client, {
+        merchantUserId: userId,
+        feePlan,
+      });
 
       await client.query("COMMIT");
     } catch (e) {

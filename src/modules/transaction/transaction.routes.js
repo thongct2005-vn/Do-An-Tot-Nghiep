@@ -71,4 +71,16 @@ router.get(
   transactionController.getCurrentMonthSummary,
 );
 
+router.post(
+  "/preview-fee",
+  authMiddleware.verifyAccessToken,
+  transactionController.previewFee,
+);
+
+router.get(
+  "/limits",
+  authMiddleware.verifyAccessToken,
+  transactionController.getTransactionLimits,
+);
+
 module.exports = router;

@@ -3,7 +3,7 @@ const authMiddleware = require("../../../../middlewares/auth.middleware");
 const userRepository = require("../../../../modules/user/user.repository");
 const { httpError } = require("../../../../utils/httpError");
 const { parseAmountInRange } = require("../../../../utils/amount");
-const { AMOUNT } = require("../../../../config/limits");
+const { getTransactionPolicy } = require("../../../../utils/limitsDb");
 const pool = require("../../../../config/database");
 const { successResponse } = require("../../../../utils/apiResponse");
 
@@ -22,9 +22,10 @@ module.exports = () => {
       throw httpError(400, "Thiếu số điện thoại hoặc số tiền");
     }
 
+    const sandboxRule = await getTransactionPolicy("USER", "SANDBOX_TOPUP");
     const numAmount = parseAmountInRange(
       amount,
-      AMOUNT.SANDBOX_TOPUP,
+      sandboxRule,
       "cập nhật",
     );
 
@@ -46,6 +47,29 @@ module.exports = () => {
       next(e);
     }
   };
+
+  controller.getWalletLimits = async (req, res, next) => {
+    try {
+      const sandboxRule = await getTransactionPolicy("USER", "SANDBOX_TOPUP");
+      return successResponse(res, 200, "Lấy hạn mức sandbox thành công", {
+        SANDBOX_TOPUP: {
+          min_amount: Number(sandboxRule.min),
+          max_amount: Number(sandboxRule.max),
+          daily_limit:
+            sandboxRule.dailyLimit == null ? null : Number(sandboxRule.dailyLimit),
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  };
+
+  router.get(
+    "/limits",
+    authMiddleware.verifyAccessToken,
+    authMiddleware.requireRole("MERCHANT"),
+    controller.getWalletLimits,
+  );
 
   router.patch(
     "/balance",

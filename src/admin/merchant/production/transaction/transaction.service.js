@@ -10,23 +10,24 @@ const {
   maskPhone,
   maskAccountNumber,
 } = require("../../../../utils/mask");
-const {
-  isValidPhone,
-  isValidDateOnly,
-} = require("../../../../utils/validators");
+const { isValidPhone } = require("../../../../utils/validators");
 const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
 const { parseAmountInRange } = require("../../../../utils/amount");
+const pool = require("../../../../config/database");
 const {
-  AMOUNT,
-  MERCHANT_AMOUNT,
-  HISTORY_PAGE_LIMIT,
-  EXPORT,
-} = require("../../../../config/limits");
-const { resolveExportRange } = require("../../../../utils/exportRange");
+  getEffectiveTransactionLimit,
+  getSystemConfig,
+} = require("../../../../utils/limitsDb");
+const { getTransactionLimitsSummary } = require("../../../../utils/dailyLimit");
+const {
+  resolveExportRange,
+  resolveOneYearRange,
+} = require("../../../../utils/exportRange");
 const {
   buildTransactionsXlsx,
+  buildRevenueStatsXlsx,
   buildExportFileName,
-} = require("../../../../utils/transactionExcel");
+} = require("../../../../utils/exportExcel");
 const userTransactionRepository = require("../../../../modules/transaction/transaction.repository");
 const {
   assertKyc,
@@ -88,7 +89,12 @@ const merchantTransactionService = {
 
     await assertKycBoth(sourceUserId, destinationUserId);
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.TRANSFER, "chuyển");
+    const transferRule = await getEffectiveTransactionLimit(pool, {
+      userId: sourceUserId,
+      role: "MERCHANT",
+      transactionType: "TRANSFER",
+    });
+    const numAmount = parseAmountInRange(amount, transferRule, "chuyển");
 
     return await merchantTransactionRepository.transferMoney({
       sourceUserId,
@@ -114,7 +120,12 @@ const merchantTransactionService = {
 
     await assertKyc(sourceUserId);
 
-    const numAmount = parseAmountInRange(amount, AMOUNT.TOPUP, "nạp");
+    const topupRule = await getEffectiveTransactionLimit(pool, {
+      userId: sourceUserId,
+      role: "MERCHANT",
+      transactionType: "TOPUP",
+    });
+    const numAmount = parseAmountInRange(amount, topupRule, "nạp");
 
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
@@ -143,11 +154,12 @@ const merchantTransactionService = {
 
     await assertKyc(sourceUserId);
 
-    const numAmount = parseAmountInRange(
-      amount,
-      MERCHANT_AMOUNT.WITHDRAW,
-      "rút",
-    );
+    const withdrawRule = await getEffectiveTransactionLimit(pool, {
+      userId: sourceUserId,
+      role: "MERCHANT",
+      transactionType: "WITHDRAW",
+    });
+    const numAmount = parseAmountInRange(amount, withdrawRule, "rút");
 
     if (!linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
@@ -199,18 +211,21 @@ const merchantTransactionService = {
       throw httpError(400, "Loại giao dịch không hợp lệ");
     }
 
+    const exportMaxRows = Number(
+      await getSystemConfig("EXPORT_MAX_ROWS", pool),
+    ) || 50_000;
     const rows = await merchantTransactionRepository.exportHistory(userId, {
       keyword: normalizedKeyword,
       type: normalizedType,
       startDate: range.startDate,
       endDate: range.endDate,
       productId: normalizedProductId,
-      limit: EXPORT.MAX_ROWS + 1,
+      limit: exportMaxRows + 1,
     });
-    if (rows.length > EXPORT.MAX_ROWS) {
+    if (rows.length > exportMaxRows) {
       throw httpError(
         400,
-        `Có hơn ${EXPORT.MAX_ROWS} giao dịch trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn hoặc thêm bộ lọc`,
+        `Có hơn ${exportMaxRows.toLocaleString("vi-VN")} giao dịch trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn hoặc thêm bộ lọc`,
       );
     }
 
@@ -248,15 +263,18 @@ const merchantTransactionService = {
 
   async getTransferHistory(
     userId,
-    { cursorId, limit, keyword, type, startDate, endDate, sort, productId },
+    { cursorId, limit, keyword, type, startDate, endDate, sort, sortBy, productId },
   ) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
+    const historyPageLimit = Number(
+      await getSystemConfig("HISTORY_PAGE_LIMIT", pool),
+    ) || 20;
     const maxLimit = Math.min(
-      Number(limit) || HISTORY_PAGE_LIMIT,
-      HISTORY_PAGE_LIMIT,
+      Number(limit) || historyPageLimit,
+      historyPageLimit,
     );
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
     const normalizedProductId = normalizeProductIdFilter(productId);
@@ -275,48 +293,53 @@ const merchantTransactionService = {
       throw httpError(400, "Thứ tự sắp xếp không hợp lệ");
     }
 
+    const normalizedSortBy =
+      sortBy !== undefined && sortBy !== null && String(sortBy).trim()
+        ? String(sortBy).trim().toLowerCase()
+        : "time";
+    if (!["time", "amount"].includes(normalizedSortBy)) {
+      throw httpError(400, "Trường sắp xếp không hợp lệ");
+    }
+
+    let parsedCursorId = cursorId || null;
+    let parsedCursorAmount = null;
+    if (normalizedSortBy === "amount" && cursorId) {
+      const sepIdx = String(cursorId).indexOf(":");
+      if (sepIdx <= 0) {
+        throw httpError(400, "Cursor không hợp lệ");
+      }
+      const amtNum = Number(String(cursorId).slice(0, sepIdx));
+      const txIdPart = String(cursorId).slice(sepIdx + 1).trim();
+      if (!Number.isFinite(amtNum) || !txIdPart) {
+        throw httpError(400, "Cursor không hợp lệ");
+      }
+      parsedCursorAmount = Math.trunc(amtNum);
+      parsedCursorId = txIdPart;
+    }
+
     // Ngày được giữ dạng chuỗi YYYY-MM-DD, repository sẽ tính theo giờ Việt Nam
-    let startDay = null;
-    let endDay = null;
-
-    if (startDate) {
-      if (!isValidDateOnly(startDate)) {
-        throw httpError(400, "Ngày bắt đầu không hợp lệ");
-      }
-      startDay = startDate;
-    }
-
-    if (endDate) {
-      if (!isValidDateOnly(endDate)) {
-        throw httpError(400, "Ngày kết thúc không hợp lệ");
-      }
-      endDay = endDate;
-    }
-
-    if (startDay && endDay && startDay > endDay) {
-      throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
-    }
-    if (startDay) {
-      const oneYearAgo = new Date(Date.now() + VN_OFFSET_MS);
-      oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1);
-      if (startDay < oneYearAgo.toISOString().slice(0, 10)) {
-        throw httpError(
-          400,
+    const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
+      startDate,
+      endDate,
+      {
+        defaultToOneYear: true,
+        tooOldMessage:
           "Chỉ có thể xem lịch sử giao dịch trong vòng 1 năm gần nhất",
-        );
-      }
-    }
+      },
+    );
 
     const result = await merchantTransactionRepository.getTransferHistory(
       userId,
       {
-        cursorId,
+        cursorId: parsedCursorId,
+        cursorAmount: parsedCursorAmount,
         limit: maxLimit,
         keyword: normalizedKeyword,
         type: normalizedType,
         startDate: startDay,
         endDate: endDay,
         sort: normalizedSort,
+        sortBy: normalizedSortBy,
         productId: normalizedProductId,
       },
     );
@@ -352,6 +375,9 @@ const merchantTransactionService = {
       direction: row.direction,
       amount: Number(row.amount),
       fee: Number(row.fee),
+      merchant_fee: Number(row.merchant_fee || 0),
+      fee_rate_snapshot: row.fee_rate_snapshot || null,
+      net_amount: Number(row.net_amount ?? row.amount),
       description: row.description,
       created_at: row.created_at,
       completed_at: row.completed_at,
@@ -441,26 +467,15 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin người dùng");
     }
 
-    let startDay = null;
-    let endDay = null;
-
-    if (startDate) {
-      if (!isValidDateOnly(startDate)) {
-        throw httpError(400, "Ngày bắt đầu không hợp lệ");
-      }
-      startDay = startDate;
-    }
-
-    if (endDate) {
-      if (!isValidDateOnly(endDate)) {
-        throw httpError(400, "Ngày kết thúc không hợp lệ");
-      }
-      endDay = endDate;
-    }
-
-    if (startDay && endDay && startDay > endDay) {
-      throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
-    }
+    const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
+      startDate,
+      endDate,
+      {
+        defaultToOneYear: true,
+        tooOldMessage:
+          "Chỉ có thể xem thống kê doanh thu trong vòng 1 năm gần nhất",
+      },
+    );
 
     const data = await merchantTransactionRepository.getMerchantStats(userId, {
       startDate: startDay,
@@ -469,13 +484,60 @@ const merchantTransactionService = {
 
     return {
       total_revenue: Number(data.summary.total_revenue),
+      gross_revenue: Number(data.summary.gross_revenue),
+      total_merchant_fee: Number(data.summary.total_merchant_fee),
       total_orders: Number(data.summary.total_orders),
       avg_order_value: Number(data.summary.avg_order_value),
       daily_stats: data.daily_stats.map((row) => ({
         date: row.date_str,
         revenue: Number(row.revenue),
+        gross_revenue: Number(row.gross_revenue),
+        merchant_fee: Number(row.merchant_fee),
         order_count: Number(row.order_count),
       })),
+    };
+  },
+
+  async exportMerchantStats(userId, { startDate, endDate, sortBy, sort }) {
+    const stats = await this.getMerchantStats(userId, { startDate, endDate });
+    const normalizedSortBy = ["date", "orders", "revenue"].includes(
+      String(sortBy || "").toLowerCase(),
+    )
+      ? String(sortBy).toLowerCase()
+      : "date";
+    const dir = String(sort || "DESC").toUpperCase() === "ASC" ? 1 : -1;
+
+    const sortedDaily = [...stats.daily_stats].sort((a, b) => {
+      let cmp = 0;
+      if (normalizedSortBy === "orders") {
+        cmp = a.order_count - b.order_count;
+      } else if (normalizedSortBy === "revenue") {
+        cmp = a.revenue - b.revenue;
+      } else {
+        cmp = String(a.date).localeCompare(String(b.date));
+      }
+      if (cmp !== 0) return cmp * dir;
+      return String(b.date).localeCompare(String(a.date));
+    });
+
+    const buffer = await buildRevenueStatsXlsx({
+      summary: {
+        total_revenue: stats.total_revenue,
+        total_orders: stats.total_orders,
+        avg_order_value: stats.avg_order_value,
+      },
+      dailyStats: sortedDaily,
+      startDate: startDate || null,
+      endDate: endDate || null,
+    });
+
+    const fileSuffix =
+      startDate && endDate
+        ? `${startDate}_den_${endDate}`
+        : startDate || endDate || "tat-ca";
+    return {
+      buffer,
+      fileName: `thong-ke-doanh-thu_${fileSuffix}.xlsx`,
     };
   },
 
@@ -621,6 +683,14 @@ const merchantTransactionService = {
       full_name: receiver.full_name,
       phone: maskPhone(receiver.phone),
     };
+  },
+
+  async getTransactionLimits(userId, { role = "MERCHANT" } = {}) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin để lấy hạn mức giao dịch");
+    }
+
+    return getTransactionLimitsSummary(pool, { userId, role });
   },
 };
 

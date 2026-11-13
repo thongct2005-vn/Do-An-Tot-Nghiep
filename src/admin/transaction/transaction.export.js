@@ -77,6 +77,7 @@ const COLUMNS = [
   { header: "Mã đơn hàng / Đối soát", width: 24 },
   { header: "Số tiền (VND)", width: 18 },
   { header: "Phí dịch vụ (VND)", width: 18 },
+  { header: "Phí merchant (VND)", width: 18 },
   { header: "Biến động ví nguồn", width: 28 },
   { header: "Biến động ví đích", width: 28 },
   { header: "Trạng thái", width: 16 },
@@ -142,7 +143,8 @@ async function buildTransactionsAdminXlsx({
   for (const r of rows) {
     const amt = Number(r.amount) || 0;
     const f = Number(r.fee) || 0;
-    totalFee += f;
+    const mf = Number(r.merchant_fee) || 0;
+    totalFee += f + mf;
     if (r.status === "SUCCESS") {
       if (r.transaction_type === "TOPUP") totalTopup += amt;
       else if (r.transaction_type === "WITHDRAW") totalWithdraw += amt;
@@ -281,10 +283,11 @@ async function buildTransactionsAdminXlsx({
       sanitizeExcelString(orderRefText), // 10. Mã đơn hàng / Đối soát
       Number(r.amount) || 0, // 11. Số tiền
       Number(r.fee) || 0, // 12. Phí dịch vụ
-      sanitizeExcelString(sourceBalanceDelta), // 13. Biến động ví nguồn
-      sanitizeExcelString(destBalanceDelta), // 14. Biến động ví đích
-      STATUS_LABEL[r.status] || r.status, // 15. Trạng thái
-      sanitizeExcelString(r.description || ""), // 16. Nội dung
+      Number(r.merchant_fee) || 0, // 13. Phí merchant
+      sanitizeExcelString(sourceBalanceDelta), // 14. Biến động ví nguồn
+      sanitizeExcelString(destBalanceDelta), // 15. Biến động ví đích
+      STATUS_LABEL[r.status] || r.status, // 16. Trạng thái
+      sanitizeExcelString(r.description || ""), // 17. Nội dung
     ];
 
     cells.forEach((val, i) => {
@@ -298,9 +301,10 @@ async function buildTransactionsAdminXlsx({
     excelRow.getCell(3).alignment = { horizontal: "center" };
     excelRow.getCell(11).numFmt = MONEY_FMT;
     excelRow.getCell(12).numFmt = MONEY_FMT;
+    excelRow.getCell(13).numFmt = MONEY_FMT;
 
     // Màu trạng thái
-    const statusCell = excelRow.getCell(15);
+    const statusCell = excelRow.getCell(16);
     statusCell.alignment = { horizontal: "center" };
     if (r.status === "SUCCESS") {
       statusCell.font = { color: { argb: "FF0E7036" }, bold: true };

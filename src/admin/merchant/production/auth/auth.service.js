@@ -440,7 +440,13 @@ const merchantAuthService = {
     taxCode,
     callbackUrl,
     storeName,
+    feePlan,
   }) {
+    const merchantFeeService = require("../fee/fee.service");
+    const normalizedFeePlan = merchantFeeService.normalizeRequestedPlan(
+      feePlan,
+      { defaultPlan: "PER_TRANSACTION" },
+    );
     if (!password) {
       throw httpError(400, "Thiếu mật khẩu");
     }
@@ -487,6 +493,7 @@ const merchantAuthService = {
       callbackUrl: safeCallbackUrl,
       apiKey,
       secretKey,
+      feePlan: normalizedFeePlan,
     });
 
     const newUser = await merchantAuthRepository.findMerchantByPhone(phone);
@@ -505,6 +512,7 @@ const merchantAuthService = {
         user_id: newUser.id,
         phone: newUser.phone,
         email: newUser.email,
+        fee_plan: normalizedFeePlan,
       },
     };
   },

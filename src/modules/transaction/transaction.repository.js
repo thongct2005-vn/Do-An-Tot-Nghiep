@@ -4,6 +4,13 @@ const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
 const { assertDailyLimit } = require("../../utils/dailyLimit");
 const { uuidv7 } = require("uuidv7");
+const merchantFeeService = require("../../admin/merchant/production/fee/fee.service");
+const {
+  FEE_TYPES,
+  calculatePerTransactionFeeDetails,
+  calculateMerchantTransferFeeDetails,
+  getVnMonthMeta,
+} = require("../fee/feeCalculator");
 
 const TransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
@@ -152,7 +159,28 @@ const TransactionRepository = {
       throw httpError(422, "Tài khoản người nhận không khả dụng");
     }
 
-    const totalDeduct = amountNum + feeNum;
+    let effectiveFeeNum = feeNum;
+    let senderFeeSnapshot = null;
+    if (transactionType === "TRANSFER" && feeNum === 0) {
+      const { effectiveConfig: senderCfg } =
+        await merchantFeeService.resolveEffectiveFeeConfig(sourceUser.id, {
+          role: sourceUser.role || "USER",
+          db: client,
+        });
+      const senderFeeDetails =
+        sourceUser.role === "MERCHANT"
+          ? calculateMerchantTransferFeeDetails(amountNum, senderCfg)
+          : calculatePerTransactionFeeDetails(amountNum, senderCfg, {
+              monthlyPlanActive: false,
+              role: "USER",
+              feeType: FEE_TYPES.USER_FEE,
+              feePlan: "TRANSFER",
+            });
+      effectiveFeeNum = senderFeeDetails.fee_amount;
+      senderFeeSnapshot = senderFeeDetails.fee_rate_snapshot;
+    }
+
+    const totalDeduct = amountNum + effectiveFeeNum;
     const sourceBalanceBefore = Number(sourceUser.balance);
 
     if (sourceBalanceBefore < totalDeduct) {
@@ -164,16 +192,48 @@ const TransactionRepository = {
       role: sourceUser.role,
       type: transactionType,
       amount: amountNum,
-      fee: feeNum,
+      fee: effectiveFeeNum,
     });
 
     const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
+
+    // Áp dụng biểu phí QR của merchant cả khi PAYMENT và khi TRANSFER vào ví MERCHANT (tránh né phí QR bằng P2P)
+    const isMerchantInboundFeeTx =
+      destUser.role === "MERCHANT" &&
+      (transactionType === "PAYMENT" || transactionType === "TRANSFER");
+
+    let merchantFeeDetails = null;
+    let merchantFeeNum = 0;
+    if (isMerchantInboundFeeTx) {
+      merchantFeeDetails = await merchantFeeService.resolveMerchantTxFeeDetailsTx(
+        client,
+        {
+          merchantUser: destUser,
+          amount: amountNum,
+          transactionType,
+        },
+      );
+      merchantFeeNum = merchantFeeDetails.fee_amount;
+    }
+
+    if (
+      !Number.isFinite(merchantFeeNum) ||
+      merchantFeeNum < 0 ||
+      merchantFeeNum > amountNum
+    ) {
+      throw httpError(500, "Phí giao dịch merchant không hợp lệ");
+    }
+
     const destBalanceBefore = Number(destUser.balance);
-    const destBalanceAfter = destBalanceBefore + amountNum;
+    const netAmount = amountNum - merchantFeeNum;
+    if (netAmount < 0) {
+      throw httpError(500, "Số tiền thực nhận của merchant không hợp lệ");
+    }
+    const destBalanceAfter = destBalanceBefore + netAmount;
 
     if (
       sourceBalanceBefore + destBalanceBefore !==
-      sourceBalanceAfter + destBalanceAfter + feeNum
+      sourceBalanceAfter + destBalanceAfter + effectiveFeeNum + merchantFeeNum
     ) {
       throw httpError(500, "Lỗi toàn vẹn số dư giao dịch");
     }
@@ -188,13 +248,33 @@ const TransactionRepository = {
       destinationUserId,
     ]);
 
+    const txFeeRateSnapshot = isMerchantInboundFeeTx
+      ? {
+          ...(merchantFeeDetails?.fee_rate_snapshot || {
+            fee_type: FEE_TYPES.QR_FEE,
+          }),
+          ...(transactionType === "TRANSFER"
+            ? {
+                inbound_transfer_qr_fee: true,
+                ...(effectiveFeeNum > 0
+                  ? {
+                      sender_fee_amount: effectiveFeeNum,
+                      sender_fee_snapshot: senderFeeSnapshot || null,
+                    }
+                  : {}),
+              }
+            : {}),
+        }
+      : senderFeeSnapshot || null;
+
     const insertResult = await client.query(
       `INSERT INTO transactions (
         transaction_type, source_user_id, source_balance_before, source_balance_after,
         destination_user_id, dest_balance_before, dest_balance_after,
-        amount, fee, description, idempotency_key, status
+        amount, fee, merchant_fee, fee_rate_snapshot, net_amount,
+        description, idempotency_key, status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15)
       RETURNING id, status, created_at`,
       [
         transactionType,
@@ -205,37 +285,109 @@ const TransactionRepository = {
         destBalanceBefore,
         destBalanceAfter,
         amount,
-        fee,
+        effectiveFeeNum,
+        merchantFeeNum,
+        JSON.stringify(txFeeRateSnapshot),
+        netAmount,
         description,
         idempotencyKey,
         status,
       ],
     );
 
+    const createdTxId = insertResult.rows[0]?.id;
+
+    if (merchantFeeNum > 0) {
+      await merchantFeeService.creditSystemFeeWalletAndLedgerTx(client, {
+        transactionId: createdTxId,
+        merchantUserId: destUser.id,
+        payerUserId: sourceUserId,
+        feeType: FEE_TYPES.QR_FEE,
+        amount: merchantFeeNum,
+        rateSnapshot: txFeeRateSnapshot,
+        idempotencyKey,
+      });
+    }
+
+    if (effectiveFeeNum > 0) {
+      await merchantFeeService.creditSystemFeeWalletAndLedgerTx(client, {
+        transactionId: createdTxId,
+        merchantUserId: destUser.role === "MERCHANT" ? destUser.id : null,
+        payerUserId: sourceUserId,
+        feeType: FEE_TYPES.USER_FEE,
+        amount: effectiveFeeNum,
+        rateSnapshot: senderFeeSnapshot || txFeeRateSnapshot,
+        idempotencyKey: idempotencyKey ? `${idempotencyKey}:USER_FEE` : null,
+      });
+    }
+
+    if (isMerchantInboundFeeTx) {
+      await merchantFeeService.addMonthlyUsageTx(client, {
+        userId: destUser.id,
+        monthKey:
+          merchantFeeDetails?.month_key || getVnMonthMeta().currentMonthKey,
+        qrGrossDelta: amountNum,
+      });
+    }
+
+    let finalDestBalanceAfter = destBalanceAfter;
+    if (destUser.role === "MERCHANT") {
+      const merchantShadow = { ...destUser, balance: destBalanceAfter };
+      const recovery = await merchantFeeService.collectOverdueMonthlyFeeOnCreditTx(
+        client,
+        {
+          merchantUser: merchantShadow,
+          triggerTransactionId: createdTxId,
+        },
+      );
+      if (recovery.recovered) {
+        finalDestBalanceAfter = Number(merchantShadow.balance);
+      }
+    }
+
+    if (
+      destUser.role === "MERCHANT" ||
+      effectiveFeeNum > 0 ||
+      merchantFeeNum > 0
+    ) {
+      console.info(
+        `[tx-fee] tx=${createdTxId} type=${transactionType} merchant=${destUser.id} amount=${amountNum} fee=${effectiveFeeNum} merchant_fee=${merchantFeeNum} net=${netAmount} rate_pct=${txFeeRateSnapshot?.rate_percent ?? 0}%`,
+      );
+    }
+
     await TransactionRepository.recordAudit(client, {
       eventType: "TRANSACTION_COMPLETED",
       payload: {
-        transaction_id: insertResult.rows[0]?.id,
+        transaction_id: createdTxId,
         transaction_type: transactionType,
         status: insertResult.rows[0]?.status,
         source_user_id: sourceUserId,
         destination_user_id: destinationUserId,
         amount: amountNum,
-        fee: feeNum,
+        fee: effectiveFeeNum,
+        merchant_fee: merchantFeeNum,
+        fee_rate_snapshot: txFeeRateSnapshot,
+        net_amount: netAmount,
         source_balance_before: sourceBalanceBefore,
         source_balance_after: sourceBalanceAfter,
         dest_balance_before: destBalanceBefore,
-        dest_balance_after: destBalanceAfter,
+        dest_balance_after: finalDestBalanceAfter,
         idempotency_key: idempotencyKey,
       },
     });
 
     return {
-      transactionId: insertResult.rows[0]?.id,
+      transactionId: createdTxId,
       status: insertResult.rows[0]?.status,
       createdAt: insertResult.rows[0]?.created_at,
       amount,
-      fee,
+      fee: effectiveFeeNum,
+      feeAmount: isMerchantInboundFeeTx
+        ? merchantFeeNum + effectiveFeeNum
+        : effectiveFeeNum,
+      feeRateSnapshot: txFeeRateSnapshot,
+      merchantFee: merchantFeeNum,
+      netAmount,
       description,
       sourceUserName: sourceUser?.full_name,
       destinationId: destUser?.id,
@@ -244,7 +396,7 @@ const TransactionRepository = {
       sourceBalanceBefore,
       sourceBalanceAfter,
       destBalanceBefore,
-      destBalanceAfter,
+      destBalanceAfter: finalDestBalanceAfter,
     };
   },
 
@@ -301,10 +453,23 @@ const TransactionRepository = {
       }
 
       const bankName = bankRow.bank_name;
-      const totalDeduct = amountNum + feeNum;
       const sourceBalanceBefore = Number(sourceUser.balance);
       const linkedBankBalanceBefore = Number(bankRow.balance);
 
+      let computedFeeNum = feeNum;
+      let feeSnapshot = null;
+      let wdDetails = null;
+
+      if (!isTopup && feeNum === 0) {
+        wdDetails = await merchantFeeService.resolveWithdrawFeeDetailsTx(
+          client,
+          { user: sourceUser, amount: amountNum },
+        );
+        computedFeeNum = wdDetails.fee_amount;
+        feeSnapshot = wdDetails.fee_rate_snapshot;
+      }
+
+      const totalDeduct = amountNum + computedFeeNum;
       let sourceBalanceAfter;
       let linkedBankBalanceAfter;
 
@@ -333,7 +498,7 @@ const TransactionRepository = {
         role: sourceUser.role,
         type: isTopup ? "TOPUP" : "WITHDRAW",
         amount: amountNum,
-        fee: feeNum,
+        fee: computedFeeNum,
       });
 
       await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
@@ -346,13 +511,23 @@ const TransactionRepository = {
         [linkedBankBalanceAfter, linkedBankAccountId],
       );
 
+      if (!isTopup) {
+        const withdrawMonthKey =
+          wdDetails?.month_key || getVnMonthMeta().currentMonthKey;
+        await merchantFeeService.addMonthlyUsageTx(client, {
+          userId: sourceUserId,
+          monthKey: withdrawMonthKey,
+          withdrawDelta: amountNum,
+        });
+      }
+
       const insertResult = await client.query(
         `INSERT INTO transactions (
           transaction_type, source_user_id, source_balance_before, source_balance_after,
-          amount, fee, idempotency_key, status,
-          linked_bank_account_id
+          amount, fee, merchant_fee, fee_rate_snapshot, net_amount,
+          idempotency_key, status, linked_bank_account_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, 0, $7::jsonb, $8, $9, $10, $11)
         RETURNING id, status, created_at`,
         [
           transactionType,
@@ -360,25 +535,57 @@ const TransactionRepository = {
           sourceBalanceBefore,
           sourceBalanceAfter,
           amount,
-          fee,
+          computedFeeNum,
+          JSON.stringify(feeSnapshot),
+          amountNum,
           idempotencyKey,
           status,
           linkedBankAccountId,
         ],
       );
 
+      const createdTxId = insertResult.rows[0]?.id;
+
+      if (!isTopup && computedFeeNum > 0) {
+        await merchantFeeService.creditSystemFeeWalletAndLedgerTx(client, {
+          transactionId: createdTxId,
+          merchantUserId:
+            sourceUser.role === "MERCHANT" ? sourceUserId : null,
+          payerUserId: sourceUserId,
+          feeType: FEE_TYPES.WITHDRAW_FEE,
+          amount: computedFeeNum,
+          rateSnapshot: feeSnapshot,
+          idempotencyKey,
+        });
+      }
+
+      let finalSourceBalanceAfter = sourceBalanceAfter;
+      if (isTopup && sourceUser.role === "MERCHANT") {
+        const merchantShadow = { ...sourceUser, balance: sourceBalanceAfter };
+        const recovery =
+          await merchantFeeService.collectOverdueMonthlyFeeOnCreditTx(client, {
+            merchantUser: merchantShadow,
+            triggerTransactionId: createdTxId,
+          });
+        if (recovery.recovered) {
+          finalSourceBalanceAfter = Number(merchantShadow.balance);
+        }
+      }
+
       await TransactionRepository.recordAudit(client, {
         eventType: "TRANSACTION_COMPLETED",
         payload: {
-          transaction_id: insertResult.rows[0]?.id,
+          transaction_id: createdTxId,
           transaction_type: transactionType,
           status: insertResult.rows[0]?.status,
           source_user_id: sourceUserId,
           linked_bank_account_id: linkedBankAccountId,
           amount: amountNum,
-          fee: feeNum,
+          fee: computedFeeNum,
+          fee_rate_snapshot: feeSnapshot,
+          net_amount: amountNum,
           source_balance_before: sourceBalanceBefore,
-          source_balance_after: sourceBalanceAfter,
+          source_balance_after: finalSourceBalanceAfter,
           linked_bank_balance_before: linkedBankBalanceBefore,
           linked_bank_balance_after: linkedBankBalanceAfter,
           idempotency_key: idempotencyKey,
@@ -388,13 +595,17 @@ const TransactionRepository = {
       await client.query("COMMIT");
 
       return {
-        transactionId: insertResult.rows[0]?.id,
+        transactionId: createdTxId,
         status: insertResult.rows[0]?.status,
         createdAt: insertResult.rows[0]?.created_at,
         amount,
-        fee,
+        fee: computedFeeNum,
+        feeAmount: computedFeeNum,
+        feeRateSnapshot: feeSnapshot,
+        netAmount: amountNum,
+        withdrawQuota: wdDetails?.withdraw_quota || null,
         sourceUserName: sourceUser?.full_name,
-        sourceBalanceAfter,
+        sourceBalanceAfter: finalSourceBalanceAfter,
         bankName,
       };
     } catch (e) {
@@ -526,6 +737,8 @@ const TransactionRepository = {
           payer_user_id: sourceUserId,
           transaction_id: transferResult.transactionId,
           amount: Number(paymentResult.amount),
+          merchant_fee: Number(transferResult.merchantFee || 0),
+          net_amount: Number(transferResult.netAmount ?? paymentResult.amount),
         },
       });
 
@@ -576,6 +789,12 @@ const TransactionRepository = {
 
         t.amount,
         t.fee,
+        CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END::bigint AS merchant_fee,
+        t.fee_rate_snapshot,
+        COALESCE(
+          t.net_amount,
+          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
+        )::bigint AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -661,7 +880,7 @@ const TransactionRepository = {
    */
   async exportHistory(
     userId,
-    { keyword = null, startDate, endDate, limit },
+    { keyword = null, startDate, endDate, limit = null },
   ) {
     const hasKeyword = Boolean(keyword && keyword.trim());
     const safeKeyword = hasKeyword
@@ -689,6 +908,12 @@ const TransactionRepository = {
         END AS destination_display_phone,
         t.amount,
         t.fee,
+        CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END::bigint AS merchant_fee,
+        t.fee_rate_snapshot,
+        COALESCE(
+          t.net_amount,
+          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
+        )::bigint AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -748,8 +973,8 @@ const TransactionRepository = {
     END), 0) AS total_expense,
     COALESCE(SUM(CASE
       WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN amount
-      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN amount
+      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
+      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
       ELSE 0
     END), 0) AS total_income
   FROM transactions

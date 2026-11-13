@@ -463,7 +463,7 @@ const adminMerchantsRepository = {
           `
           SELECT
             COALESCE(
-              SUM(t.amount) FILTER (
+              SUM(t.amount - COALESCE(t.merchant_fee, 0)) FILTER (
                 WHERE t.destination_user_id = $1
                   AND t.status = 'SUCCESS'
                   AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
@@ -472,7 +472,7 @@ const adminMerchantsRepository = {
               0
             )::BIGINT AS current_month_volume,
             COALESCE(
-              SUM(t.amount) FILTER (
+              SUM(t.amount - COALESCE(t.merchant_fee, 0)) FILTER (
                 WHERE t.destination_user_id = $1
                   AND t.status = 'SUCCESS'
                   AND t.transaction_type IN ('PAYMENT', 'TRANSFER')

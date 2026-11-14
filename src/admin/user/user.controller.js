@@ -18,6 +18,24 @@ const adminUserController = {
     }
   },
 
+  async getLoginStats(req, res, next) {
+    try {
+      const { start_date, end_date } = req.query;
+      const result = await adminUserService.getLoginStats({
+        start_date,
+        end_date,
+      });
+      return successResponse(
+        res,
+        200,
+        "Lấy thống kê đăng nhập ứng dụng thành công",
+        result
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
   async getUsers(req, res, next) {
     try {
       const { page, limit, search, status } = req.query;

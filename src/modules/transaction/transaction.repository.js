@@ -661,6 +661,11 @@ const TransactionRepository = {
     try {
       await client.query("BEGIN");
 
+      // All participating paths lock users before payment rows.
+      const target = await client.query('SELECT destination_user_id FROM payment_requests WHERE reference_code=$1', [referenceCode]);
+      if (target.rows[0]) {
+        await client.query('SELECT id FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[sourceUserId, target.rows[0].destination_user_id]]);
+      }
       const paymentRequest =
         await paymentRequestRepository.findByReferenceCodeForUpdate(
           client,
@@ -668,6 +673,9 @@ const TransactionRepository = {
         );
       if (!paymentRequest) {
         throw httpError(404, "Không tìm thấy mã QR");
+      }
+      if (paymentRequest.status !== 'PENDING') {
+        throw httpError(409, "Mã QR không còn chờ thanh toán");
       }
       if (paymentRequest.paid_at != null || paymentRequest.is_expires) {
         throw httpError(400, "Mã QR này đã được thanh toán hoặc hết hạn");

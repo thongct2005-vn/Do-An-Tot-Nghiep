@@ -107,7 +107,11 @@
     finished = true;
     stopTimers();
     fillSummary(data);
-    showState(data.status === "success" ? "success" : "failed");
+    if (data.status === 'cancelled') {
+      showError('Đơn thanh toán đã bị hủy', data.message || 'Vui lòng yêu cầu cửa hàng tạo đơn mới.', false);
+      return;
+    }
+    showState((data.status === "success" || data.status === "paid") ? "success" : "failed");
 
     var target = data.redirect_url ? safeHttpUrl(data.redirect_url) : null;
     var area = $("return-area");

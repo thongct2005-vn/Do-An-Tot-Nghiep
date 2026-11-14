@@ -6,6 +6,11 @@ const { emitToUser } = require("../../utils/socket");
 const { isValidPhone, isValidEmail } = require("../../utils/validators");
 const { maskPhone } = require("../../utils/mask");
 const { clearFailure } = require("../../utils/risk");
+const {
+  resolveAdminDateRange,
+  generateTimeBuckets,
+  getMondayOfDateStr,
+} = require("../../utils/adminDateRange");
 
 const MAX_ADMIN_AUTH_ATTEMPTS = 5;
 const ADMIN_LOCK_MINUTES = 30;
@@ -41,6 +46,75 @@ const adminUserService = {
       total_users: Number(stats?.total_count || 0),
       active_users: Number(stats?.active_count || 0),
       suspended_users: Number(stats?.suspended_count || 0),
+    };
+  },
+
+  /**
+   * GET /api/v2/admin/user/login-stats
+   * Thống kê lượt đăng nhập App thành công và người dùng duy nhất từ MongoDB theo Asia/Ho_Chi_Minh.
+   */
+  async getLoginStats({ start_date, end_date, now } = {}) {
+    const range = resolveAdminDateRange(start_date, end_date, { now });
+    const baseBuckets = generateTimeBuckets(range);
+    const rows = await adminUserRepository.getLoginStatsRows({
+      startInstant: range.startInstant,
+      nextDayInstant: range.nextDayInstant,
+      groupBy: range.groupBy,
+    });
+
+    const bucketStatsMap = new Map();
+    const overallUniqueUserSet = new Set();
+    let overallTotalLogins = 0;
+
+    for (const row of rows || []) {
+      const rawKey = String(row._id || "");
+      const bucketKey =
+        range.groupBy === "week" ? getMondayOfDateStr(rawKey) : rawKey;
+
+      const count = Number(row.total_logins || 0);
+      const userIds = Array.isArray(row.user_ids) ? row.user_ids : [];
+
+      overallTotalLogins += count;
+      for (const uid of userIds) {
+        if (uid !== null && uid !== undefined) {
+          overallUniqueUserSet.add(String(uid));
+        }
+      }
+
+      if (!bucketStatsMap.has(bucketKey)) {
+        bucketStatsMap.set(bucketKey, {
+          total_logins: 0,
+          userSet: new Set(),
+        });
+      }
+      const entry = bucketStatsMap.get(bucketKey);
+      entry.total_logins += count;
+      for (const uid of userIds) {
+        if (uid !== null && uid !== undefined) {
+          entry.userSet.add(String(uid));
+        }
+      }
+    }
+
+    const buckets = baseBuckets.map((b) => {
+      const matched = bucketStatsMap.get(b.key);
+      return {
+        bucket_key: b.key,
+        label: b.label,
+        start_date: b.start_date,
+        end_date: b.end_date,
+        total_logins: matched ? matched.total_logins : 0,
+        unique_users: matched ? matched.userSet.size : 0,
+      };
+    });
+
+    return {
+      period: range.period,
+      summary: {
+        total_logins: overallTotalLogins,
+        unique_users: overallUniqueUserSet.size,
+      },
+      buckets,
     };
   },
 

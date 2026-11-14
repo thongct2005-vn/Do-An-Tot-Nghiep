@@ -39,14 +39,18 @@ const paymentRequestRepository = {
     amount,
     description,
   }) {
-    const result = await pool.query(
-      `INSERT INTO payment_requests
-         (id, reference_code, destination_user_id, amount, description)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, reference_code, amount, description, status, expires_at, created_at`,
-      [id, referenceCode, destinationUserId, amount, description],
-    );
-    return result?.rows[0] ?? null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const user=(await client.query('SELECT role,status,credentials_revoked,credentials_revision FROM users WHERE id=$1 FOR UPDATE',[destinationUserId])).rows[0];
+      if(user?.role==='MERCHANT' && (user.credentials_revoked || user.status!=='ACTIVE')) throw require('../../utils/httpError').httpError(403,'Credentials Merchant không khả dụng');
+      const result = await client.query(`INSERT INTO payment_requests
+        (id,reference_code,destination_user_id,amount,description,credentials_revision)
+        VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,reference_code,amount,description,status,expires_at,created_at`,
+        [id,referenceCode,destinationUserId,amount,description,user?.role==='MERCHANT' ? user.credentials_revision : null]);
+      await client.query('COMMIT'); return result.rows[0] ?? null;
+    } catch(error) {await client.query('ROLLBACK'); throw error;}
+    finally {client.release();}
   },
 
   async findByReferenceCode(referenceCode) {

@@ -5,6 +5,11 @@ const {
   buildTransactionsAdminXlsx,
   buildExportFileName,
 } = require("./transaction.export");
+const {
+  resolveAdminDateRange,
+  getCurrentMonthBoundsInVietnam,
+  getMondayOfDateStr,
+} = require("../../utils/adminDateRange");
 
 const VALID_TRANSACTION_TYPES = [
   "ALL",
@@ -37,81 +42,36 @@ const VALID_RESOLUTION_RESULTS = [
   "REJECTED",
 ];
 
-function parseDateRange({ period, startDate, endDate }) {
-  let filterStartDate = null;
-  let filterEndDate = null;
+function parseDateRange({ period, startDate, endDate, now }) {
+  let effectiveStart = startDate;
+  let effectiveEnd = endDate;
 
-  if (startDate && endDate) {
-    filterStartDate = new Date(startDate);
-    if (isNaN(filterStartDate.getTime())) {
-      throw httpError(400, "Ngày bắt đầu không hợp lệ");
-    }
-    filterStartDate.setHours(0, 0, 0, 0);
-
-    filterEndDate = new Date(endDate);
-    if (isNaN(filterEndDate.getTime())) {
-      throw httpError(400, "Ngày kết thúc không hợp lệ");
-    }
-    filterEndDate.setHours(23, 59, 59, 999);
-
-    if (filterStartDate > filterEndDate) {
-      throw httpError(400, "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
-    }
-  } else if (period) {
-    const now = new Date();
-    if (period === "today" || period === "day") {
-      filterStartDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        0,
-        0,
-        0
-      );
-      filterEndDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        23,
-        59,
-        59,
-        999
-      );
-    } else if (period === "week") {
-      const day = now.getDay();
-      const diffToMonday = now.getDate() - (day === 0 ? 6 : day - 1);
-      filterStartDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        diffToMonday,
-        0,
-        0,
-        0
-      );
-      filterEndDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        diffToMonday + 6,
-        23,
-        59,
-        59,
-        999
-      );
-    } else if (period === "month") {
-      filterStartDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-      filterEndDate = new Date(
-        now.getFullYear(),
-        now.getMonth() + 1,
-        0,
-        23,
-        59,
-        59,
-        999
-      );
+  if (!effectiveStart && !effectiveEnd && period) {
+    const vnBounds = getCurrentMonthBoundsInVietnam(now);
+    const cleanPeriod = String(period).trim().toLowerCase();
+    if (cleanPeriod === "today" || cleanPeriod === "day") {
+      effectiveStart = vnBounds.endDate;
+      effectiveEnd = vnBounds.endDate;
+    } else if (cleanPeriod === "week") {
+      effectiveStart = getMondayOfDateStr(vnBounds.endDate);
+      effectiveEnd = vnBounds.endDate;
+    } else if (cleanPeriod === "month") {
+      effectiveStart = vnBounds.startDate;
+      effectiveEnd = vnBounds.endDate;
     }
   }
 
-  return { filterStartDate, filterEndDate };
+  const range = resolveAdminDateRange(effectiveStart, effectiveEnd, { now });
+
+  return {
+    filterStartDate: range.startInstant,
+    filterEndDate: range.nextDayInstant,
+    periodInfo: {
+      start_date: range.startDate,
+      end_date: range.endDate,
+      timezone: range.timezone,
+    },
+  };
 }
 
 function parseFilterParams({
@@ -122,6 +82,7 @@ function parseFilterParams({
   period,
   start_date,
   end_date,
+  now,
 }) {
   const cleanType = type ? type.trim().toUpperCase() : "ALL";
   if (!VALID_TRANSACTION_TYPES.includes(cleanType)) {
@@ -157,10 +118,11 @@ function parseFilterParams({
     );
   }
 
-  const { filterStartDate, filterEndDate } = parseDateRange({
+  const { filterStartDate, filterEndDate, periodInfo } = parseDateRange({
     period,
     startDate: start_date,
     endDate: end_date,
+    now,
   });
 
   return {
@@ -170,6 +132,7 @@ function parseFilterParams({
     cleanAnomaly,
     filterStartDate,
     filterEndDate,
+    periodInfo,
   };
 }
 
@@ -369,6 +332,7 @@ const adminTransactionService = {
     period,
     start_date,
     end_date,
+    now,
   }) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
@@ -381,6 +345,7 @@ const adminTransactionService = {
       cleanAnomaly,
       filterStartDate,
       filterEndDate,
+      periodInfo,
     } = parseFilterParams({
       type,
       status,
@@ -389,6 +354,7 @@ const adminTransactionService = {
       period,
       start_date,
       end_date,
+      now,
     });
 
     const [total, rows] = await Promise.all([
@@ -448,6 +414,7 @@ const adminTransactionService = {
     }));
 
     return {
+      period: periodInfo,
       items,
       pagination: {
         page: pageNum,
@@ -1012,6 +979,7 @@ const adminTransactionService = {
     start_date,
     end_date,
     currentUser,
+    now,
   }) {
     const {
       cleanType,
@@ -1020,6 +988,7 @@ const adminTransactionService = {
       cleanAnomaly,
       filterStartDate,
       filterEndDate,
+      periodInfo,
     } = parseFilterParams({
       type,
       status,
@@ -1028,6 +997,7 @@ const adminTransactionService = {
       period,
       start_date,
       end_date,
+      now,
     });
 
     // Truy xuất an toàn tên Admin xuất báo cáo
@@ -1085,11 +1055,14 @@ const adminTransactionService = {
       rows,
       adminName,
       filterSummary,
-      startDate: filterStartDate,
-      endDate: filterEndDate,
+      startDate: periodInfo.start_date,
+      endDate: periodInfo.end_date,
     });
 
-    const fileName = buildExportFileName(filterStartDate, filterEndDate);
+    const fileName = buildExportFileName(
+      periodInfo.start_date,
+      periodInfo.end_date,
+    );
 
     return { buffer, fileName, totalRows: rows.length };
   },

@@ -310,6 +310,7 @@ const authMiddleware = {
         throw httpError(401, "API Key không hợp lệ");
       }
 
+      if (merchant.credentials_revoked || !merchant.secret_key) throw httpError(403, 'Credentials đã thu hồi hoặc chưa cấu hình. Vui lòng liên hệ quản trị viên.');
       const expected = computeSignature(
         merchant.secret_key,
         timestamp,

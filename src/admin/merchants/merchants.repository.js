@@ -33,7 +33,7 @@ const KYC_LATERAL_JOIN = `
 const APPROVAL_STATUS_EXPR = `COALESCE(k.approval_status, 'PENDING')`;
 const CONFIGURED_EXPR = `(u.api_key IS NOT NULL AND u.secret_key IS NOT NULL
   AND u.call_back_url IS NOT NULL AND TRIM(u.call_back_url) <> '')`;
-const LINKED_EXPR = `(u.status = 'ACTIVE' AND ${CONFIGURED_EXPR})`;
+const LINKED_EXPR = `(u.status = 'ACTIVE' AND NOT u.credentials_revoked AND ${CONFIGURED_EXPR})`;
 const UNCONFIGURED_EXPR = `(u.status = 'ACTIVE' AND NOT ${CONFIGURED_EXPR})`;
 const SUSPENDED_EXPR = `u.status IN ('SUSPENDED', 'BLOCKED')`;
 const PENDING_EXPR = `${APPROVAL_STATUS_EXPR} = 'PENDING'`;
@@ -48,6 +48,7 @@ const OPERATIONAL_STATUS_EXPR = `
 
 const API_STATUS_EXPR = `
   CASE
+    WHEN u.credentials_revoked THEN 'LOCKED'
     WHEN u.status IN ('SUSPENDED', 'BLOCKED') THEN 'LOCKED'
     WHEN u.status IS DISTINCT FROM 'ACTIVE' THEN 'NOT_CONNECTED'
     WHEN u.api_key IS NULL OR u.secret_key IS NULL THEN 'PENDING_KEY'

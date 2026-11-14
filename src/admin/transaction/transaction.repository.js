@@ -100,7 +100,7 @@ function buildFilterConditions({
 
   if (endDate) {
     params.push(endDate);
-    conditions.push(`t.created_at <= $${params.length}`);
+    conditions.push(`t.created_at < $${params.length}`);
   }
 
   if (keyword && keyword.trim() !== "") {

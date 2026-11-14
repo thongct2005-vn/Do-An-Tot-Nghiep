@@ -3,7 +3,8 @@ const webhookRepository = require("../webhook/webhook.repository");
 
 const SELECT_SQL = `
   SELECT pr.id, pr.reference_code, pr.order_id, pr.destination_user_id,
-         pr.amount, pr.description, pr.status, pr.paid_at, pr.return_url,
+         pr.amount, pr.description, pr.status, pr.paid_at, pr.return_url, pr.credentials_revision,
+         u.credentials_revision AS merchant_credentials_revision,
          GREATEST(0, CEIL(EXTRACT(EPOCH FROM (pr.expires_at - NOW()))))::int AS seconds_left,
          u.full_name AS merchant_name, u.secret_key AS merchant_secret_key
   FROM payment_requests pr

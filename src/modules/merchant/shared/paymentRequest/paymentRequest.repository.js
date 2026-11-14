@@ -17,6 +17,7 @@ async function buildDuplicateOrderError({ merchantId, orderId }) {
   if (existing && ["SUCCESS", "PAID"].includes(existing.status)) {
     return httpError(409, "Đơn hàng này đã được thanh toán");
   }
+  if (existing?.status === 'CANCELLED') return httpError(409, 'Đơn đã bị hủy do thay đổi credentials. Vui lòng tạo order_id mới với khóa mới.');
   if (existing && existing.status === "PENDING" && !existing.is_expired) {
     return httpError(
       409,
@@ -37,6 +38,7 @@ const merchantPaymentRequestRepository = {
     amount,
     description,
     orderId,
+    credentialsRevision,
     items = [],
     callbackUrl = null,
     returnUrl = null,
@@ -44,10 +46,13 @@ const merchantPaymentRequestRepository = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const credentials = require('../credentials');
+      const merchant = await credentials.lockMerchant(client, destinationUserId);
+      await credentials.assertCurrent(merchant, credentialsRevision);
       const result = await client.query(
         `INSERT INTO payment_requests
-           (id, reference_code, destination_user_id, amount, description, order_id, callback_url, return_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (id, reference_code, destination_user_id, amount, description, order_id, callback_url, return_url, credentials_revision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, reference_code, amount, description, status, expires_at, created_at, order_id, return_url`,
         [
           id,
@@ -58,6 +63,7 @@ const merchantPaymentRequestRepository = {
           orderId,
           callbackUrl,
           returnUrl,
+          merchant.credentials_revision,
         ],
       );
       const payment = result?.rows[0] ?? null;

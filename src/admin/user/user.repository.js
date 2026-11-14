@@ -1,4 +1,8 @@
 const pool = require("../../config/database");
+const mongoose = require("mongoose");
+const {
+  UserLoginEvent,
+} = require("../../models/mongo/userLoginEvent.model");
 const { claimEmail } = require("../../utils/emailClaim");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
 const { httpError } = require("../../utils/httpError");
@@ -16,6 +20,54 @@ const adminUserRepository = {
       WHERE role = 'USER'
     `);
     return result.rows[0];
+  },
+
+  /**
+   * Truy vấn sự kiện đăng nhập Mobile App thành công từ MongoDB collection user_login_events,
+   * gom nhóm theo múi giờ Asia/Ho_Chi_Minh.
+   */
+  async getLoginStatsRows({ startInstant, nextDayInstant, groupBy }) {
+    if (mongoose.connection.readyState !== 1) {
+      return [];
+    }
+
+    let dateFormat = "%Y-%m-%d";
+    if (groupBy === "hour") {
+      dateFormat = "%Y-%m-%d %H";
+    } else if (groupBy === "month") {
+      dateFormat = "%Y-%m";
+    }
+    // Với groupBy === "week", gom nhóm theo ngày "%Y-%m-%d" tại MongoDB rồi gộp theo tuần ở tầng Service.
+
+    const rows = await UserLoginEvent.aggregate([
+      {
+        $match: {
+          status: "SUCCESS",
+          logged_in_at: {
+            $gte: startInstant,
+            $lt: nextDayInstant,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: dateFormat,
+              date: "$logged_in_at",
+              timezone: "Asia/Ho_Chi_Minh",
+            },
+          },
+          total_logins: { $sum: 1 },
+          user_ids: { $addToSet: "$user_id" },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ]);
+
+    return rows;
   },
 
   async getUsers({ search, status, limit = 10, offset = 0 }) {
@@ -54,6 +106,21 @@ const adminUserRepository = {
 
     const itemsResult = await pool.query(
       `
+      WITH paged_users AS (
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.phone,
+          u.balance,
+          u.status,
+          u.created_at,
+          u.updated_at
+        FROM users u
+        WHERE ${whereClause}
+        ORDER BY u.created_at DESC, u.id DESC
+        LIMIT $${limitIndex} OFFSET $${offsetIndex}
+      )
       SELECT 
         u.id,
         u.full_name,
@@ -66,8 +133,14 @@ const adminUserRepository = {
         k.status AS kyc_status,
         lba_bank.name AS default_bank_name,
         lba_bank.account_number AS default_bank_account
-      FROM users u
-      LEFT JOIN user_kyc k ON u.id = k.user_id
+      FROM paged_users u
+      LEFT JOIN LATERAL (
+        SELECT uk.status
+        FROM user_kyc uk
+        WHERE uk.user_id = u.id
+        ORDER BY uk.updated_at DESC NULLS LAST, uk.created_at DESC NULLS LAST
+        LIMIT 1
+      ) k ON true
       LEFT JOIN LATERAL (
         SELECT lba.account_number, b.name
         FROM linked_bank_accounts lba
@@ -76,9 +149,7 @@ const adminUserRepository = {
         ORDER BY lba.is_default DESC, lba.created_at DESC
         LIMIT 1
       ) lba_bank ON true
-      WHERE ${whereClause}
-      ORDER BY u.created_at DESC
-      LIMIT $${limitIndex} OFFSET $${offsetIndex}
+      ORDER BY u.created_at DESC, u.id DESC
       `,
       queryParams
     );

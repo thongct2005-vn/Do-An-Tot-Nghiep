@@ -9,6 +9,7 @@ const { buildSignedReturnUrl } = require("../../utils/returnUrl");
 const REFERENCE_PATTERN = /^[A-Za-z0-9]{8,64}$/;
 
 function signReturnUrl(row, status) {
+  if (row.credentials_revision == null || String(row.credentials_revision) !== String(row.merchant_credentials_revision) || status === 'cancelled') return null;
   try {
     return buildSignedReturnUrl({
       returnUrl: row.return_url,
@@ -52,6 +53,7 @@ const paymentPageController = {
         amount: Number(row.amount),
         description: row.description ?? null,
         status,
+        ...(status === 'cancelled' ? {message:'Đơn thanh toán đã bị hủy. Vui lòng yêu cầu cửa hàng tạo đơn mới.'} : {}),
         seconds_left: row.seconds_left,
       };
 

@@ -4,6 +4,7 @@ function createDashboardController(dashboardService) {
   return {
     async getMerchantInfoById(req, res, next) {
       try {
+        res.set('Cache-Control', 'no-store');
         const { user_id: userId } = req.user;
         const result = await dashboardService.getMerchantInfoById(userId);
         return successResponse(
@@ -28,6 +29,7 @@ function createDashboardController(dashboardService) {
     },
     async resetApiKey(req, res, next){
       try {
+         res.set('Cache-Control', 'no-store');
          const { user_id: userId } = req.user;
          const result = await dashboardService.resetApiKey(userId);
          return successResponse(res, 200, "Làm mới api key thành công", result);

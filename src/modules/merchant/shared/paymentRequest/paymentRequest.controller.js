@@ -22,6 +22,7 @@ function createPaymentRequestController(paymentMerchantRequestService) {
           callbackUrl,
           returnUrl,
           baseUrl: getPublicBaseUrl(req),
+          credentialsRevision: req.merchant.credentials_revision,
         });
         return successResponse(res, 200, "Tạo mã Dynamic QR thành công", result);
       } catch (e) {

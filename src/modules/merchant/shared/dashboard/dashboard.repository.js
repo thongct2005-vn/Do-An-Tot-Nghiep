@@ -1,6 +1,5 @@
 const pool = require("../../../../config/database");
 const {
-  encryptSecretKey,
   decryptSecretKey,
 } = require("../../../../utils/hashSecretKey");
 
@@ -13,28 +12,31 @@ const dashboardRepository = {
   async getMerchantInfoById(userId) {
     const result = await pool.query(
       `
-            SELECT u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key
+            SELECT u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key, u.credentials_revoked, u.credentials_revision
             FROM users u
             WHERE id = $1
             `,
       [userId],
     );
     const row = result.rows[0];
-    if (row) row.secret_key = decryptSecretKey(row.secret_key);
+    if (row) {
+      if (row.credentials_revoked) { row.api_key = null; row.secret_key = null; }
+      else row.secret_key = decryptSecretKey(row.secret_key);
+    }
     return row;
   },
 
   async getMerchantInfoByApiKey(apiKey) {
     const result = await pool.query(
       `
-            SELECT u.id, u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key, u.role, u.status
+            SELECT u.id, u.full_name, u.call_back_url, u.api_key, u.balance, u.secret_key, u.role, u.status, u.credentials_revoked, u.credentials_revision
             FROM users u
             WHERE api_key = $1
             `,
       [apiKey],
     );
     const row = result.rows[0];
-    if (row) row.secret_key = decryptSecretKey(row.secret_key);
+    if (row) row.secret_key = row.credentials_revoked ? null : decryptSecretKey(row.secret_key);
     return row;
   },
   async updateCallBackUrl({ userId, callbackUrl }) {
@@ -48,24 +50,14 @@ const dashboardRepository = {
   },
 
   async resetApiKey({ userId, apiKey }) {
-    const result = await pool.query(
-      `UPDATE users SET api_key = $1
-       WHERE id = $2 RETURNING api_key`,
-      [apiKey, userId],
-    );
-    return result;
+    const row = (await pool.query('SELECT credentials_revision FROM users WHERE id=$1',[userId])).rows[0];
+    return require('../credentials').mutate({merchantId:userId,operation:'reset_api',expectedRevision:row?.credentials_revision,selfService:true,apiKey});
+  },
+  async resetSecretKey({ userId, secretKey }) {
+    const row = (await pool.query('SELECT credentials_revision FROM users WHERE id=$1',[userId])).rows[0];
+    return require('../credentials').mutate({merchantId:userId,operation:'reset_secret',expectedRevision:row?.credentials_revision,selfService:true,secretKey});
   },
 
-  async resetSecretKey({ userId, secretKey }) {
-    const result = await pool.query(
-      `UPDATE users SET secret_key = $1
-       WHERE id = $2 RETURNING secret_key`,
-      [encryptSecretKey(secretKey), userId],
-    );
-    
-    if (result.rows[0]) result.rows[0].secret_key = secretKey;
-    return result;
-  },
 };
 
 module.exports = dashboardRepository;

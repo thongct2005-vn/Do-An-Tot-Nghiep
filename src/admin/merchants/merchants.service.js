@@ -228,7 +228,7 @@ const adminMerchantsService = {
         api_status: merchant.api_status,
         has_api_key: Boolean(merchant.api_key),
         has_secret_key: Boolean(merchant.has_secret_key),
-        api_key: merchant.api_key || null,
+
         api_key_masked: maskApiKey(merchant.api_key),
         call_back_url: merchant.call_back_url || null,
         webhook_configured: Boolean(

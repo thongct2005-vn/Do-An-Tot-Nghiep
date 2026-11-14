@@ -113,6 +113,7 @@ function createPaymentRequestService({
       callbackUrl,
       returnUrl,
       baseUrl,
+      credentialsRevision,
     }) {
       if (!userId || !amount || !orderId) {
         throw httpError(400, "Thiếu thông tin để tạo mã QR");
@@ -159,6 +160,7 @@ function createPaymentRequestService({
           items: normalizedItems,
           callbackUrl: normalizedCallbackUrl,
           returnUrl: normalizedReturnUrl,
+          credentialsRevision,
         });
       // Redirect flow: merchant chuyển khách sang trang thanh toán của cổng
       const paymentUrl = `${baseUrl}/pay/${referenceCode}`;
@@ -181,6 +183,7 @@ function createPaymentRequestService({
         order_id: payment.order_id,
         amount: Number(payment.amount),
         status: payment.status.toLowerCase(),
+        ...(payment.status === 'CANCELLED' ? {message:'Đơn đã bị hủy. Vui lòng tạo đơn mới bằng credentials hiện tại.'} : {}),
         transaction_id: payment.transaction_id ?? null,
         paid_at: payment.paid_at ?? null,
         created_at: payment.created_at,

@@ -13,6 +13,9 @@ const tokenUtil = require("../../utils/jwt");
 const totpUtil = require("../../utils/totp");
 const { emitToUser, disconnectUser } = require("../../utils/socket");
 const { httpError } = require("../../utils/httpError");
+const {
+  recordSuccessfulUserLogin,
+} = require("../../models/mongo/userLoginEvent.model");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 const TOTP_MAX_ATTEMPTS = 5;
@@ -276,6 +279,8 @@ const authService = {
 
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await authRepository.updateRefeshToken({ refreshToken, userId: user.id });
+
+    await recordSuccessfulUserLogin({ userId: user.id });
 
     emitToUser(user.id, "force_logout", {
       reason: "Tài khoản của bạn vừa được đăng nhập ở một thiết bị khác",

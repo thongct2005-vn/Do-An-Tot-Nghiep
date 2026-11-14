@@ -98,6 +98,7 @@ const paymentRequestService = {
       throw httpError(404, "Mã QR không hợp lệ");
     }
 
+    if (result.status !== 'PENDING') throw httpError(409, 'Đơn không còn chờ thanh toán. Vui lòng yêu cầu cửa hàng tạo đơn mới.');
     if (result.is_expires) {
       throw httpError(400, "Mã QR đã hết hạn");
     }

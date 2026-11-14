@@ -6,7 +6,9 @@ CREATE TABLE users (
   password_hash text, pin_hash text, refresh_token text, status varchar DEFAULT 'ACTIVE',
   created_at timestamp DEFAULT NOW(), updated_at timestamp DEFAULT NOW(), failed_login_attempts integer,
   locked_until timestamp, balance bigint DEFAULT 0, api_key text, secret_key text,
-  call_back_url text, totp_enabled boolean DEFAULT false
+  call_back_url text, totp_enabled boolean DEFAULT false,
+  credentials_revoked boolean NOT NULL DEFAULT false,
+  credentials_revision bigint NOT NULL DEFAULT 0
 );
 CREATE TABLE user_kyc (
   id varchar PRIMARY KEY, user_id uuid REFERENCES users(id), status varchar,
@@ -25,6 +27,8 @@ CREATE TABLE admin_user_change_history (
   CONSTRAINT chk_admin_change_action CHECK (action IN (
     'USER_PROFILE_UPDATED', 'USER_BLOCKED', 'USER_UNBLOCKED', 'USER_LOGIN_UNLOCKED',
     'MERCHANT_BLOCKED', 'MERCHANT_UNBLOCKED',
+    'MERCHANT_CREDENTIALS_ISSUED', 'MERCHANT_CREDENTIALS_ROTATED',
+    'MERCHANT_CREDENTIALS_REVOKED', 'MERCHANT_CREDENTIALS_REISSUED',
     'MERCHANT_FEE_CONFIG_UPDATED', 'SYSTEM_FEE_CONFIG_UPDATED',
     'USER_SESSIONS_REVOKED', 'USER_QR_REGENERATED', 'ADMIN_OP_P2P', 'ADMIN_OP_TOPUP',
     'ADMIN_OP_WITHDRAW', 'DISPUTE_OPENED', 'DISPUTE_UPDATED', 'DISPUTE_RESOLVED'
@@ -35,7 +39,7 @@ CREATE TABLE payment_requests (
   reference_code varchar, transaction_id varchar, status varchar DEFAULT 'PENDING', created_at timestamptz DEFAULT NOW(),
   amount bigint, description varchar(50), order_id varchar, callback_url text, return_url text,
   expires_at timestamptz DEFAULT NOW() + interval '15 minutes', paid_at timestamptz,
-  updated_at timestamptz DEFAULT NOW()
+  updated_at timestamptz DEFAULT NOW(), credentials_revision bigint
 );
 CREATE UNIQUE INDEX payment_requests_merchant_order_uk ON payment_requests(destination_user_id, order_id);
 CREATE TABLE audit_outbox (
@@ -51,6 +55,9 @@ CREATE TABLE webhook_deliveries (
   id uuid PRIMARY KEY, payment_request_id uuid REFERENCES payment_requests(id),
   merchant_id uuid REFERENCES users(id), event_type varchar, payload jsonb,
   last_http_status integer, created_at timestamptz DEFAULT NOW(),
+  status varchar NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','SUCCESS','FAILED')),
+  attempt_count integer NOT NULL DEFAULT 0, max_attempts integer NOT NULL DEFAULT 8,
+  next_retry_at timestamptz NOT NULL DEFAULT NOW(), last_error text, delivered_at timestamptz,
   UNIQUE (payment_request_id, event_type)
 );
 CREATE TABLE system_configs (

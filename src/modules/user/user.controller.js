@@ -113,6 +113,62 @@ const userController = {
       next(e);
     }
   },
+  async getTransactionLimits(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const result = await userService.getTransactionLimits(userId);
+      return successResponse(
+        res,
+        200,
+        "Lấy hạn mức giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async updateTransactionLimit(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const {
+        transaction_type: transactionType,
+        max_amount: maxAmount,
+        daily_limit: dailyLimit,
+      } = req.body;
+      const result = await userService.updateTransactionLimit({
+        userId,
+        transactionType,
+        maxAmount,
+        dailyLimit,
+      });
+      return successResponse(
+        res,
+        200,
+        "Cập nhật hạn mức giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async resetTransactionLimit(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { transaction_type: transactionType } = req.body;
+      const result = await userService.resetTransactionLimit({
+        userId,
+        transactionType,
+      });
+      return successResponse(
+        res,
+        200,
+        "Đã khôi phục hạn mức mặc định",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
   async updateFcmToken(req, res, next) {
     try {
       const { user_id: userId } = req.user;

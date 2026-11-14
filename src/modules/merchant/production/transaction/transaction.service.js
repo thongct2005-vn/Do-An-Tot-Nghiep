@@ -12,13 +12,25 @@ const {
 } = require("../../../../utils/mask");
 const { isValidPhone } = require("../../../../utils/validators");
 const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
-const { parseAmountInRange } = require("../../../../utils/amount");
+const CONFIGURABLE_LIMIT_TYPES = ["TRANSFER", "WITHDRAW", "TOPUP"];
+const {
+  parseAmountInRange,
+  parseAmount,
+  formatVnd,
+} = require("../../../../utils/amount");
+const { uuidv7 } = require("uuidv7");
 const pool = require("../../../../config/database");
 const {
+  getTransactionPolicy,
   getEffectiveTransactionLimit,
+  getEffectiveWalletCapacity,
   getPositiveIntConfig,
 } = require("../../../../utils/limitsDb");
-const { getTransactionLimitsSummary } = require("../../../../utils/dailyLimit");
+const {
+  getDailyUsed,
+  getTransactionLimitsSummary,
+} = require("../../../../utils/dailyLimit");
+const userRepository = require("../../../user/user.repository");
 const {
   getOneYearBounds,
   resolveExportRange,
@@ -1011,7 +1023,175 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy hạn mức giao dịch");
     }
 
-    return getTransactionLimitsSummary(pool, { userId, role });
+    const normalizedRole = role === "MERCHANT" ? "MERCHANT" : "USER";
+    const [summary, user, cap] = await Promise.all([
+      getTransactionLimitsSummary(pool, { userId, role: normalizedRole }),
+      userRepository.getCredentialState(userId),
+      getEffectiveWalletCapacity(pool, { userId, role: normalizedRole }),
+    ]);
+
+    const currentBalance = Number(user?.balance || 0);
+    const items = [];
+    for (const transactionType of CONFIGURABLE_LIMIT_TYPES) {
+      const rule = await getEffectiveTransactionLimit(pool, {
+        userId,
+        role: normalizedRole,
+        transactionType,
+      });
+      const dailyUsed = await getDailyUsed(pool, userId, transactionType);
+      const effectiveDaily =
+        rule.dailyLimit == null ? null : Number(rule.dailyLimit);
+      const dailyRemaining =
+        effectiveDaily == null ? null : Math.max(0, effectiveDaily - dailyUsed);
+
+      items.push({
+        transaction_type: transactionType,
+        min_amount: Number(rule.system.min),
+        system_max_amount: Number(rule.system.max),
+        system_daily_limit:
+          rule.system.dailyLimit == null
+            ? Number(rule.system.max)
+            : Number(rule.system.dailyLimit),
+        max_amount: Number(rule.max),
+        daily_limit:
+          effectiveDaily == null ? Number(rule.system.max) : effectiveDaily,
+        is_custom: Boolean(rule.custom),
+        daily_used: dailyUsed,
+        daily_remaining: dailyRemaining,
+      });
+    }
+
+    return {
+      ...summary,
+      wallet_capacity: {
+        current_balance: currentBalance,
+        min_capacity: cap.minCapacity,
+        default_capacity: cap.defaultCapacity,
+        max_capacity: cap.maxCapacity,
+        effective_capacity: cap.effectiveCapacity,
+        remaining_capacity: Math.max(
+          0,
+          cap.effectiveCapacity - currentBalance,
+        ),
+        is_custom: cap.isCustom,
+      },
+      limits: items,
+    };
+  },
+
+  async updateTransactionLimit({
+    userId,
+    transactionType,
+    maxAmount,
+    dailyLimit,
+    role = "MERCHANT",
+  }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    const normalizedRole = role === "MERCHANT" ? "MERCHANT" : "USER";
+    const type = String(transactionType || "").trim().toUpperCase();
+
+    if (type === "WALLET_CAPACITY") {
+      const cap = await getEffectiveWalletCapacity(pool, {
+        userId,
+        role: normalizedRole,
+      });
+      const capNum = parseAmount(maxAmount);
+      if (capNum < cap.minCapacity || capNum > cap.maxCapacity) {
+        throw httpError(
+          400,
+          `Sức chứa ví phải từ ${formatVnd(cap.minCapacity)} đến ${formatVnd(cap.maxCapacity)}`,
+        );
+      }
+      if (capNum === cap.defaultCapacity) {
+        await userRepository.deleteUserTransactionLimit({
+          userId,
+          transactionType: "WALLET_CAPACITY",
+        });
+      } else {
+        await userRepository.upsertUserTransactionLimit({
+          id: uuidv7(),
+          userId,
+          transactionType: "WALLET_CAPACITY",
+          maxAmount: capNum,
+          dailyLimit: capNum,
+        });
+      }
+      return await this.getTransactionLimits(userId, { role: normalizedRole });
+    }
+
+    if (!CONFIGURABLE_LIMIT_TYPES.includes(type)) {
+      throw httpError(400, "Loại giao dịch không hỗ trợ cấu hình hạn mức");
+    }
+
+    const sys = await getTransactionPolicy(normalizedRole, type, pool);
+    const sysMin = Number(sys.min);
+    const sysMax = Number(sys.max);
+    const sysDaily =
+      sys.dailyLimit == null ? sysMax : Number(sys.dailyLimit);
+
+    const maxNum = parseAmount(maxAmount);
+    const dailyNum = parseAmount(dailyLimit);
+
+    if (maxNum < sysMin || maxNum > sysMax) {
+      throw httpError(
+        400,
+        `Hạn mức mỗi lần phải từ ${formatVnd(sysMin)} đến ${formatVnd(sysMax)}`,
+      );
+    }
+    if (dailyNum < sysMin || dailyNum > sysDaily) {
+      throw httpError(
+        400,
+        `Hạn mức mỗi ngày phải từ ${formatVnd(sysMin)} đến ${formatVnd(sysDaily)}`,
+      );
+    }
+    if (maxNum > dailyNum) {
+      throw httpError(
+        400,
+        "Hạn mức mỗi lần không được lớn hơn hạn mức mỗi ngày",
+      );
+    }
+
+    if (maxNum === sysMax && dailyNum === sysDaily) {
+      await userRepository.deleteUserTransactionLimit({
+        userId,
+        transactionType: type,
+      });
+    } else {
+      await userRepository.upsertUserTransactionLimit({
+        id: uuidv7(),
+        userId,
+        transactionType: type,
+        maxAmount: maxNum,
+        dailyLimit: dailyNum,
+      });
+    }
+
+    return await this.getTransactionLimits(userId, { role: normalizedRole });
+  },
+
+  async resetTransactionLimit({
+    userId,
+    transactionType,
+    role = "MERCHANT",
+  }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    const normalizedRole = role === "MERCHANT" ? "MERCHANT" : "USER";
+    const type = String(transactionType || "").trim().toUpperCase();
+    if (
+      type !== "WALLET_CAPACITY" &&
+      !CONFIGURABLE_LIMIT_TYPES.includes(type)
+    ) {
+      throw httpError(400, "Loại cấu hình không hợp lệ");
+    }
+    await userRepository.deleteUserTransactionLimit({
+      userId,
+      transactionType: type,
+    });
+    return await this.getTransactionLimits(userId, { role: normalizedRole });
   },
 };
 

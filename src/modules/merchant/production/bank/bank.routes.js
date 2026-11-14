@@ -21,4 +21,17 @@ router.post(
   idempotencyMiddleware.checkIdempotencyKey,
   merchantBankController.linkBankAccount,
 );
+router.patch(
+  "/show-balance",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.verifyTransactionOtpToken("BANK_SHOW_BALANCE"),
+  merchantBankController.enableShowBalance,
+);
+router.post(
+  "/unlink",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.verifyTransactionOtpToken("BANK_UNLINK"),
+  idempotencyMiddleware.checkIdempotencyKey,
+  merchantBankController.unlinkBankAccount,
+);
 module.exports = router;

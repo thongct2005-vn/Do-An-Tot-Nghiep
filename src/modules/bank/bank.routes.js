@@ -16,4 +16,18 @@ router.post(
   bankController.linkBankAccount,
 );
 
+router.patch(
+  "/show-balance",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("BANK_SHOW_BALANCE"),
+  bankController.enableShowBalance,
+);
+
+router.post(
+  "/unlink",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("BANK_UNLINK"),
+  bankController.unlinkBankAccount,
+);
+
 module.exports = router;

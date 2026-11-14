@@ -126,4 +126,22 @@ router.get(
   authMiddleware.requireActiveMerchant,
   transactionController.getTransactionLimits,
 );
+
+router.put(
+  "/limits",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyTransactionOtpToken("UPDATE_LIMIT"),
+  transactionController.updateTransactionLimit,
+);
+
+router.post(
+  "/limits/reset",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyTransactionOtpToken("RESET_LIMIT"),
+  transactionController.resetTransactionLimit,
+);
 module.exports = router;

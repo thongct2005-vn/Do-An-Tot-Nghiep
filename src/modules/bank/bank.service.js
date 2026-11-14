@@ -34,6 +34,18 @@ const bankService = {
         "Thiếu thông tin người dùng hoặc ngân hàng muốn liên kết",
       );
     }
+    const existing = await bankRepository.findExistingLinkedAccount({
+      userId,
+      bankId,
+    });
+    if (existing) {
+      if (existing.status === "ACTIVE") {
+        throw httpError(409, "Ngân hàng này đã được liên kết");
+      }
+      await bankRepository.reactivateLinkedAccount(existing.id);
+      return;
+    }
+
     const { full_name: accountHolderName, phone: accountNumber } =
       await userRepository.getUserByUserId(userId);
     const id = uuidv7();
@@ -44,6 +56,34 @@ const bankService = {
       accountNumber,
       accountHolderName,
     });
+  },
+
+  async enableShowBalance({ userId, linkedBankAccountId }) {
+    if (!userId || !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
+    }
+    const updated = await bankRepository.enableShowBalance({
+      userId,
+      linkedBankAccountId,
+    });
+    if (!updated) {
+      throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+    }
+    return updated;
+  },
+
+  async unlinkBankAccount({ userId, linkedBankAccountId }) {
+    if (!userId || !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
+    }
+    const unlinked = await bankRepository.unlinkBankAccount({
+      userId,
+      linkedBankAccountId,
+    });
+    if (!unlinked) {
+      throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+    }
+    return unlinked;
   },
 };
 

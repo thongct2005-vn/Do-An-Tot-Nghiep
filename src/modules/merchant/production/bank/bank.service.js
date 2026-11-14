@@ -37,6 +37,18 @@ const merchantBankService = {
         "Thiếu thông tin người dùng hoặc ngân hàng muốn liên kết",
       );
     }
+    const existing = await merchantBankRepository.findExistingLinkedAccount({
+      userId,
+      bankId,
+    });
+    if (existing) {
+      if (existing.status === "ACTIVE") {
+        throw httpError(409, "Ngân hàng này đã được liên kết");
+      }
+      await merchantBankRepository.reactivateLinkedAccount(existing.id);
+      return;
+    }
+
     const { full_name: accountHolderName, phone: accountNumber } =
       await userRepository.getUserByUserId(userId);
     const id = uuidv7();
@@ -47,6 +59,44 @@ const merchantBankService = {
       accountNumber,
       accountHolderName,
     });
+  },
+
+  async enableShowBalance({ userId, linkedBankAccountId }) {
+    if (!userId || !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
+    }
+    if (!UUID_PATTERN.test(linkedBankAccountId)) {
+      throw httpError(400, "Mã ngân hàng liên kết không hợp lệ");
+    }
+    const updated = await merchantBankRepository.enableShowBalance({
+      userId,
+      linkedBankAccountId,
+    });
+    if (!updated) {
+      throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+    }
+    return {
+      id: updated.id,
+      is_show_balance: Boolean(updated.is_show_balance),
+      balance: Number(updated.balance),
+    };
+  },
+
+  async unlinkBankAccount({ userId, linkedBankAccountId }) {
+    if (!userId || !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
+    }
+    if (!UUID_PATTERN.test(linkedBankAccountId)) {
+      throw httpError(400, "Mã ngân hàng liên kết không hợp lệ");
+    }
+    const unlinked = await merchantBankRepository.unlinkBankAccount({
+      userId,
+      linkedBankAccountId,
+    });
+    if (!unlinked) {
+      throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+    }
+    return unlinked;
   },
 
   async getLinkedAccountBalance({ userId, linkedBankAccountId }) {

@@ -39,6 +39,37 @@ const merchantBankController = {
       next(e);
     }
   },
+  async enableShowBalance(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { linked_bank_account_id: linkedBankAccountId } = req.body;
+      const result = await merchantBankService.enableShowBalance({
+        userId,
+        linkedBankAccountId,
+      });
+      return successResponse(
+        res,
+        200,
+        "Đã bật hiển thị số dư ngân hàng",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async unlinkBankAccount(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { linked_bank_account_id: linkedBankAccountId } = req.body;
+      await merchantBankService.unlinkBankAccount({
+        userId,
+        linkedBankAccountId,
+      });
+      return successResponse(res, 200, "Hủy liên kết ngân hàng thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = merchantBankController;

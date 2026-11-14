@@ -5,6 +5,7 @@ const {
   getTransactionPolicy,
   getUserCustomLimit,
   getEffectiveTransactionLimit,
+  getEffectiveWalletCapacity,
 } = require("./limitsDb");
 
 const LIMIT_TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "QR_PAYMENT"];
@@ -97,6 +98,34 @@ async function assertDailyLimit(db, { userId, role, type, amount, fee = 0 }) {
   return { limit, used, remaining };
 }
 
+// Kiểm tra xem số dư ví sau khi nhận tiền / nạp tiền có vượt quá sức chứa tối đa của ví không
+async function assertWalletCapacity(
+  db,
+  { userId, role, currentBalance, inboundAmount, isRecipient = false },
+) {
+  const userRole = role || (await resolveRole(db, userId));
+  const { effectiveCapacity } = await getEffectiveWalletCapacity(db, {
+    userId,
+    role: userRole,
+  });
+
+  const cur = Number(currentBalance) || 0;
+  const add = Number(inboundAmount) || 0;
+  if (cur + add > effectiveCapacity) {
+    if (isRecipient) {
+      throw httpError(
+        422,
+        "Ví của người nhận đã đạt giới hạn sức chứa tối đa, không thể nhận thêm tiền lúc này",
+      );
+    }
+    const remainingCap = Math.max(0, effectiveCapacity - cur);
+    throw httpError(
+      422,
+      `Vượt quá sức chứa tối đa của ví (${formatVnd(effectiveCapacity)}). Hiện tại ví của bạn chỉ có thể nạp thêm tối đa ${formatVnd(remainingCap)}`,
+    );
+  }
+}
+
 // Lấy danh sách hạn mức tối đa, đã dùng, còn lại của từng loại giao dịch trong ngày
 async function getDailyUsage(db, userId, role) {
   const usage = {};
@@ -150,6 +179,7 @@ async function getTransactionLimitsSummary(db, { userId = null, role = "USER" } 
 
 module.exports = {
   assertDailyLimit,
+  assertWalletCapacity,
   getDailyLimit,
   getDailyUsed,
   getDailyUsage,

@@ -72,6 +72,26 @@ router.patch(
   userController.changePassword,
 );
 
+router.get(
+  "/limits",
+  authMiddleware.verifyAccessToken,
+  userController.getTransactionLimits,
+);
+
+router.put(
+  "/limits",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("UPDATE_LIMIT"),
+  userController.updateTransactionLimit,
+);
+
+router.post(
+  "/limits/reset",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("RESET_LIMIT"),
+  userController.resetTransactionLimit,
+);
+
 router.patch(
   "/fcm-token",
   authMiddleware.verifyAccessToken,

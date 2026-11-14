@@ -149,7 +149,7 @@ const userRepository = {
 
   async getCredentialState(userId) {
     const result = await pool.query(
-      `SELECT id, role, status, password_hash, pin_hash FROM users WHERE id = $1`,
+      `SELECT id, role, status, balance, password_hash, pin_hash FROM users WHERE id = $1`,
       [userId],
     );
     return result.rows[0] ?? null;
@@ -233,6 +233,39 @@ const userRepository = {
        WHERE id = $2 AND password_hash IS NOT DISTINCT FROM $3
        RETURNING id`,
       [passwordHash, userId, oldPasswordHash],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  async upsertUserTransactionLimit({
+    id,
+    userId,
+    transactionType,
+    maxAmount,
+    dailyLimit,
+  }) {
+    const result = await pool.query(
+      `INSERT INTO user_transaction_limits (
+         id, user_id, transaction_type, max_amount, daily_limit, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (user_id, transaction_type)
+       DO UPDATE SET
+         max_amount = EXCLUDED.max_amount,
+         daily_limit = EXCLUDED.daily_limit,
+         updated_at = NOW()
+       RETURNING id, transaction_type, max_amount, daily_limit, updated_at`,
+      [id, userId, transactionType, maxAmount, dailyLimit],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  async deleteUserTransactionLimit({ userId, transactionType }) {
+    const result = await pool.query(
+      `DELETE FROM user_transaction_limits
+       WHERE user_id = $1 AND transaction_type = $2
+       RETURNING id`,
+      [userId, transactionType],
     );
     return result.rows[0] ?? null;
   },

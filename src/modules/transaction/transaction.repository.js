@@ -2,7 +2,7 @@ const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
-const { assertDailyLimit } = require("../../utils/dailyLimit");
+const { assertDailyLimit, assertWalletCapacity } = require("../../utils/dailyLimit");
 const { uuidv7 } = require("uuidv7");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
 const {
@@ -229,6 +229,13 @@ const TransactionRepository = {
     if (netAmount < 0) {
       throw httpError(500, "Số tiền thực nhận của merchant không hợp lệ");
     }
+    await assertWalletCapacity(client, {
+      userId: destUser.id,
+      role: destUser.role,
+      currentBalance: destBalanceBefore,
+      inboundAmount: netAmount,
+      isRecipient: true,
+    });
     const destBalanceAfter = destBalanceBefore + netAmount;
 
     if (
@@ -456,6 +463,13 @@ const TransactionRepository = {
             "Số dư ngân hàng không đủ để thực hiện giao dịch",
           );
         }
+        await assertWalletCapacity(client, {
+          userId: sourceUserId,
+          role: sourceUser.role,
+          currentBalance: sourceBalanceBefore,
+          inboundAmount: amountNum,
+          isRecipient: false,
+        });
         sourceBalanceAfter = sourceBalanceBefore + amountNum;
         linkedBankBalanceAfter = linkedBankBalanceBefore - totalDeduct;
       } else {

@@ -411,6 +411,52 @@ const merchantTransactionController = {
       next(e);
     }
   },
+
+  async updateTransactionLimit(req, res, next) {
+    try {
+      const { user_id: userId, type, role } = req.user;
+      const {
+        transaction_type: transactionType,
+        max_amount: maxAmount,
+        daily_limit: dailyLimit,
+      } = req.body;
+      const result = await merchantTransactionService.updateTransactionLimit({
+        userId,
+        transactionType,
+        maxAmount,
+        dailyLimit,
+        role: role || type || "MERCHANT",
+      });
+      return successResponse(
+        res,
+        200,
+        "Cập nhật hạn mức giao dịch thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async resetTransactionLimit(req, res, next) {
+    try {
+      const { user_id: userId, type, role } = req.user;
+      const { transaction_type: transactionType } = req.body;
+      const result = await merchantTransactionService.resetTransactionLimit({
+        userId,
+        transactionType,
+        role: role || type || "MERCHANT",
+      });
+      return successResponse(
+        res,
+        200,
+        "Đã khôi phục cấu hình mặc định của hệ thống",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = merchantTransactionController;

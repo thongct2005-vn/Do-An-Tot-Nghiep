@@ -9,6 +9,10 @@ const PIN_ACTIONS = {
   WITHDRAW: ["linked_bank_account_id", "amount"],
   QR_PAYMENT: ["reference_code"],
   BANK_LINK: ["bank_id"],
+  BANK_SHOW_BALANCE: ["linked_bank_account_id"],
+  BANK_UNLINK: ["linked_bank_account_id"],
+  UPDATE_LIMIT: ["transaction_type", "max_amount", "daily_limit"],
+  RESET_LIMIT: ["transaction_type"],
 };
 
 const FIELD_LABELS = {
@@ -17,11 +21,16 @@ const FIELD_LABELS = {
   reference_code: "mã tham chiếu thanh toán",
   bank_id: "ngân hàng",
   amount: "số tiền giao dịch",
+  transaction_type: "loại giao dịch",
+  max_amount: "hạn mức mỗi lần",
+  daily_limit: "hạn mức mỗi ngày",
 };
 
 // Chuẩn hóa 1 trường về dạng chuỗi sạch để so sánh nhất quán
 function normalizeField(name, value) {
-  if (name === "amount") return String(parseAmount(value));
+  if (name === "amount" || name === "max_amount" || name === "daily_limit") {
+    return String(parseAmount(value));
+  }
   const label = FIELD_LABELS[name] || "giao dịch";
   if (typeof value !== "string" && typeof value !== "number") {
     throw httpError(400, `Thiếu hoặc không hợp lệ thông tin ${label}`);

@@ -75,6 +75,7 @@ const SYSTEM_CONFIG_LABELS = {
   MERCHANT_FEE_CONFIG: "cấu hình biểu phí đối tác",
   RISK_THRESHOLDS: "cấu hình ngưỡng kiểm tra rủi ro",
   DAILY_LIMIT_TIMEZONE: "múi giờ tính hạn mức ngày",
+  WALLET_CAPACITY_CONFIG: "cấu hình sức chứa tối đa của ví",
 };
 
 const TRANSACTION_TYPE_LABELS = {
@@ -205,6 +206,64 @@ async function getEffectiveTransactionLimit(
 }
 
 /**
+ * Lấy sức chứa tối đa hiệu lực của ví cho user/merchant:
+ * Mặc định lấy `default_capacity` từ `WALLET_CAPACITY_CONFIG`,
+ * nếu user đã cấu hình `WALLET_CAPACITY` trong `user_transaction_limits` thì áp dụng trong khoảng `[min_capacity, max_capacity]`.
+ */
+async function getEffectiveWalletCapacity(
+  db,
+  { userId = null, role = "USER" } = {},
+) {
+  const queryDb = db && typeof db.query === "function" ? db : pool;
+  const r = role === "MERCHANT" ? "MERCHANT" : "USER";
+  const cfg = await getSystemConfig("WALLET_CAPACITY_CONFIG", queryDb);
+  const entry = cfg && typeof cfg === "object" ? cfg[r] : null;
+  if (!entry) {
+    throw httpError(500, "Hệ thống chưa thiết lập cấu hình sức chứa ví");
+  }
+
+  const minCapacity = Number(entry.min_capacity);
+  const defaultCapacity = Number(entry.default_capacity);
+  const maxCapacity = Number(entry.max_capacity);
+
+  if (
+    !Number.isFinite(minCapacity) ||
+    !Number.isFinite(defaultCapacity) ||
+    !Number.isFinite(maxCapacity) ||
+    minCapacity <= 0 ||
+    defaultCapacity < minCapacity ||
+    maxCapacity < defaultCapacity
+  ) {
+    throw httpError(500, "Cấu hình sức chứa ví trong hệ thống không hợp lệ");
+  }
+
+  const custom = userId
+    ? await getUserCustomLimit(queryDb, userId, "WALLET_CAPACITY")
+    : null;
+
+  let effectiveCapacity = defaultCapacity;
+  let isCustom = false;
+  if (custom?.max_amount != null) {
+    const customCap = Number(custom.max_amount);
+    if (Number.isFinite(customCap) && customCap > 0) {
+      effectiveCapacity = Math.min(
+        maxCapacity,
+        Math.max(minCapacity, customCap),
+      );
+      isCustom = effectiveCapacity !== defaultCapacity;
+    }
+  }
+
+  return {
+    minCapacity,
+    defaultCapacity,
+    maxCapacity,
+    effectiveCapacity,
+    isCustom,
+  };
+}
+
+/**
  * Đọc ngưỡng đánh giá rủi ro `{ challenge, block }` từ cấu hình `RISK_THRESHOLDS` trong DB.
  * Ném lỗi 500 nếu DB chưa cấu hình `RISK_THRESHOLDS` hoặc thiếu key tương ứng.
  *
@@ -271,5 +330,6 @@ module.exports = {
   getTransactionPolicy,
   getUserCustomLimit,
   getEffectiveTransactionLimit,
+  getEffectiveWalletCapacity,
   resolveRiskThreshold,
 };

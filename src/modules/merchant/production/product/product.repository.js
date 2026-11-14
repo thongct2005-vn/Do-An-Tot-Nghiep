@@ -10,7 +10,7 @@ const productRepository = {
       sortDir = "DESC",
       sortByQuantity = null,
       keyword = null,
-      limit = 10,
+      limit = 20,
       cursorValue = null,
       cursorQuantity = null,
       cursorProductId = null,
@@ -34,8 +34,16 @@ const productRepository = {
       effectiveCursorValue !== undefined &&
       Boolean(cursorProductId);
 
+    const itemGrossExpr = "(pri.quantity * pri.unit_price)";
+    const itemFeeExpr = `CASE
+      WHEN COALESCE(pr.amount, 0) > 0 AND ${itemGrossExpr} <> pr.amount
+        THEN ROUND(COALESCE(t.merchant_fee, 0)::numeric * ${itemGrossExpr}::numeric / pr.amount::numeric)::bigint
+      ELSE COALESCE(t.merchant_fee, 0)::bigint
+    END`;
+    const itemNetExpr = `GREATEST(0, ${itemGrossExpr} - (${itemFeeExpr}))`;
+
     const sortExpr = isRevenueSort
-      ? "SUM(pri.quantity * pri.unit_price)"
+      ? `SUM(${itemNetExpr})`
       : "SUM(pri.quantity)";
     const sortAlias = isRevenueSort ? "total_revenue" : "total_quantity_sold";
 
@@ -48,9 +56,12 @@ const productRepository = {
         pri.product_id,
         MAX(pri.name) AS product_name,
         SUM(pri.quantity)::bigint AS total_quantity_sold,
-        SUM(pri.quantity * pri.unit_price)::bigint AS total_revenue
+        SUM(${itemGrossExpr})::bigint AS gross_revenue,
+        SUM(${itemFeeExpr})::bigint AS total_merchant_fee,
+        SUM(${itemNetExpr})::bigint AS total_revenue
       FROM payment_request_items pri
       JOIN payment_requests pr ON pri.payment_request_id = pr.id
+      LEFT JOIN transactions t ON t.id = pr.transaction_id
       WHERE pr.destination_user_id = $1
         AND pr.status = 'SUCCESS'
         AND pr.paid_at IS NOT NULL

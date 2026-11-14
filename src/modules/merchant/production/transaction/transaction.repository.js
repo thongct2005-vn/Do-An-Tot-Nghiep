@@ -136,6 +136,7 @@ const merchantTransactionRepository = {
     const hasProductId = Boolean(productId);
     const isAsc = String(sort).toUpperCase() === "ASC";
     const isAmountSort = sortBy === "amount";
+    const isIdSort = sortBy === "id";
 
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
@@ -143,15 +144,21 @@ const merchantTransactionRepository = {
 
     const cursorClause = isAmountSort
       ? isAsc
-        ? `(t.amount > $15::bigint OR (t.amount = $15::bigint AND t.id < $3))`
-        : `(t.amount < $15::bigint OR (t.amount = $15::bigint AND t.id < $3))`
-      : isAsc
-        ? `(t.created_at, t.id) > ((SELECT c.created_at FROM transactions c WHERE c.id = $3), $3)`
-        : `(t.created_at, t.id) < ((SELECT c.created_at FROM transactions c WHERE c.id = $3), $3)`;
+        ? `(t.amount > $15::bigint OR (t.amount = $15::bigint AND (LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)))`
+        : `(t.amount < $15::bigint OR (t.amount = $15::bigint AND (LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)))`
+      : isIdSort
+        ? isAsc
+          ? `(LENGTH(t.id), t.id) > (LENGTH($3::text), $3::text)`
+          : `(LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)`
+        : isAsc
+          ? `(t.created_at, LENGTH(t.id), t.id) > ((SELECT c.created_at FROM transactions c WHERE c.id = $3), LENGTH($3::text), $3::text)`
+          : `(t.created_at, LENGTH(t.id), t.id) < ((SELECT c.created_at FROM transactions c WHERE c.id = $3), LENGTH($3::text), $3::text)`;
 
     const orderByClause = isAmountSort
-      ? `t.amount ${isAsc ? "ASC" : "DESC"}, t.id DESC`
-      : `t.created_at ${isAsc ? "ASC" : "DESC"}, t.id ${isAsc ? "ASC" : "DESC"}`;
+      ? `t.amount ${isAsc ? "ASC" : "DESC"}, LENGTH(t.id) DESC, t.id DESC`
+      : isIdSort
+        ? `LENGTH(t.id) ${isAsc ? "ASC" : "DESC"}, t.id ${isAsc ? "ASC" : "DESC"}`
+        : `t.created_at ${isAsc ? "ASC" : "DESC"}, LENGTH(t.id) ${isAsc ? "ASC" : "DESC"}, t.id ${isAsc ? "ASC" : "DESC"}`;
 
     const result = await pool.query(
       `
@@ -207,6 +214,7 @@ const merchantTransactionRepository = {
           OR (
             (t.source_user_id = $1 AND du.full_name ILIKE '%' || $6 || '%')
             OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $6 || '%')
+            OR t.id ILIKE '%' || $6 || '%'
             OR t.description ILIKE '%' || $6 || '%'
             OR b.name ILIKE '%' || $6 || '%'
             OR pr.order_id ILIKE '%' || $6 || '%'
@@ -352,6 +360,7 @@ const merchantTransactionRepository = {
           OR (
             (t.source_user_id = $1 AND du.full_name ILIKE '%' || $3::text || '%')
             OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $3::text || '%')
+            OR t.id ILIKE '%' || $3::text || '%'
             OR t.description ILIKE '%' || $3::text || '%'
             OR b.name ILIKE '%' || $3::text || '%'
             OR pr.order_id ILIKE '%' || $3::text || '%'

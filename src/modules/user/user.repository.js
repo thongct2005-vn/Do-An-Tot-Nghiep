@@ -179,5 +179,62 @@ const userRepository = {
     );
     return result.rows[0] ?? null;
   },
+
+  async getPasswordState(userId) {
+    const result = await pool.query(
+      `SELECT password_hash,
+              pin_hash,
+              COALESCE(failed_login_attempts, 0) AS failed_login_attempts,
+              locked_until,
+              (locked_until > NOW()) AS is_locked
+       FROM users WHERE id = $1`,
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  async claimPasswordAttempt({ userId, maxAttempts, lockMinutes }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET failed_login_attempts = CASE
+             WHEN locked_until <= NOW() THEN 1
+             ELSE COALESCE(failed_login_attempts, 0) + 1
+           END,
+           locked_until = CASE
+             WHEN (CASE
+                     WHEN locked_until <= NOW() THEN 1
+                     ELSE COALESCE(failed_login_attempts, 0) + 1
+                   END) >= $2::INT
+             THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
+             ELSE NULL
+           END
+       WHERE id = $1
+         AND password_hash IS NOT NULL
+         AND (locked_until IS NULL OR locked_until <= NOW())
+       RETURNING password_hash, pin_hash, failed_login_attempts`,
+      [userId, maxAttempts, lockMinutes],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  async resetFailedPassword(userId) {
+    await pool.query(
+      `UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1`,
+      [userId],
+    );
+  },
+
+  async changePassword({ userId, passwordHash, oldPasswordHash }) {
+    const result = await pool.query(
+      `UPDATE users
+       SET password_hash = $1,
+           failed_login_attempts = 0,
+           locked_until = NULL
+       WHERE id = $2 AND password_hash IS NOT DISTINCT FROM $3
+       RETURNING id`,
+      [passwordHash, userId, oldPasswordHash],
+    );
+    return result.rows[0] ?? null;
+  },
 };
 module.exports = userRepository;

@@ -378,6 +378,7 @@ async function buildProductStatsXlsx({
     { header: "Mã sản phẩm", width: 18 },
     { header: "Tên sản phẩm", width: 38 },
     { header: "Số lượng bán", width: 16 },
+    { header: "Phí giao dịch (VND)", width: 20 },
     { header: "Tổng doanh thu (VND)", width: 24 },
   ];
 
@@ -395,16 +396,19 @@ async function buildProductStatsXlsx({
 
   const headerRowIdx = 4;
   let totalQty = 0;
+  let totalFee = 0;
   let totalRevenue = 0;
 
   products.forEach((p, idx) => {
     const qty = num(p.total_quantity_sold);
+    const fee = num(p.total_merchant_fee);
     const rev = num(p.total_revenue);
     totalQty += qty;
+    totalFee += fee;
     totalRevenue += rev;
 
     const row = sheet.getRow(headerRowIdx + 1 + idx);
-    row.values = [idx + 1, String(p.product_id || ""), String(p.product_name || ""), qty, rev];
+    row.values = [idx + 1, String(p.product_id || ""), String(p.product_name || ""), qty, fee, rev];
     styleReportDataRow(row, idx);
     row.getCell(1).alignment = { vertical: "middle", horizontal: "center" };
     row.getCell(2).alignment = { vertical: "middle", horizontal: "left" };
@@ -413,16 +417,21 @@ async function buildProductStatsXlsx({
     row.getCell(4).alignment = { vertical: "middle", horizontal: "center" };
     row.getCell(5).numFmt = MONEY_FMT;
     row.getCell(5).alignment = { vertical: "middle", horizontal: "right" };
-    row.getCell(5).font = { bold: true, color: { argb: "FF15803D" } };
+    row.getCell(5).font = { color: { argb: "FFEA580C" } };
+    row.getCell(6).numFmt = MONEY_FMT;
+    row.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
+    row.getCell(6).font = { bold: true, color: { argb: "FF15803D" } };
   });
 
   const totalRow = sheet.getRow(headerRowIdx + 1 + products.length);
-  totalRow.values = ["", "TỔNG CỘNG", `${products.length} sản phẩm`, totalQty, totalRevenue];
+  totalRow.values = ["", "TỔNG CỘNG", `${products.length} sản phẩm`, totalQty, totalFee, totalRevenue];
   styleReportTotalRow(totalRow);
   totalRow.getCell(4).numFmt = MONEY_FMT;
   totalRow.getCell(4).alignment = { vertical: "middle", horizontal: "center" };
   totalRow.getCell(5).numFmt = MONEY_FMT;
   totalRow.getCell(5).alignment = { vertical: "middle", horizontal: "right" };
+  totalRow.getCell(6).numFmt = MONEY_FMT;
+  totalRow.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

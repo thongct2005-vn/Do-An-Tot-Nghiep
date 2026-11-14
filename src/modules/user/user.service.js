@@ -146,6 +146,198 @@ const userService = {
     }
   },
 
+  async verifyCurrentPin({ userId, oldPin }) {
+    if (!userId || !oldPin) {
+      throw httpError(400, "Vui lòng nhập mã PIN hiện tại");
+    }
+    if (!isValidPasswordOrPin(oldPin)) {
+      throw httpError(400, "Mã PIN phải gồm đúng 6 chữ số");
+    }
+
+    const user = await getResettableUser(userId);
+    if (!user.pin_hash) {
+      throw httpError(404, "Bạn chưa thiết lập mã PIN");
+    }
+
+    const claimed = await userRepository.claimPinAttempt({
+      userId,
+      maxAttempts: 5,
+      lockMinutes: 15,
+    });
+
+    if (!claimed) {
+      const state = await userRepository.getPinState(userId);
+      if (state?.is_locked) {
+        throw httpError(
+          423,
+          "Bạn đã nhập sai PIN quá 5 lần. Tài khoản bị khóa giao dịch trong 15 phút",
+        );
+      }
+      throw httpError(404, "Bạn chưa thiết lập mã PIN");
+    }
+
+    const isValid = await bcrypt.compare(oldPin, claimed.pin_hash);
+    if (!isValid) {
+      if (claimed.pin_failed_attempts >= 5) {
+        throw httpError(
+          423,
+          "Bạn đã nhập sai PIN quá 5 lần. Tài khoản bị khóa giao dịch trong 15 phút",
+        );
+      }
+      return {
+        is_correct: false,
+        remaining_attempts: 5 - claimed.pin_failed_attempts,
+      };
+    }
+
+    await userRepository.resetFailedPin(userId);
+    return {
+      is_correct: true,
+    };
+  },
+
+  async changePin({ userId, oldPin, newPin }) {
+    if (!userId || !oldPin || !newPin) {
+      throw httpError(400, "Thiếu thông tin mã PIN");
+    }
+    if (!isValidPasswordOrPin(oldPin) || !isValidPasswordOrPin(newPin)) {
+      throw httpError(400, "Mã PIN phải gồm đúng 6 chữ số");
+    }
+
+    const user = await getResettableUser(userId);
+    if (!user.pin_hash) {
+      throw httpError(404, "Bạn chưa thiết lập mã PIN");
+    }
+
+    const verifyResult = await this.verifyCurrentPin({ userId, oldPin });
+    if (!verifyResult.is_correct) {
+      throw httpError(
+        400,
+        `Mã PIN hiện tại không đúng. Còn ${verifyResult.remaining_attempts} lần thử`,
+      );
+    }
+
+    if (oldPin === newPin || (await bcrypt.compare(newPin, user.pin_hash))) {
+      throw httpError(400, "Mã PIN mới không được trùng mã PIN hiện tại");
+    }
+    if (
+      user.password_hash &&
+      (await bcrypt.compare(newPin, user.password_hash))
+    ) {
+      throw httpError(400, "Mã PIN không được trùng mật khẩu đăng nhập");
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const pinHash = await bcrypt.hash(newPin, salt);
+    const updated = await userRepository.resetPin({
+      userId,
+      pinHash,
+      oldPinHash: user.pin_hash,
+    });
+    if (!updated) {
+      throw httpError(409, "Không thể cập nhật mã PIN, vui lòng thử lại");
+    }
+  },
+
+  async verifyCurrentPassword({ userId, oldPassword }) {
+    if (!userId || !oldPassword) {
+      throw httpError(400, "Vui lòng nhập mật khẩu hiện tại");
+    }
+    if (!isValidPasswordOrPin(oldPassword)) {
+      throw httpError(400, "Mật khẩu phải gồm đúng 6 chữ số");
+    }
+
+    const user = await getResettableUser(userId);
+    if (!user.password_hash) {
+      throw httpError(404, "Không tìm thấy thông tin mật khẩu");
+    }
+
+    const claimed = await userRepository.claimPasswordAttempt({
+      userId,
+      maxAttempts: 5,
+      lockMinutes: 30,
+    });
+
+    if (!claimed) {
+      const state = await userRepository.getPasswordState(userId);
+      if (state?.is_locked) {
+        throw httpError(
+          423,
+          "Bạn đã nhập sai mật khẩu quá 5 lần. Tài khoản tạm khóa trong 30 phút",
+        );
+      }
+      throw httpError(404, "Không tìm thấy thông tin mật khẩu");
+    }
+
+    const isValid = await bcrypt.compare(oldPassword, claimed.password_hash);
+    if (!isValid) {
+      if (claimed.failed_login_attempts >= 5) {
+        throw httpError(
+          423,
+          "Bạn đã nhập sai mật khẩu quá 5 lần. Tài khoản tạm khóa trong 30 phút",
+        );
+      }
+      return {
+        is_correct: false,
+        remaining_attempts: 5 - claimed.failed_login_attempts,
+      };
+    }
+
+    await userRepository.resetFailedPassword(userId);
+    return {
+      is_correct: true,
+    };
+  },
+
+  async changePassword({ userId, oldPassword, newPassword }) {
+    if (!userId || !oldPassword || !newPassword) {
+      throw httpError(400, "Thiếu thông tin mật khẩu");
+    }
+    if (
+      !isValidPasswordOrPin(oldPassword) ||
+      !isValidPasswordOrPin(newPassword)
+    ) {
+      throw httpError(400, "Mật khẩu phải gồm đúng 6 chữ số");
+    }
+
+    const user = await getResettableUser(userId);
+    if (!user.password_hash) {
+      throw httpError(404, "Không tìm thấy thông tin mật khẩu");
+    }
+
+    const verifyResult = await this.verifyCurrentPassword({
+      userId,
+      oldPassword,
+    });
+    if (!verifyResult.is_correct) {
+      throw httpError(
+        400,
+        `Mật khẩu hiện tại không đúng. Còn ${verifyResult.remaining_attempts} lần thử`,
+      );
+    }
+
+    if (
+      oldPassword === newPassword ||
+      (await bcrypt.compare(newPassword, user.password_hash))
+    ) {
+      throw httpError(400, "Mật khẩu mới không được trùng mật khẩu hiện tại");
+    }
+    if (user.pin_hash && (await bcrypt.compare(newPassword, user.pin_hash))) {
+      throw httpError(400, "Mật khẩu không được trùng mã PIN");
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+    const updated = await userRepository.changePassword({
+      userId,
+      passwordHash,
+      oldPasswordHash: user.password_hash,
+    });
+    if (!updated) {
+      throw httpError(409, "Không thể cập nhật mật khẩu, vui lòng thử lại");
+    }
+  },
+
   async updateFmcToken({ userId, fcmToken }) {
     if (!userId || !fcmToken) {
       throw httpError(400, "Thiếu thông tin để cập nhật token thông báo");

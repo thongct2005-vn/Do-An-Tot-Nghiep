@@ -11,6 +11,7 @@ const {
   forgotRequestLimiter,
   forgotKycLimiter,
   resetCredentialLimiter,
+  pinCheckLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { uploadKycImages } = require("../../middlewares/upload.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
@@ -41,6 +42,34 @@ router.post(
   "/create-pin",
   authMiddleware.verifyAccessToken,
   userController.createPin,
+);
+
+router.post(
+  "/verify-pin",
+  authMiddleware.verifyAccessToken,
+  pinCheckLimiter,
+  userController.verifyCurrentPin,
+);
+
+router.patch(
+  "/change-pin",
+  authMiddleware.verifyAccessToken,
+  resetCredentialLimiter,
+  userController.changePin,
+);
+
+router.post(
+  "/verify-password",
+  authMiddleware.verifyAccessToken,
+  pinCheckLimiter,
+  userController.verifyCurrentPassword,
+);
+
+router.patch(
+  "/change-password",
+  authMiddleware.verifyAccessToken,
+  resetCredentialLimiter,
+  userController.changePassword,
 );
 
 router.patch(

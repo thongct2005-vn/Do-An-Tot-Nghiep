@@ -55,6 +55,64 @@ const userController = {
       next(e);
     }
   },
+  async verifyCurrentPin(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { old_pin: oldPin, pin } = req.body;
+      const result = await userService.verifyCurrentPin({
+        userId,
+        oldPin: oldPin || pin,
+      });
+      return successResponse(
+        res,
+        200,
+        result.is_correct ? "Xác thực mã PIN thành công" : "Mã PIN không đúng",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async changePin(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { old_pin: oldPin, new_pin: newPin } = req.body;
+      await userService.changePin({ userId, oldPin, newPin });
+      return successResponse(res, 200, "Đổi mã PIN thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
+  async verifyCurrentPassword(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { old_password: oldPassword, password } = req.body;
+      const result = await userService.verifyCurrentPassword({
+        userId,
+        oldPassword: oldPassword || password,
+      });
+      return successResponse(
+        res,
+        200,
+        result.is_correct
+          ? "Xác thực mật khẩu thành công"
+          : "Mật khẩu không đúng",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async changePassword(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { old_password: oldPassword, new_password: newPassword } = req.body;
+      await userService.changePassword({ userId, oldPassword, newPassword });
+      return successResponse(res, 200, "Đổi mật khẩu thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
   async updateFcmToken(req, res, next) {
     try {
       const { user_id: userId } = req.user;

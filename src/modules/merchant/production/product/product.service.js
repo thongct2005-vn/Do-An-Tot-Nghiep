@@ -104,6 +104,8 @@ const productService = {
         product_id: row.product_id,
         product_name: row.product_name,
         total_quantity_sold: Number(row.total_quantity_sold),
+        gross_revenue: Number(row.gross_revenue ?? row.total_revenue ?? 0),
+        total_merchant_fee: Number(row.total_merchant_fee ?? 0),
         total_revenue: Number(row.total_revenue),
       })),
       next_cursor: nextCursor,
@@ -163,6 +165,8 @@ const productService = {
       product_id: row.product_id,
       product_name: row.product_name,
       total_quantity_sold: Number(row.total_quantity_sold),
+      gross_revenue: Number(row.gross_revenue ?? row.total_revenue ?? 0),
+      total_merchant_fee: Number(row.total_merchant_fee ?? 0),
       total_revenue: Number(row.total_revenue),
     }));
 

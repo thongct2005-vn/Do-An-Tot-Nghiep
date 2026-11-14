@@ -525,7 +525,7 @@ const merchantTransactionService = {
       sortBy !== undefined && sortBy !== null && String(sortBy).trim()
         ? String(sortBy).trim().toLowerCase()
         : "time";
-    if (!["time", "amount"].includes(normalizedSortBy)) {
+    if (!["time", "amount", "id"].includes(normalizedSortBy)) {
       throw httpError(400, "Trường sắp xếp không hợp lệ");
     }
 

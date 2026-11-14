@@ -840,7 +840,276 @@ const merchantAuthService = {
       reason: "Mật khẩu của tài khoản vừa được đặt lại. Vui lòng đăng nhập lại",
     });
   },
+
+  // ===== Đổi email Merchant (đang đăng nhập) =====
+
+  // Bước 1: Kiểm tra mật khẩu hiện tại, phát OTP email hoặc TOTP + otp_token bước 1
+  async changeEmailRequest({ userId, password }) {
+    if (!password) {
+      throw httpError(400, "Vui lòng nhập mật khẩu hiện tại");
+    }
+
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+
+    const isPasswordCorrect = await bcrypt.compare(
+      String(password),
+      user.password_hash,
+    );
+    if (!isPasswordCorrect) {
+      throw httpError(400, "Mật khẩu hiện tại không chính xác");
+    }
+
+    const meta = buildChangeEmailTokenMeta(user);
+    if (user.totp_enabled) {
+      return {
+        otp_token: tokenUtil.generateOtpToken(
+          user,
+          "merchant_change_email_otp",
+          meta,
+        ),
+        otp_method: "totp",
+        masked_email: maskEmail(user.email),
+      };
+    }
+
+    if (!user.email) {
+      throw httpError(404, "Không tìm thấy email liên kết với tài khoản");
+    }
+
+    try {
+      await otpService.generateAndSaveOtp({ email: user.email });
+    } catch (e) {
+      if (e.statusCode !== 429) throw e;
+    }
+
+    return {
+      otp_token: tokenUtil.generateOtpToken(
+        user,
+        "merchant_change_email_otp",
+        meta,
+      ),
+      otp_method: "email",
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  // Gửi lại OTP cho email hiện tại (chỉ khi không dùng TOTP)
+  async changeEmailResendOtp({ userId, emailVersion, passwordVersion }) {
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+    assertChangeEmailTokenFresh(user, { emailVersion, passwordVersion });
+
+    if (user.totp_enabled) {
+      throw httpError(
+        400,
+        "Tài khoản đang bật Google Authenticator, không cần gửi lại OTP email",
+      );
+    }
+    if (!user.email) {
+      throw httpError(404, "Không tìm thấy email liên kết với tài khoản");
+    }
+
+    await otpService.generateAndSaveOtp({ email: user.email });
+    return {
+      otp_token: tokenUtil.generateOtpToken(
+        user,
+        "merchant_change_email_otp",
+        buildChangeEmailTokenMeta(user),
+      ),
+      otp_method: "email",
+      masked_email: maskEmail(user.email),
+    };
+  },
+
+  // Bước 2: Xác thực OTP (email cũ) hoặc TOTP -> trả otp_token bước 2 cho bước nhập email mới
+  async changeEmailVerify({ userId, otp, emailVersion, passwordVersion }) {
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+    assertChangeEmailTokenFresh(user, { emailVersion, passwordVersion });
+
+    await verifyMerchantOtpOrTotp(user, otp);
+
+    return {
+      otp_token: tokenUtil.generateOtpToken(
+        user,
+        "merchant_change_email_verified",
+        buildChangeEmailTokenMeta(user),
+      ),
+    };
+  },
+
+  // Bước 3: Kiểm tra email mới hợp lệ & chưa trùng, gửi OTP tới email mới -> trả otp_token bước 3
+  async changeEmailSendNewOtp({
+    userId,
+    newEmail,
+    emailVersion,
+    passwordVersion,
+  }) {
+    return issueNewEmailConfirmOtp({
+      userId,
+      newEmail,
+      emailVersion,
+      passwordVersion,
+      ignoreCooldown: true,
+    });
+  },
+
+  // Gửi lại OTP cho email mới trong bước 4
+  async changeEmailResendNewOtp({
+    userId,
+    newEmail,
+    emailVersion,
+    passwordVersion,
+  }) {
+    return issueNewEmailConfirmOtp({
+      userId,
+      newEmail,
+      emailVersion,
+      passwordVersion,
+      ignoreCooldown: false,
+    });
+  },
+
+  // Bước 4: Xác thực OTP gửi về email mới -> cập nhật users.email (atomic claimEmail)
+  async changeEmailConfirm({
+    userId,
+    otp,
+    newEmail,
+    emailVersion,
+    passwordVersion,
+  }) {
+    const code = String(otp ?? "").trim();
+    if (!code) {
+      throw httpError(400, "Vui lòng nhập mã OTP xác thực");
+    }
+    if (!isValidOtp(code)) {
+      throw httpError(400, "Mã OTP phải gồm 6 chữ số");
+    }
+
+    const user = await merchantAuthRepository.findMerchantById(userId);
+    assertActiveMerchantUser(user);
+    assertChangeEmailTokenFresh(user, { emailVersion, passwordVersion });
+
+    const normalizedNewEmail = normalizeEmail(newEmail);
+    if (!normalizedNewEmail || !isValidEmail(normalizedNewEmail)) {
+      throw httpError(
+        403,
+        "Phiên đổi email không hợp lệ, vui lòng thực hiện lại",
+      );
+    }
+    if (normalizedNewEmail === normalizeEmail(user.email)) {
+      throw httpError(400, "Email mới phải khác email hiện tại");
+    }
+
+    await otpService.verifyOtp({ email: normalizedNewEmail, otp: code });
+
+    const updated = await merchantAuthRepository.updateEmail({
+      userId: user.id,
+      newEmail: normalizedNewEmail,
+      oldEmail: user.email,
+      oldPasswordHash: user.password_hash,
+    });
+    if (!updated) {
+      throw httpError(
+        403,
+        "Phiên đổi email đã hết hiệu lực, vui lòng thực hiện lại",
+      );
+    }
+
+    return {
+      email: updated.email,
+      masked_email: maskEmail(updated.email),
+    };
+  },
 };
+
+const MAX_MERCHANT_EMAIL_LENGTH = 100;
+
+function normalizeEmail(email) {
+  return String(email ?? "").trim().toLowerCase();
+}
+
+function buildChangeEmailTokenMeta(user) {
+  return {
+    pv: tokenUtil.credentialVersion(user.password_hash),
+    ev: tokenUtil.credentialVersion(user.email),
+  };
+}
+
+function assertChangeEmailTokenFresh(user, { emailVersion, passwordVersion }) {
+  const current = buildChangeEmailTokenMeta(user);
+  if (
+    !emailVersion ||
+    !passwordVersion ||
+    emailVersion !== current.ev ||
+    passwordVersion !== current.pv
+  ) {
+    throw httpError(
+      403,
+      "Phiên đổi email đã hết hiệu lực, vui lòng thực hiện lại",
+    );
+  }
+}
+
+async function assertAvailableNewEmail(user, newEmail) {
+  const normalized = normalizeEmail(newEmail);
+  if (!normalized) {
+    throw httpError(400, "Vui lòng nhập email mới");
+  }
+  if (normalized.length > MAX_MERCHANT_EMAIL_LENGTH) {
+    throw httpError(
+      400,
+      `Email mới không được vượt quá ${MAX_MERCHANT_EMAIL_LENGTH} ký tự`,
+    );
+  }
+  if (!isValidEmail(normalized)) {
+    throw httpError(400, "Email mới không hợp lệ");
+  }
+  if (normalized === normalizeEmail(user.email)) {
+    throw httpError(400, "Email mới phải khác email hiện tại");
+  }
+  const claimed = await merchantAuthRepository.isEmailClaimedByOther(
+    normalized,
+    user.id,
+  );
+  if (claimed) {
+    throw httpError(409, "Địa chỉ email đã được liên kết với tài khoản khác");
+  }
+  return normalized;
+}
+
+async function issueNewEmailConfirmOtp({
+  userId,
+  newEmail,
+  emailVersion,
+  passwordVersion,
+  ignoreCooldown,
+}) {
+  const user = await merchantAuthRepository.findMerchantById(userId);
+  assertActiveMerchantUser(user);
+  assertChangeEmailTokenFresh(user, { emailVersion, passwordVersion });
+
+  const normalizedNewEmail = await assertAvailableNewEmail(user, newEmail);
+
+  try {
+    await otpService.generateAndSaveOtp({ email: normalizedNewEmail });
+  } catch (e) {
+    if (!ignoreCooldown || e.statusCode !== 429) throw e;
+  }
+
+  return {
+    otp_token: tokenUtil.generateOtpToken(
+      user,
+      "merchant_change_email_confirm_otp",
+      {
+        ...buildChangeEmailTokenMeta(user),
+        new_email: normalizedNewEmail,
+      },
+    ),
+    masked_new_email: maskEmail(normalizedNewEmail),
+  };
+}
 
 function assertActiveMerchantUser(user) {
   if (!user) {

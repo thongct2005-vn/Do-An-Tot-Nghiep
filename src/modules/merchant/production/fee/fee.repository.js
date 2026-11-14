@@ -80,7 +80,7 @@ const merchantFeeRepository = {
       return { credited: false, skippedZeroFee: true };
     }
     if (!transactionId) {
-      throw new Error("creditSystemFeeWalletAndLedgerTx: thiếu transactionId");
+      throw new Error("Thiếu mã giao dịch để ghi nhận phí vào ví hệ thống");
     }
 
     const { walletId: feeWalletId } = assertSystemFeeWalletConfigured();
@@ -95,9 +95,7 @@ const merchantFeeRepository = {
     );
 
     if (!walletLockRes.rows[0]) {
-      throw new Error(
-        `Không tìm thấy ví thu phí hệ thống SYSTEM_FEE_WALLET (${feeWalletId})`,
-      );
+      throw new Error("Không tìm thấy ví thu phí hệ thống");
     }
 
     const existing = await client.query(

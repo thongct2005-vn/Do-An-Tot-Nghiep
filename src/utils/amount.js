@@ -6,12 +6,6 @@ function parseAmount(raw, message = "Số tiền không hợp lệ") {
   if (typeof raw === "number") {
     value = raw;
   } else if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
-    /* 
-    /^: bắt đầu chuỗi 
-    \d: một chữ số (0-9)
-    +: có ít nhất 1 chữ số
-    $/: kết thúc chuỗi
-  */
     value = Number(raw.trim());
   } else {
     throw httpError(400, message);

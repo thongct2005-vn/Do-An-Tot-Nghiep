@@ -16,10 +16,11 @@ const { parseAmountInRange } = require("../../../../utils/amount");
 const pool = require("../../../../config/database");
 const {
   getEffectiveTransactionLimit,
-  getSystemConfig,
+  getPositiveIntConfig,
 } = require("../../../../utils/limitsDb");
 const { getTransactionLimitsSummary } = require("../../../../utils/dailyLimit");
 const {
+  getOneYearBounds,
   resolveExportRange,
   resolveOneYearRange,
 } = require("../../../../utils/exportRange");
@@ -34,7 +35,7 @@ const {
   assertKycBoth,
 } = require("../../../kyc/kyc.guard");
 
-const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+
 function toNumberOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
@@ -69,6 +70,257 @@ function normalizeProductIdFilter(productId) {
     throw httpError(400, "Mã sản phẩm không hợp lệ");
   }
   return trimmed;
+}
+
+function parseUtcYmd(ymd) {
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function addUtcDays(dateObj, days) {
+  return new Date(dateObj.getTime() + days * 86400000);
+}
+
+function toYmdUtc(dateObj) {
+  return dateObj.toISOString().slice(0, 10);
+}
+
+function getWeekMondayUtc(dateObj) {
+  const dayOffset = (dateObj.getUTCDay() + 6) % 7; // T2 = 0 ... CN = 6
+  return addUtcDays(dateObj, -dayOffset);
+}
+
+function formatShortDm(ymd) {
+  const [, m, d] = String(ymd).split("-");
+  return `${d}/${m}`;
+}
+
+function isoYmdToVn(ymd) {
+  return ymd ? String(ymd).split("-").reverse().join("/") : "";
+}
+
+function resolveRevenueChartWindow(period, monthYm = "") {
+  const { startDate: minOneYearYmd, endDate: todayYmd } = getOneYearBounds();
+  const todayUtc = parseUtcYmd(todayYmd);
+
+  if (
+    (period === "day" || period === "week") &&
+    /^\d{4}-\d{2}$/.test(monthYm)
+  ) {
+    const [y, m] = monthYm.split("-").map(Number);
+    if (m < 1 || m > 12) {
+      throw httpError(400, "Tháng tra cứu không hợp lệ");
+    }
+    const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const rawStart = `${monthYm}-01`;
+    const rawEnd = `${monthYm}-${String(daysInMonth).padStart(2, "0")}`;
+    const startDate = rawStart < minOneYearYmd ? minOneYearYmd : rawStart;
+    const endDate = rawEnd > todayYmd ? todayYmd : rawEnd;
+    if (startDate > endDate) {
+      throw httpError(
+        400,
+        "Chỉ có thể xem biểu đồ doanh thu trong vòng 1 năm gần nhất",
+      );
+    }
+    return { startDate, endDate };
+  }
+
+  if (period === "day") {
+    const startUtc = addUtcDays(todayUtc, -6);
+    return { startDate: toYmdUtc(startUtc), endDate: todayYmd };
+  }
+
+  if (period === "week") {
+    const monthAgo = new Date(
+      Date.UTC(
+        todayUtc.getUTCFullYear(),
+        todayUtc.getUTCMonth() - 1,
+        todayUtc.getUTCDate() + 1,
+      ),
+    );
+    const startMon = getWeekMondayUtc(monthAgo);
+    const rawStart = toYmdUtc(startMon);
+    return {
+      startDate: rawStart < minOneYearYmd ? minOneYearYmd : rawStart,
+      endDate: todayYmd,
+    };
+  }
+
+  // 'month': 12 tháng gần nhất (từ ngày 01 của 11 tháng trước đến hôm nay)
+  const startMonth = new Date(
+    Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth() - 11, 1),
+  );
+  const rawStart = toYmdUtc(startMonth);
+  return {
+    startDate: rawStart < minOneYearYmd ? minOneYearYmd : rawStart,
+    endDate: todayYmd,
+  };
+}
+
+function buildRevenueChartBuckets(dailyRows, period, range, selectedMonth = "") {
+  const dailyMap = new Map();
+  (dailyRows || []).forEach((item) => {
+    const ymd = String(item.date_str || item.date || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+    dailyMap.set(ymd, {
+      revenue: Number(item.revenue) || 0,
+      gross_revenue: Number(item.gross_revenue) || 0,
+      merchant_fee: Number(item.merchant_fee) || 0,
+      order_count: Number(item.order_count) || 0,
+    });
+  });
+
+  const buckets = [];
+  const startUtc = parseUtcYmd(range.startDate);
+  const endUtc = parseUtcYmd(range.endDate);
+  const isFullMonth = /^\d{4}-\d{2}$/.test(selectedMonth);
+
+  if (period === "day") {
+    for (let cur = startUtc; cur <= endUtc; cur = addUtcDays(cur, 1)) {
+      const ymd = toYmdUtc(cur);
+      const val = dailyMap.get(ymd) || {
+        revenue: 0,
+        gross_revenue: 0,
+        merchant_fee: 0,
+        order_count: 0,
+      };
+      buckets.push({
+        key: ymd,
+        label: isFullMonth ? ymd.slice(8, 10) : formatShortDm(ymd),
+        fullLabel: isoYmdToVn(ymd),
+        startDate: ymd,
+        endDate: ymd,
+        revenue: val.revenue,
+        gross_revenue: val.gross_revenue,
+        merchant_fee: val.merchant_fee,
+        order_count: val.order_count,
+      });
+    }
+    return buckets;
+  }
+
+  if (period === "week") {
+    if (isFullMonth) {
+      let curStart = startUtc;
+      while (curStart <= endUtc) {
+        const rawEnd = addUtcDays(curStart, 6);
+        const curEnd = rawEnd > endUtc ? endUtc : rawEnd;
+        const wStart = toYmdUtc(curStart);
+        const wEnd = toYmdUtc(curEnd);
+
+        let revenue = 0;
+        let grossRevenue = 0;
+        let merchantFee = 0;
+        let orderCount = 0;
+        for (let d = curStart; d <= curEnd; d = addUtcDays(d, 1)) {
+          const val = dailyMap.get(toYmdUtc(d));
+          if (val) {
+            revenue += val.revenue;
+            grossRevenue += val.gross_revenue;
+            merchantFee += val.merchant_fee;
+            orderCount += val.order_count;
+          }
+        }
+
+        buckets.push({
+          key: wStart,
+          label: `${formatShortDm(wStart)} - ${formatShortDm(wEnd)}`,
+          fullLabel: `${isoYmdToVn(wStart)} - ${isoYmdToVn(wEnd)}`,
+          startDate: wStart,
+          endDate: wEnd,
+          revenue,
+          gross_revenue: grossRevenue,
+          merchant_fee: merchantFee,
+          order_count: orderCount,
+        });
+        curStart = addUtcDays(curStart, 7);
+      }
+      return buckets;
+    }
+
+    let curMon = getWeekMondayUtc(startUtc);
+    while (curMon <= endUtc) {
+      const curSun = addUtcDays(curMon, 6);
+      const wStartDate = curMon < startUtc ? startUtc : curMon;
+      const wEndDate = curSun > endUtc ? endUtc : curSun;
+      const wStart = toYmdUtc(wStartDate);
+      const wEnd = toYmdUtc(wEndDate);
+
+      let revenue = 0;
+      let grossRevenue = 0;
+      let merchantFee = 0;
+      let orderCount = 0;
+      for (let d = wStartDate; d <= wEndDate; d = addUtcDays(d, 1)) {
+        const val = dailyMap.get(toYmdUtc(d));
+        if (val) {
+          revenue += val.revenue;
+          grossRevenue += val.gross_revenue;
+          merchantFee += val.merchant_fee;
+          orderCount += val.order_count;
+        }
+      }
+
+      buckets.push({
+        key: wStart,
+        label: `${formatShortDm(wStart)} - ${formatShortDm(wEnd)}`,
+        fullLabel: `${isoYmdToVn(wStart)} - ${isoYmdToVn(wEnd)}`,
+        startDate: wStart,
+        endDate: wEnd,
+        revenue,
+        gross_revenue: grossRevenue,
+        merchant_fee: merchantFee,
+        order_count: orderCount,
+      });
+      curMon = addUtcDays(curMon, 7);
+    }
+    return buckets;
+  }
+
+  // 'month'
+  let y = startUtc.getUTCFullYear();
+  let m = startUtc.getUTCMonth();
+  const endY = endUtc.getUTCFullYear();
+  const endM = endUtc.getUTCMonth();
+
+  while (y < endY || (y === endY && m <= endM)) {
+    const ym = `${y}-${String(m + 1).padStart(2, "0")}`;
+    const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    const mStart = `${ym}-01`;
+    const mEndRaw = `${ym}-${String(daysInMonth).padStart(2, "0")}`;
+    const mEnd = mEndRaw > range.endDate ? range.endDate : mEndRaw;
+
+    let revenue = 0;
+    let grossRevenue = 0;
+    let merchantFee = 0;
+    let orderCount = 0;
+    dailyMap.forEach((val, ymd) => {
+      if (ymd.startsWith(ym)) {
+        revenue += val.revenue;
+        grossRevenue += val.gross_revenue;
+        merchantFee += val.merchant_fee;
+        orderCount += val.order_count;
+      }
+    });
+
+    buckets.push({
+      key: ym,
+      label: `T${m + 1}/${String(y).slice(-2)}`,
+      fullLabel: `Tháng ${String(m + 1).padStart(2, "0")}/${y}`,
+      startDate: mStart,
+      endDate: mEnd,
+      revenue,
+      gross_revenue: grossRevenue,
+      merchant_fee: merchantFee,
+      order_count: orderCount,
+    });
+
+    m++;
+    if (m > 11) {
+      m = 0;
+      y++;
+    }
+  }
+  return buckets;
 }
 
 const merchantTransactionService = {
@@ -191,9 +443,7 @@ const merchantTransactionService = {
       throw httpError(400, "Loại giao dịch không hợp lệ");
     }
 
-    const exportMaxRows = Number(
-      await getSystemConfig("EXPORT_MAX_ROWS", pool),
-    ) || 50_000;
+    const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS", pool);
     const rows = await merchantTransactionRepository.exportHistory(userId, {
       keyword: normalizedKeyword,
       type: normalizedType,
@@ -249,9 +499,7 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
-    const historyPageLimit = Number(
-      await getSystemConfig("HISTORY_PAGE_LIMIT", pool),
-    ) || 20;
+    const historyPageLimit = await getPositiveIntConfig("HISTORY_PAGE_LIMIT", pool);
     const maxLimit = Math.min(
       Number(limit) || historyPageLimit,
       historyPageLimit,
@@ -286,12 +534,12 @@ const merchantTransactionService = {
     if (normalizedSortBy === "amount" && cursorId) {
       const sepIdx = String(cursorId).indexOf(":");
       if (sepIdx <= 0) {
-        throw httpError(400, "Cursor không hợp lệ");
+        throw httpError(400, "Con trỏ phân trang không hợp lệ");
       }
       const amtNum = Number(String(cursorId).slice(0, sepIdx));
       const txIdPart = String(cursorId).slice(sepIdx + 1).trim();
       if (!Number.isFinite(amtNum) || !txIdPart) {
-        throw httpError(400, "Cursor không hợp lệ");
+        throw httpError(400, "Con trỏ phân trang không hợp lệ");
       }
       parsedCursorAmount = Math.trunc(amtNum);
       parsedCursorId = txIdPart;
@@ -478,6 +726,99 @@ const merchantTransactionService = {
     };
   },
 
+  async getRevenueChart(userId, { period = "day", month = "" } = {}) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+
+    const safePeriod = String(period || "day").trim().toLowerCase();
+    if (!["day", "week", "month"].includes(safePeriod)) {
+      throw httpError(
+        400,
+        "Kỳ hiển thị biểu đồ không hợp lệ (chỉ hỗ trợ ngày, tuần hoặc tháng)",
+      );
+    }
+
+    const safeMonth = month ? String(month).trim() : "";
+    if (safeMonth && !/^\d{4}-\d{2}$/.test(safeMonth)) {
+      throw httpError(400, "Định dạng tháng không hợp lệ");
+    }
+
+    const range = resolveRevenueChartWindow(safePeriod, safeMonth);
+    const dailyRows =
+      await merchantTransactionRepository.getDailyRevenueStats(userId, {
+        startDate: range.startDate,
+        endDate: range.endDate,
+      });
+
+    const buckets = buildRevenueChartBuckets(
+      dailyRows,
+      safePeriod,
+      range,
+      safeMonth,
+    );
+
+    let totalRevenue = 0;
+    let grossRevenue = 0;
+    let totalMerchantFee = 0;
+    let totalOrders = 0;
+    let peak = null;
+    let low = null;
+
+    buckets.forEach((b) => {
+      totalRevenue += b.revenue;
+      grossRevenue += b.gross_revenue;
+      totalMerchantFee += b.merchant_fee;
+      totalOrders += b.order_count;
+      if (!peak || b.revenue > peak.revenue) peak = b;
+      if (!low || b.revenue < low.revenue) low = b;
+    });
+
+    const avgPerBucket =
+      buckets.length > 0 ? Math.round(totalRevenue / buckets.length) : 0;
+    const lowTieCount = low
+      ? buckets.filter((b) => b.revenue === low.revenue).length
+      : 0;
+
+    return {
+      period: safePeriod,
+      month: safeMonth || null,
+      start_date: range.startDate,
+      end_date: range.endDate,
+      summary: {
+        total_revenue: totalRevenue,
+        gross_revenue: grossRevenue,
+        total_merchant_fee: totalMerchantFee,
+        total_orders: totalOrders,
+        avg_per_bucket: avgPerBucket,
+        peak: peak
+          ? {
+              key: peak.key,
+              label: peak.label,
+              fullLabel: peak.fullLabel,
+              startDate: peak.startDate,
+              endDate: peak.endDate,
+              revenue: peak.revenue,
+              order_count: peak.order_count,
+            }
+          : null,
+        low: low
+          ? {
+              key: low.key,
+              label: low.label,
+              fullLabel: low.fullLabel,
+              startDate: low.startDate,
+              endDate: low.endDate,
+              revenue: low.revenue,
+              order_count: low.order_count,
+              tie_count: lowTieCount,
+            }
+          : null,
+      },
+      buckets,
+    };
+  },
+
   async exportMerchantStats(userId, { startDate, endDate, sortBy, sort }) {
     const stats = await this.getMerchantStats(userId, { startDate, endDate });
     const normalizedSortBy = ["date", "orders", "revenue"].includes(
@@ -590,7 +931,7 @@ const merchantTransactionService = {
       !idempotencyKey ||
       idempotencyKey.length > 100
     ) {
-      throw httpError(400, "Thiếu hoặc sai idempotency key của giao dịch");
+      throw httpError(400, "Thiếu hoặc sai mã chống trùng lặp giao dịch");
     }
     // Tính trước khi kiểm tra OTP để dữ liệu sai không bị tính vào số lần nhập sai OTP.
     const binding = computePinBinding(action, params);

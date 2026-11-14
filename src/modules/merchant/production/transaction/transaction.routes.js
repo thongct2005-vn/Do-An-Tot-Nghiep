@@ -10,11 +10,10 @@ const {
   exportLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../../../config/limits");
 
-const sendOtpRisk = riskGuard(RISK_THRESHOLDS.SEND_OTP);
-const verifyOtpRisk = riskGuard(RISK_THRESHOLDS.OTP);
-const moneyRisk = riskGuard(RISK_THRESHOLDS.TRANSACTION);
+const sendOtpRisk = riskGuard("SEND_OTP");
+const verifyOtpRisk = riskGuard("OTP");
+const moneyRisk = riskGuard("TRANSACTION");
 
 router.post(
   "/otp/send",
@@ -105,6 +104,12 @@ router.get(
   "/stats",
   authMiddleware.verifyAccessToken,
   transactionController.getMerchantStats,
+);
+
+router.get(
+  "/revenue-chart",
+  authMiddleware.verifyAccessToken,
+  transactionController.getRevenueChart,
 );
 
 router.get(

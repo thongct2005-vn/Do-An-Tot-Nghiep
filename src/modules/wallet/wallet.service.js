@@ -56,7 +56,7 @@ const walletService = {
       throw httpError(400, "Mã PIN không hợp lệ");
     }
     if (!idempotencyKey) {
-      throw httpError(400, "Thiếu idempotency key của giao dịch");
+      throw httpError(400, "Thiếu mã chống trùng lặp giao dịch");
     }
 
     const binding = computePinBinding(action, params);

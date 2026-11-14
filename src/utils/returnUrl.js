@@ -1,22 +1,5 @@
 const { computeSignature } = require("./hashSecretKey");
 
-/**
- * Dựng URL đưa khách quay về cửa hàng, có chữ ký để merchant kiểm tra.
- *
- * Tham số thêm vào return_url của merchant:
- *   order_id, payment_id, amount, status, paid_at (bỏ qua nếu chưa thanh toán),
- *   timestamp (giây, UTC), signature
- *
- * Chữ ký (cùng kiểu với webhook):
- *   signature = HMAC_SHA256_hex(secret_key, `${timestamp}.${data}`)
- *   data      = `${payment_id}|${amount}|${status}|${paid_at}|${order_id}`
- *   (paid_at = "" nếu không có; order_id đặt cuối để chuỗi không bị nhập nhằng)
- *
- * Trả về null nếu return_url không hợp lệ.
- * Kết quả trả về: https://shop.com/done?order_id=A1&payment_id=P9&amount=50000&status=PAID
-    &paid_at=2026-11-06T03%3A15%3A00.000Z&timestamp=1793934900&signature=9f86d081...
- */
-
 function buildSignedReturnUrl({
   returnUrl,
   secretKey,

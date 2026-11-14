@@ -167,60 +167,6 @@ const adminMerchantsController = {
     }
   },
 
-  async previewMerchantFeeConfig(req, res, next) {
-    try {
-      const body = req.body || {};
-      const schedule =
-        body.schedule && typeof body.schedule === "object"
-          ? body.schedule
-          : body;
-      const result = await adminMerchantFeeService.previewMerchantFeeConfigUpdate({
-        merchantId: req.params.id,
-        schedule,
-        sampleAmounts: body.sample_amounts,
-      });
-      return successResponse(
-        res,
-        200,
-        "Mô phỏng biểu phí merchant thành công",
-        result
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
-
-  async updateMerchantFeeConfig(req, res, next) {
-    try {
-      const body = req.body || {};
-      const schedule =
-        body.schedule && typeof body.schedule === "object"
-          ? body.schedule
-          : body;
-      const dryRun =
-        Boolean(body.dry_run) ||
-        String(req.query?.dry_run || "").toLowerCase() === "true";
-      const result = await adminMerchantFeeService.updateMerchantFeeConfig({
-        merchantId: req.params.id,
-        schedule,
-        reason: body.reason,
-        adminId: req.user.user_id,
-        dryRun,
-        sampleAmounts: body.sample_amounts,
-      });
-      return successResponse(
-        res,
-        200,
-        dryRun
-          ? "Chạy thử (dry-run) biểu phí merchant thành công"
-          : "Cập nhật cấu hình biểu phí merchant thành công",
-        result
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
-
   async getFeeConfigHistory(req, res, next) {
     try {
       const result = await adminMerchantFeeService.getFeeConfigHistory({

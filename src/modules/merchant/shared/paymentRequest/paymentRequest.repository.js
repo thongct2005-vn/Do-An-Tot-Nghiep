@@ -26,7 +26,7 @@ async function buildDuplicateOrderError({ merchantId, orderId }) {
   }
   return httpError(
     409,
-    "order_id này đã được dùng cho một thanh toán đã hết hạn, vui lòng tạo order_id mới",
+    "Mã đơn hàng này đã được dùng cho một thanh toán đã hết hạn, vui lòng tạo mã đơn hàng mới",
   );
 }
 

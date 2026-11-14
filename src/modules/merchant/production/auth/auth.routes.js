@@ -12,12 +12,11 @@ const {
   resetCredentialLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../../../config/limits");
 
-const loginRisk = riskGuard(RISK_THRESHOLDS.LOGIN);
-const registerRisk = riskGuard(RISK_THRESHOLDS.REGISTER);
-const otpRisk = riskGuard(RISK_THRESHOLDS.OTP);
-const forgotRisk = riskGuard(RISK_THRESHOLDS.FORGOT);
+const loginRisk = riskGuard("LOGIN");
+const registerRisk = riskGuard("REGISTER");
+const otpRisk = riskGuard("OTP");
+const forgotRisk = riskGuard("FORGOT");
 
 router.post("/login", loginRisk, loginLimiter, merchantAuthController.login);
 router.post(
@@ -149,5 +148,64 @@ router.patch(
   authMiddleware.verifyMerchantChangePasswordVerifiedToken,
   resetCredentialLimiter,
   merchantAuthController.changePasswordReset,
+);
+router.post(
+  "/change-email/request",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  loginRisk,
+  loginLimiter,
+  merchantAuthController.changeEmailRequest,
+);
+router.post(
+  "/change-email/resend-otp",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyMerchantChangeEmailOtpToken,
+  otpRisk,
+  sendOtpLimiter,
+  merchantAuthController.changeEmailResendOtp,
+);
+router.post(
+  "/change-email/verify",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyMerchantChangeEmailOtpToken,
+  otpRisk,
+  otpLimiter,
+  merchantAuthController.changeEmailVerify,
+);
+router.post(
+  "/change-email/new-email",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyMerchantChangeEmailVerifiedToken,
+  otpRisk,
+  sendOtpLimiter,
+  merchantAuthController.changeEmailSendNewOtp,
+);
+router.post(
+  "/change-email/resend-new-otp",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyMerchantChangeEmailConfirmOtpToken,
+  otpRisk,
+  sendOtpLimiter,
+  merchantAuthController.changeEmailResendNewOtp,
+);
+router.patch(
+  "/change-email",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requireRole("MERCHANT"),
+  authMiddleware.requireActiveMerchant,
+  authMiddleware.verifyMerchantChangeEmailConfirmOtpToken,
+  otpRisk,
+  otpLimiter,
+  merchantAuthController.changeEmailConfirm,
 );
 module.exports = router;

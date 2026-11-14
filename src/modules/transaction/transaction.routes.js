@@ -8,9 +8,8 @@ const {
   exportLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../config/limits");
 
-const moneyRisk = riskGuard(RISK_THRESHOLDS.TRANSACTION);
+const moneyRisk = riskGuard("TRANSACTION");
 
 router.post(
   "/transfer",

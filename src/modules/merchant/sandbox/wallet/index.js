@@ -2,6 +2,7 @@ const createWalletModule = require("../../shared/wallet");
 const authMiddleware = require("../../../../middlewares/auth.middleware");
 const userRepository = require("../../../../modules/user/user.repository");
 const { httpError } = require("../../../../utils/httpError");
+const { isValidPhone } = require("../../../../utils/validators");
 const { parseAmountInRange } = require("../../../../utils/amount");
 const { getTransactionPolicy } = require("../../../../utils/limitsDb");
 const pool = require("../../../../config/database");
@@ -20,6 +21,9 @@ module.exports = () => {
   service.updateWalletBalance = async ({ phone, amount }) => {
     if (!phone || amount === undefined || amount === null || amount === "") {
       throw httpError(400, "Thiếu số điện thoại hoặc số tiền");
+    }
+    if (!isValidPhone(phone)) {
+      throw httpError(400, "Số điện thoại không hợp lệ");
     }
 
     const sandboxRule = await getTransactionPolicy("USER", "SANDBOX_TOPUP");

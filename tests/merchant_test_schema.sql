@@ -114,6 +114,11 @@ CREATE TABLE fee_ledger_entries (
 INSERT INTO users (id, role, full_name, email, phone, status, balance)
 VALUES ('00000000-0000-7000-8000-000000000001', 'SYSTEM', 'SYSTEM_FEE_WALLET', 'system_fee_wallet@system.internal', 'SYS_FEE_01', 'ACTIVE', 0);
 INSERT INTO system_configs (key, value, description) VALUES
+  ('CONTACT_CHECK_MAX_PHONES', '500'::jsonb, 'Max phones per contact check'),
+  ('DAILY_LIMIT_TIMEZONE', '"Asia/Ho_Chi_Minh"'::jsonb, 'Timezone for daily transaction limits'),
+  ('EXPORT_MAX_ROWS', '50000'::jsonb, 'Max rows per Excel export'),
+  ('HISTORY_PAGE_LIMIT', '20'::jsonb, 'Max items per transaction history page'),
+  ('RISK_THRESHOLDS', '{"DEFAULT":{"challenge":40,"block":70},"LOGIN":{"challenge":40,"block":70},"REGISTER":{"challenge":35,"block":60},"SEND_OTP":{"challenge":30,"block":55},"OTP":{"challenge":35,"block":60},"FORGOT":{"challenge":35,"block":60},"TRANSACTION":{"challenge":35,"block":65}}'::jsonb, 'Default risk guard thresholds'),
   ('MERCHANT_FEE_CONFIG', '{"rate_bps":100,"min_fee":200,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":50,"withdraw_free_quota_per_month":50000000,"monthly_plan_enabled":false,"monthly_plan_fee":0,"monthly_grace_days":7,"tiers":[{"from_amount":0,"rate_bps":100},{"from_amount":50000000,"rate_bps":80},{"from_amount":200000000,"rate_bps":60}]}'::jsonb, 'Default merchant fee config'),
   ('USER_FEE_CONFIG', '{"rate_bps":0,"min_fee":0,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":0,"withdraw_free_quota_per_month":0,"tiers":[]}'::jsonb, 'Default user fee config');
 INSERT INTO transaction_limit_policies (role, transaction_type, min_amount, max_amount, daily_limit) VALUES

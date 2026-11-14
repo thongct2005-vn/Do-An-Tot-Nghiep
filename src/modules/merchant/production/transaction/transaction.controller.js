@@ -342,11 +342,30 @@ const merchantTransactionController = {
         startDate,
         endDate,
       });
-
       return successResponse(
         res,
         200,
         "Lấy số liệu thống kê thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getRevenueChart(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { period, month } = req.query;
+
+      const result = await merchantTransactionService.getRevenueChart(userId, {
+        period,
+        month,
+      });
+      return successResponse(
+        res,
+        200,
+        "Lấy dữ liệu biểu đồ doanh thu thành công",
         result,
       );
     } catch (e) {

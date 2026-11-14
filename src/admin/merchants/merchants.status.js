@@ -14,7 +14,7 @@ function parseStatusPatch(body) {
     throw httpError(400, "Trạng thái không hợp lệ, chỉ chấp nhận ACTIVE hoặc BLOCKED");
   }
   if (!STATUSES.has(body.expected_status)) {
-    throw httpError(400, "expected_status là bắt buộc và phải là ACTIVE hoặc BLOCKED");
+    throw httpError(400, "Trạng thái hiện tại dự kiến là bắt buộc và chỉ chấp nhận ACTIVE hoặc BLOCKED");
   }
   if (typeof body.reason !== "string") {
     throw httpError(400, "Lý do thay đổi trạng thái phải là chuỗi từ 5 đến 500 ký tự");

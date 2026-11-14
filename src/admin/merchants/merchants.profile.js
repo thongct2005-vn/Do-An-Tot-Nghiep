@@ -31,7 +31,7 @@ async function parseProfilePatch(body) {
   if (Object.hasOwn(body, "store_name")) {
     const alias = trimmedString(body.store_name, "Tên merchant", 2, 50);
     if (values.full_name !== undefined && values.full_name !== alias) {
-      throw httpError(400, "full_name và store_name không được khác nhau");
+      throw httpError(400, "Tên chủ tài khoản và tên cửa hàng không được khác nhau");
     }
     values.full_name = alias;
   }

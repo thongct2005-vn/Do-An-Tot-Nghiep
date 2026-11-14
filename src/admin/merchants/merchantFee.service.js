@@ -1,16 +1,15 @@
 const pool = require("../../config/database");
 const { uuidv7 } = require("uuidv7");
 const { httpError } = require("../../utils/httpError");
-const { invalidateLimitsCache, getSystemConfig } = require("../../utils/limitsDb");
+const { formatVnd } = require("../../utils/amount");
+const { invalidateLimitsCache } = require("../../utils/limitsDb");
 const merchantFeeService = require("../../modules/merchant/production/fee/fee.service");
 const {
   assertSystemFeeWalletConfigured,
   normalizeSystemFeeConfig,
   validateFeeConfigInput,
   mergeEffectiveFeeConfig,
-  pickEffectiveSchedule,
   previewFeeCalculation,
-  getVnMonthMeta,
 } = require("../../modules/fee/feeCalculator");
 
 const DEFAULT_SAMPLE_AMOUNTS = [10_000, 50_000, 100_000, 1_000_000, 10_000_000];
@@ -30,7 +29,10 @@ function assertValidReason(rawReason) {
 function normalizeRoleParam(rawRole) {
   const role = String(rawRole || "MERCHANT").trim().toUpperCase();
   if (!["MERCHANT", "USER"].includes(role)) {
-    throw httpError(400, "role chỉ chấp nhận MERCHANT hoặc USER");
+    throw httpError(
+      400,
+      "Đối tượng áp dụng biểu phí không hợp lệ, chỉ hỗ trợ tài khoản đối tác hoặc người dùng",
+    );
   }
   return role;
 }
@@ -195,117 +197,16 @@ function mergeSystemUpdate(currentRaw, validated, role) {
   if (next.max_fee !== null && next.min_fee > next.max_fee) {
     throw httpError(
       400,
-      `min_fee (${next.min_fee}) không được lớn hơn max_fee (${next.max_fee})`,
+      `Phí giao dịch tối thiểu (${formatVnd(next.min_fee)}) không được lớn hơn phí giao dịch tối đa (${formatVnd(next.max_fee)})`,
     );
   }
   if (next.transfer_max_fee !== null && next.transfer_min_fee > next.transfer_max_fee) {
     throw httpError(
       400,
-      `transfer_min_fee (${next.transfer_min_fee}) không được lớn hơn transfer_max_fee (${next.transfer_max_fee})`,
+      `Phí chuyển tiền tối thiểu (${formatVnd(next.transfer_min_fee)}) không được lớn hơn phí chuyển tiền tối đa (${formatVnd(next.transfer_max_fee)})`,
     );
   }
   return buildPersistableSystemConfig(next);
-}
-
-function pickScheduleField(validatedValue, prevScheduleValue) {
-  if (validatedValue !== undefined) {
-    return validatedValue;
-  }
-  return prevScheduleValue !== undefined ? prevScheduleValue : null;
-}
-
-function buildScheduleOverrideRow(validated, prevSchedule, baseEffective) {
-  const maxFeeUnbounded =
-    validated.max_fee_unbounded !== undefined
-      ? Boolean(validated.max_fee_unbounded)
-      : validated.max_fee !== undefined
-        ? validated.max_fee === null
-        : Boolean(prevSchedule?.max_fee_unbounded);
-
-  const transferMaxFeeUnbounded =
-    validated.transfer_max_fee_unbounded !== undefined
-      ? Boolean(validated.transfer_max_fee_unbounded)
-      : validated.transfer_max_fee !== undefined
-        ? validated.transfer_max_fee === null
-        : Boolean(prevSchedule?.transfer_max_fee_unbounded);
-
-  const row = {
-    effective_from: validated.effective_from,
-    rate_bps: pickScheduleField(validated.rate_bps, prevSchedule?.rate_bps),
-    min_fee: pickScheduleField(validated.min_fee, prevSchedule?.min_fee),
-    max_fee: maxFeeUnbounded
-      ? null
-      : pickScheduleField(validated.max_fee, prevSchedule?.max_fee),
-    max_fee_unbounded: maxFeeUnbounded,
-    free_threshold_amount: pickScheduleField(
-      validated.free_threshold_amount,
-      prevSchedule?.free_threshold_amount,
-    ),
-    transfer_fee_bps: pickScheduleField(
-      validated.transfer_fee_bps,
-      prevSchedule?.transfer_fee_bps,
-    ),
-    transfer_min_fee: pickScheduleField(
-      validated.transfer_min_fee,
-      prevSchedule?.transfer_min_fee,
-    ),
-    transfer_max_fee: transferMaxFeeUnbounded
-      ? null
-      : pickScheduleField(validated.transfer_max_fee, prevSchedule?.transfer_max_fee),
-    transfer_max_fee_unbounded: transferMaxFeeUnbounded,
-    withdraw_fee_bps: pickScheduleField(
-      validated.withdraw_fee_bps,
-      prevSchedule?.withdraw_fee_bps,
-    ),
-    withdraw_free_quota_per_month: pickScheduleField(
-      validated.withdraw_free_quota_per_month,
-      prevSchedule?.withdraw_free_quota_per_month,
-    ),
-    monthly_plan_enabled: pickScheduleField(
-      validated.monthly_plan_enabled,
-      prevSchedule?.monthly_plan_enabled,
-    ),
-    monthly_plan_fee: pickScheduleField(
-      validated.monthly_plan_fee,
-      prevSchedule?.monthly_plan_fee,
-    ),
-    tiers:
-      validated.tiers !== undefined
-        ? validated.tiers
-        : Array.isArray(prevSchedule?.tiers)
-          ? prevSchedule.tiers
-          : [],
-  };
-
-  const effMin = row.min_fee !== null ? Number(row.min_fee) : baseEffective.min_fee;
-  const effMax = row.max_fee_unbounded
-    ? null
-    : row.max_fee !== null
-      ? Number(row.max_fee)
-      : baseEffective.max_fee;
-  if (effMax !== null && effMin > effMax) {
-    throw httpError(
-      400,
-      `min_fee (${effMin}) không được lớn hơn max_fee (${effMax}) sau khi kế thừa biểu phí hiện tại`,
-    );
-  }
-
-  const effTransferMin =
-    row.transfer_min_fee !== null
-      ? Number(row.transfer_min_fee)
-      : baseEffective.transfer_min_fee ?? 0;
-  const effTransferMax = row.transfer_max_fee_unbounded
-    ? null
-    : row.transfer_max_fee !== null
-      ? Number(row.transfer_max_fee)
-      : baseEffective.transfer_max_fee ?? null;
-  if (effTransferMax !== null && effTransferMin > effTransferMax) {
-    throw httpError(
-      400,
-      `transfer_min_fee (${effTransferMin}) không được lớn hơn transfer_max_fee (${effTransferMax}) sau khi kế thừa biểu phí hiện tại`,
-    );
-  }
-  return row;
 }
 
 const adminMerchantFeeService = {
@@ -323,10 +224,11 @@ const adminMerchantFeeService = {
       [configKey],
     );
     const row = rowRes.rows[0] || null;
-    const normalized = normalizeSystemFeeConfig(
-      row?.value ?? (await getSystemConfig(configKey, pool)),
-      normalizedRole,
-    );
+    if (!row) {
+      const roleLabel = normalizedRole === "USER" ? "người dùng" : "đối tác";
+      throw httpError(500, `Hệ thống chưa có cấu hình biểu phí ${roleLabel}`);
+    }
+    const normalized = normalizeSystemFeeConfig(row.value, normalizedRole);
 
     return {
       key: configKey,
@@ -408,8 +310,12 @@ const adminMerchantFeeService = {
         `SELECT key, value FROM system_configs WHERE key = $1 FOR UPDATE`,
         [configKey],
       );
+      if (!currentRes.rows[0]) {
+        const roleLabel = normalizedRole === "USER" ? "người dùng" : "đối tác";
+        throw httpError(500, `Hệ thống chưa có cấu hình biểu phí ${roleLabel}`);
+      }
       const oldPlain = buildPersistableSystemConfig(
-        normalizeSystemFeeConfig(currentRes.rows[0]?.value, normalizedRole),
+        normalizeSystemFeeConfig(currentRes.rows[0].value, normalizedRole),
       );
       const oldNormalized = normalizeSystemFeeConfig(oldPlain, normalizedRole);
 
@@ -558,14 +464,6 @@ const adminMerchantFeeService = {
     };
   },
 
-  async previewMerchantFeeConfigUpdate() {
-    throw httpError(400, "Hệ thống áp dụng biểu phí bậc thang thống nhất từ cấu hình hệ thống, không hỗ trợ cấu hình riêng cho từng merchant.");
-  },
-
-  async updateMerchantFeeConfig() {
-    throw httpError(400, "Hệ thống áp dụng biểu phí bậc thang thống nhất từ cấu hình hệ thống, không hỗ trợ cấu hình riêng cho từng merchant.");
-  },
-
   async getFeeConfigHistory({
     merchantId = null,
     action = null,
@@ -573,7 +471,7 @@ const adminMerchantFeeService = {
     offset = 0,
   } = {}) {
     if (merchantId && !UUID_RE.test(String(merchantId))) {
-      throw httpError(400, "merchant_id không hợp lệ");
+      throw httpError(400, "Định danh đối tác không hợp lệ");
     }
     const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
     const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
@@ -586,7 +484,7 @@ const adminMerchantFeeService = {
     if (action) {
       const normalized = String(action).trim().toUpperCase();
       if (!allowedActions.includes(normalized)) {
-        throw httpError(400, "action lịch sử phí không hợp lệ");
+        throw httpError(400, "Loại thao tác lịch sử phí không hợp lệ");
       }
       actionFilter = [normalized];
     }

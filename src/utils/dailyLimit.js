@@ -26,7 +26,7 @@ function toBucket(type) {
   const bucket = Object.keys(BUCKET_TYPES).find((b) =>
     BUCKET_TYPES[b].includes(type),
   );
-  if (!bucket) throw httpError(500, `Loại giao dịch chưa có hạn mức: ${type}`);
+  if (!bucket) throw httpError(500, "Loại giao dịch chưa được cấu hình hạn mức ngày");
   return bucket;
 }
 
@@ -50,7 +50,12 @@ async function getDailyLimit(db, { userId = null, role = "USER", type }) {
 
 // Lấy hạn mức đã dùng trong ngày của 1 người dùng theo loại giao dịch
 async function getDailyUsed(db, userId, type) {
-  const timezone = (await getSystemConfig("DAILY_LIMIT_TIMEZONE", db)) || "Asia/Ho_Chi_Minh";
+  const timezone = String(
+    (await getSystemConfig("DAILY_LIMIT_TIMEZONE", db)) ?? "",
+  ).trim();
+  if (!timezone) {
+    throw httpError(500, "Cấu hình múi giờ hạn mức ngày của hệ thống không hợp lệ");
+  }
   const types = BUCKET_TYPES[toBucket(type)].map((t) => `'${t}'`).join(", ");
   const result = await db.query(
     `SELECT COALESCE(SUM(amount + fee), 0)::BIGINT AS daily_used

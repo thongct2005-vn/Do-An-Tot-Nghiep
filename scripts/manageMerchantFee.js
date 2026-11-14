@@ -24,7 +24,7 @@ Actions:
 Target:
   --default                    Target system_configs (MERCHANT_FEE_CONFIG or USER_FEE_CONFIG)
   --role <MERCHANT|USER>       Role for --default target (default: MERCHANT)
-  --merchant-id <uuid>         Target specific merchant schedule override
+  --merchant-id <uuid>         Target specific merchant for --show or --history only
 
 Config fields:
   --rate-percent <0..100>      Per-transaction fee % (e.g. 1, 0.75)
@@ -300,33 +300,9 @@ async function main() {
   const dryRun = Boolean(opts["dry-run"] || opts.preview);
 
   if (isMerchantTarget) {
-    const res = await adminMerchantFeeService.updateMerchantFeeConfig({
-      merchantId: opts["merchant-id"],
-      schedule: payload,
-      reason: opts.reason,
-      adminId: adminUser.id,
-      actorLabel,
-      dryRun,
-      sampleAmounts,
-    });
-    console.log(
-      JSON.stringify(
-        {
-          dry_run: res.dry_run,
-          merchant_id: res.merchant_id,
-          actor: actorLabel,
-          effective_from: res.schedule?.effective_from || res.effective_from,
-          old_effective_config: res.old_effective_config,
-          new_effective_config:
-            res.new_effective_config || res.proposed_effective_config,
-          audit: res.audit || null,
-        },
-        null,
-        2,
-      ),
+    throw new Error(
+      "Hệ thống áp dụng biểu phí bậc thang thống nhất từ cấu hình hệ thống (--default), không hỗ trợ cập nhật biểu phí riêng theo --merchant-id.",
     );
-    printSimulation(res.simulation);
-    return;
   }
 
   if (isDefaultTarget) {

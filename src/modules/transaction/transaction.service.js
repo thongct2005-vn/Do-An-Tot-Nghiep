@@ -4,7 +4,7 @@ const { parseAmountInRange } = require("../../utils/amount");
 const pool = require("../../config/database");
 const {
   getEffectiveTransactionLimit,
-  getSystemConfig,
+  getPositiveIntConfig,
 } = require("../../utils/limitsDb");
 const {
   getTransactionLimitsSummary,
@@ -168,9 +168,7 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
-    const historyPageLimit = Number(
-      await getSystemConfig("HISTORY_PAGE_LIMIT", pool),
-    ) || 20;
+    const historyPageLimit = await getPositiveIntConfig("HISTORY_PAGE_LIMIT", pool);
     const maxLimit = Math.min(
       Number(limit) || historyPageLimit,
       historyPageLimit,
@@ -211,9 +209,7 @@ const TransactionService = {
       throw httpError(400, "Tài khoản chưa có email đăng ký để nhận file");
     }
 
-    const exportMaxRows = Number(
-      await getSystemConfig("EXPORT_MAX_ROWS", pool),
-    ) || 50_000;
+    const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS", pool);
     const rows = await transactionRepository.exportHistory(userId, {
       keyword: normalizedKeyword,
       startDate: range.startDate,

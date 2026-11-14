@@ -342,7 +342,6 @@ const merchantTransactionController = {
         startDate,
         endDate,
       });
-
       return successResponse(
         res,
         200,

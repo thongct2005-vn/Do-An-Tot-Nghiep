@@ -11,14 +11,23 @@ const PIN_ACTIONS = {
   BANK_LINK: ["bank_id"],
 };
 
+const FIELD_LABELS = {
+  destination_user_id: "người nhận tiền",
+  linked_bank_account_id: "tài khoản ngân hàng liên kết",
+  reference_code: "mã tham chiếu thanh toán",
+  bank_id: "ngân hàng",
+  amount: "số tiền giao dịch",
+};
+
 // Chuẩn hóa 1 trường về dạng chuỗi sạch để so sánh nhất quán
 function normalizeField(name, value) {
   if (name === "amount") return String(parseAmount(value));
+  const label = FIELD_LABELS[name] || "giao dịch";
   if (typeof value !== "string" && typeof value !== "number") {
-    throw httpError(400, `Thiếu hoặc sai trường ${name}`);
+    throw httpError(400, `Thiếu hoặc không hợp lệ thông tin ${label}`);
   }
   const text = String(value).trim();
-  if (!text) throw httpError(400, `Thiếu hoặc sai trường ${name}`);
+  if (!text) throw httpError(400, `Thiếu hoặc không hợp lệ thông tin ${label}`);
   return text;
 }
 

@@ -123,6 +123,15 @@ const authMiddleware = {
   verifyMerchantChangePasswordVerifiedToken: verifyScopedOtpToken(
     "merchant_change_password_verified",
   ),
+  verifyMerchantChangeEmailOtpToken: verifyScopedOtpToken(
+    "merchant_change_email_otp",
+  ),
+  verifyMerchantChangeEmailVerifiedToken: verifyScopedOtpToken(
+    "merchant_change_email_verified",
+  ),
+  verifyMerchantChangeEmailConfirmOtpToken: verifyScopedOtpToken(
+    "merchant_change_email_confirm_otp",
+  ),
 
   verifyMerchantForgotResetTokens(req, res, next) {
     try {

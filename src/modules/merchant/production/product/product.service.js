@@ -1,6 +1,6 @@
 const productRepository = require("./product.repository");
 const { httpError } = require("../../../../utils/httpError");
-const { getSystemConfig } = require("../../../../utils/limitsDb");
+const { getPositiveIntConfig } = require("../../../../utils/limitsDb");
 const { resolveOneYearRange } = require("../../../../utils/exportRange");
 const { buildProductStatsXlsx } = require("../../../../utils/exportExcel");
 
@@ -68,7 +68,7 @@ const productService = {
     if (cursor) {
       const decoded = decodeCursor(cursor);
       if (!decoded) {
-        throw httpError(400, "Cursor không hợp lệ");
+        throw httpError(400, "Con trỏ phân trang không hợp lệ");
       }
       cursorValue = decoded.quantity;
       cursorProductId = decoded.productId;
@@ -141,7 +141,7 @@ const productService = {
         : "DESC";
     const safeKeyword = keyword && keyword.trim() ? keyword.trim() : null;
 
-    const exportMaxRows = Number(await getSystemConfig("EXPORT_MAX_ROWS")) || 50_000;
+    const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS");
     const data = await productRepository.getTopSellingProducts(userId, {
       startDate: startDay,
       endDate: endDay,

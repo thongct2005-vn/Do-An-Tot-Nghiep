@@ -50,25 +50,25 @@ function normalizeRequestedPlan(rawPlan, { defaultPlan = null } = {}) {
     (typeof rawPlan === "string" && !rawPlan.trim())
   ) {
     if (defaultPlan) return defaultPlan;
-    throw httpError(400, "Vui lòng chọn loại thu phí (PER_TRANSACTION)");
+    throw httpError(400, "Vui lòng chọn hình thức thu phí theo từng giao dịch");
   }
   if (typeof rawPlan !== "string") {
     throw httpError(
       400,
-      "Loại thu phí không hợp lệ. Hệ thống hiện chỉ áp dụng PER_TRANSACTION",
+      "Hình thức thu phí không hợp lệ, hệ thống hiện chỉ áp dụng thu phí theo từng giao dịch",
     );
   }
   const normalized = rawPlan.trim().toUpperCase();
   if (normalized === "MONTHLY") {
     throw httpError(
       400,
-      "Gói thu phí theo tháng đã ngừng áp dụng. Hệ thống hiện chỉ dùng biểu phí theo từng giao dịch (PER_TRANSACTION)",
+      "Gói thu phí theo tháng đã ngừng áp dụng, hệ thống hiện chỉ dùng biểu phí theo từng giao dịch",
     );
   }
   if (!FEE_PLANS.includes(normalized)) {
     throw httpError(
       400,
-      "Loại thu phí không hợp lệ. Hệ thống hiện chỉ áp dụng PER_TRANSACTION",
+      "Hình thức thu phí không hợp lệ, hệ thống hiện chỉ áp dụng thu phí theo từng giao dịch",
     );
   }
   return normalized;
@@ -524,7 +524,13 @@ const merchantFeeService = {
     if (!isMerchantInbound) {
       return calculatePerTransactionFeeDetails(
         amount,
-        { rate_bps: 0, min_fee: 0, max_fee: null, tiers: [] },
+        {
+          rate_bps: 0,
+          min_fee: 0,
+          max_fee: null,
+          free_threshold_amount: 0,
+          tiers: [],
+        },
         { monthlyPlanActive: false, alreadyMonthlyGross: 0 },
       );
     }

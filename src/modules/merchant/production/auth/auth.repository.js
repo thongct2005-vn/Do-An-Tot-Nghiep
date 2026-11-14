@@ -347,6 +347,60 @@ const merchantAuthRepository = {
     );
     return result.rows[0] ?? null;
   },
+
+  async isEmailClaimedByOther(email, excludeUserId) {
+    const normalized = String(email ?? "").trim().toLowerCase();
+    const result = await pool.query(
+      `
+      SELECT 1
+      FROM users
+      WHERE LOWER(BTRIM(email)) = $1
+        AND id <> $2::uuid
+      LIMIT 1
+      `,
+      [normalized, excludeUserId],
+    );
+    return result.rowCount > 0;
+  },
+
+  // Cập nhật email merchant an toàn trong transaction kèm claimEmail lock toàn cục
+  async updateEmail({ userId, newEmail, oldEmail, oldPasswordHash }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      const claimedEmail = await claimEmail(client, newEmail, userId);
+      const result = await client.query(
+        `
+        UPDATE users
+        SET email = $1,
+            updated_at = NOW()
+        WHERE id = $2
+          AND role = 'MERCHANT'
+          AND status = 'ACTIVE'
+          AND LOWER(BTRIM(email)) IS NOT DISTINCT FROM $3
+          AND password_hash IS NOT DISTINCT FROM $4
+        RETURNING id, email
+        `,
+        [
+          claimedEmail,
+          userId,
+          oldEmail ? oldEmail.trim().toLowerCase() : null,
+          oldPasswordHash,
+        ],
+      );
+      if (!result.rows[0]) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query("COMMIT");
+      return result.rows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
 };
 
 module.exports = merchantAuthRepository;

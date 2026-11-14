@@ -6,17 +6,16 @@ const {
   sendOtpLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../config/limits");
 
 router.post(
   "/send-otp",
-  riskGuard(RISK_THRESHOLDS.SEND_OTP),
+  riskGuard("SEND_OTP"),
   sendOtpLimiter,
   otpController.generateOtp,
 );
 router.post(
   "/verify-otp",
-  riskGuard(RISK_THRESHOLDS.OTP),
+  riskGuard("OTP"),
   otpLimiter,
   otpController.verifyOtp,
 );

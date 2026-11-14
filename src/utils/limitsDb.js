@@ -1,102 +1,160 @@
 const pool = require("../config/database");
-const fallbackLimits = require("../config/limits");
+const { httpError } = require("./httpError");
 
+// --- Cấu hình & trạng thái cache ---
+
+// Thời gian giữ cache trong RAM (30 giây) để tránh query DB lặp lại mỗi giao dịch
 const CACHE_TTL_MS = 30_000;
 
 let policiesCache = { data: null, expiresAt: 0 };
 let configsCache = { data: null, expiresAt: 0 };
 
-const FALLBACK_RISK_BY_REF = new Map(
-  Object.entries(fallbackLimits.RISK_THRESHOLDS).map(([k, v]) => [v, k]),
-);
-
+/**
+ * Xóa cache hạn mức & cấu hình (gọi sau khi admin cập nhật DB để áp dụng ngay).
+ */
 function invalidateLimitsCache() {
   policiesCache = { data: null, expiresAt: 0 };
   configsCache = { data: null, expiresAt: 0 };
 }
 
-function getFallbackPolicy(role, transactionType) {
-  const r = role === "MERCHANT" ? "MERCHANT" : "USER";
-  const t = String(transactionType || "").toUpperCase();
-  const amountRule =
-    (r === "MERCHANT" && fallbackLimits.MERCHANT_AMOUNT[t]) ||
-    fallbackLimits.AMOUNT[t] || { min: 1_000, max: 50_000_000 };
-  const dailyMap = fallbackLimits.DAILY_LIMIT[r] || fallbackLimits.DAILY_LIMIT.USER;
-  const dailyRaw = dailyMap[t];
-  return {
-    min: Number(amountRule.min),
-    max: Number(amountRule.max),
-    dailyLimit: dailyRaw == null ? null : Number(dailyRaw),
-  };
-}
+// --- Đọc & cache dữ liệu từ DB ---
 
-function getFallbackConfig(key) {
-  if (key === "EXPORT_MAX_ROWS") return fallbackLimits.EXPORT.MAX_ROWS;
-  return fallbackLimits[key];
-}
-
+/**
+ * Nạp toàn bộ bảng `transaction_limit_policies` từ DB (cache 30s).
+ * Không dùng fallback; lỗi DB sẽ ném ra trực tiếp.
+ */
 async function loadPolicies(db = pool) {
   const now = Date.now();
   if (policiesCache.data && now < policiesCache.expiresAt) {
     return policiesCache.data;
   }
 
-  try {
-    const res = await db.query(
-      `SELECT role, transaction_type, min_amount, max_amount, daily_limit
-         FROM transaction_limit_policies`,
-    );
-    const map = new Map();
-    for (const row of res.rows) {
-      map.set(`${row.role}:${row.transaction_type}`, {
-        min: Number(row.min_amount),
-        max: Number(row.max_amount),
-        dailyLimit: row.daily_limit == null ? null : Number(row.daily_limit),
-      });
-    }
-    policiesCache = { data: map, expiresAt: now + CACHE_TTL_MS };
-    return map;
-  } catch (err) {
-    console.warn("[limitsDb] Không đọc được transaction_limit_policies:", err.message);
-    return policiesCache.data || new Map();
+  const res = await db.query(
+    `SELECT role, transaction_type, min_amount, max_amount, daily_limit
+       FROM transaction_limit_policies`,
+  );
+  const map = new Map();
+  for (const row of res.rows) {
+    map.set(`${row.role}:${row.transaction_type}`, {
+      min: Number(row.min_amount),
+      max: Number(row.max_amount),
+      dailyLimit: row.daily_limit == null ? null : Number(row.daily_limit),
+    });
   }
+  if (map.size > 0) {
+    policiesCache = { data: map, expiresAt: now + CACHE_TTL_MS };
+  }
+  return map;
 }
 
+/**
+ * Nạp toàn bộ bảng `system_configs` từ DB (cache 30s).
+ * Không dùng fallback; lỗi DB sẽ ném ra trực tiếp.
+ */
 async function loadConfigs(db = pool) {
   const now = Date.now();
   if (configsCache.data && now < configsCache.expiresAt) {
     return configsCache.data;
   }
 
-  try {
-    const res = await db.query(`SELECT key, value FROM system_configs`);
-    const map = new Map();
-    for (const row of res.rows) {
-      map.set(row.key, row.value);
-    }
-    configsCache = { data: map, expiresAt: now + CACHE_TTL_MS };
-    return map;
-  } catch (err) {
-    console.warn("[limitsDb] Không đọc được system_configs:", err.message);
-    return configsCache.data || new Map();
+  const res = await db.query(`SELECT key, value FROM system_configs`);
+  const map = new Map();
+  for (const row of res.rows) {
+    map.set(row.key, row.value);
   }
+  if (map.size > 0) {
+    configsCache = { data: map, expiresAt: now + CACHE_TTL_MS };
+  }
+  return map;
 }
 
+const SYSTEM_CONFIG_LABELS = {
+  HISTORY_PAGE_LIMIT: "số lượng bản ghi mỗi trang lịch sử",
+  EXPORT_MAX_ROWS: "giới hạn số dòng xuất dữ liệu",
+  USER_FEE_CONFIG: "cấu hình biểu phí người dùng",
+  MERCHANT_FEE_CONFIG: "cấu hình biểu phí đối tác",
+  RISK_THRESHOLDS: "cấu hình ngưỡng kiểm tra rủi ro",
+  DAILY_LIMIT_TIMEZONE: "múi giờ tính hạn mức ngày",
+};
+
+const TRANSACTION_TYPE_LABELS = {
+  TRANSFER: "chuyển tiền",
+  TOPUP: "nạp tiền",
+  WITHDRAW: "rút tiền",
+  PAYMENT: "thanh toán",
+  QR_PAYMENT: "thanh toán QR",
+};
+
+const RISK_FLOW_LABELS = {
+  LOGIN: "đăng nhập",
+  REGISTER: "đăng ký",
+  OTP: "xác thực OTP",
+  DEFAULT: "mặc định",
+};
+
+function describeConfigKey(key) {
+  return SYSTEM_CONFIG_LABELS[String(key || "").trim()] || "tham số cấu hình hệ thống";
+}
+
+function describeRiskFlow(flowKey) {
+  return RISK_FLOW_LABELS[String(flowKey || "").trim().toUpperCase()] || "này";
+}
+
+// --- API tra cứu cấu hình & hạn mức ---
+
+/**
+ * Lấy giá trị cấu hình hệ thống theo `key` từ bảng `system_configs`.
+ * Ném lỗi 500 nếu DB chưa cấu hình `key` này.
+ */
 async function getSystemConfig(key, db = pool) {
   const configs = await loadConfigs(db);
-  if (configs.has(key)) {
-    return configs.get(key);
+  if (
+    !configs.has(key) ||
+    configs.get(key) === undefined ||
+    configs.get(key) === null
+  ) {
+    throw httpError(500, `Hệ thống chưa thiết lập ${describeConfigKey(key)}`);
   }
-  return getFallbackConfig(key);
+  return configs.get(key);
 }
 
+/**
+ * Lấy cấu hình số nguyên dương từ `system_configs`; ném lỗi 500 nếu thiếu hoặc không hợp lệ.
+ */
+async function getPositiveIntConfig(key, db = pool) {
+  const val = Number(await getSystemConfig(key, db));
+  if (!Number.isInteger(val) || val <= 0) {
+    throw httpError(500, `Giá trị ${describeConfigKey(key)} trong hệ thống không hợp lệ`);
+  }
+  return val;
+}
+
+/**
+ * Lấy chính sách hạn mức của hệ thống cho cặp `(role, transactionType)` từ DB.
+ * Ném lỗi 500 nếu DB chưa cấu hình cặp này.
+ */
 async function getTransactionPolicy(role, transactionType, db = pool) {
   const r = role === "MERCHANT" ? "MERCHANT" : "USER";
-  const t = String(transactionType || "").toUpperCase();
+  const t = String(transactionType || "").trim().toUpperCase();
+  if (!t) {
+    throw httpError(500, "Thiếu loại giao dịch để tra cứu hạn mức");
+  }
   const policies = await loadPolicies(db);
-  return policies.get(`${r}:${t}`) || getFallbackPolicy(r, t);
+  const policy = policies.get(`${r}:${t}`);
+  if (!policy || !Number.isFinite(policy.min) || !Number.isFinite(policy.max)) {
+    const roleLabel = r === "MERCHANT" ? "đối tác" : "người dùng";
+    const txLabel = TRANSACTION_TYPE_LABELS[t] || "tương ứng";
+    throw httpError(
+      500,
+      `Hệ thống chưa thiết lập hạn mức giao dịch ${txLabel} cho ${roleLabel}`,
+    );
+  }
+  return policy;
 }
 
+/**
+ * Truy vấn trực tiếp hạn mức riêng của 1 user/merchant (không cache để phản ánh ngay khi admin sửa).
+ */
 async function getUserCustomLimit(db, userId, transactionType) {
   if (!userId) return null;
   const queryDb = db && typeof db.query === "function" ? db : pool;
@@ -112,8 +170,8 @@ async function getUserCustomLimit(db, userId, transactionType) {
 }
 
 /**
- * Lấy hạn mức hiệu lực cho 1 giao dịch cụ thể của user/merchant:
- * luôn lấy mức nhỏ hơn giữa trần hệ thống và hạn mức riêng của người dùng.
+ * Tính hạn mức hiệu lực cuối cùng cho 1 giao dịch của user/merchant:
+ * `max` và `dailyLimit` luôn lấy mức chặt hơn (nhỏ hơn) giữa trần hệ thống và hạn mức riêng.
  */
 async function getEffectiveTransactionLimit(
   db,
@@ -132,6 +190,7 @@ async function getEffectiveTransactionLimit(
   let dailyLimit = sys.dailyLimit;
   if (custom?.daily_limit != null) {
     const customDaily = Number(custom.daily_limit);
+    // Nếu hệ thống không đặt hạn mức ngày (null) thì áp dụng hạn mức ngày riêng của user
     dailyLimit =
       sys.dailyLimit == null ? customDaily : Math.min(sys.dailyLimit, customDaily);
   }
@@ -145,43 +204,72 @@ async function getEffectiveTransactionLimit(
   };
 }
 
+/**
+ * Đọc ngưỡng đánh giá rủi ro `{ challenge, block }` từ cấu hình `RISK_THRESHOLDS` trong DB.
+ * Ném lỗi 500 nếu DB chưa cấu hình `RISK_THRESHOLDS` hoặc thiếu key tương ứng.
+ *
+ * @param {string|{ key?: string, dryRun?: boolean }} [optionObj] - Tên luồng ("LOGIN", "REGISTER", ...) hoặc object chứa `key`
+ */
 async function resolveRiskThreshold(optionObj) {
-  const fallbackDefault = fallbackLimits.RISK_THRESHOLDS.DEFAULT;
-  const key =
-    (typeof optionObj === "string" && optionObj) ||
-    FALLBACK_RISK_BY_REF.get(optionObj) ||
-    null;
-
-  const liveMap = await getSystemConfig("RISK_THRESHOLDS", pool);
-  if (key && liveMap && liveMap[key]) {
-    return {
-      challenge: Number(liveMap[key].challenge ?? fallbackDefault.challenge),
-      block: Number(liveMap[key].block ?? fallbackDefault.block),
-    };
-  }
-  if (
+  let key;
+  if (typeof optionObj === "string") {
+    key = optionObj.trim();
+    if (!key) {
+      throw httpError(500, "Thiếu tên luồng kiểm tra rủi ro");
+    }
+  } else if (
     optionObj &&
     typeof optionObj === "object" &&
-    (optionObj.challenge !== undefined || optionObj.block !== undefined)
+    typeof optionObj.key === "string"
   ) {
-    return {
-      challenge: Number(optionObj.challenge ?? fallbackDefault.challenge),
-      block: Number(optionObj.block ?? fallbackDefault.block),
-    };
+    key = optionObj.key.trim();
+    if (!key) {
+      throw httpError(500, "Thiếu tên luồng kiểm tra rủi ro");
+    }
+  } else if (
+    optionObj === undefined ||
+    optionObj === null ||
+    (typeof optionObj === "object" &&
+      Object.keys(optionObj).filter((k) => k !== "dryRun").length === 0)
+  ) {
+    key = "DEFAULT";
+  } else {
+    throw httpError(500, "Tham số tra cứu ngưỡng kiểm tra rủi ro không hợp lệ");
   }
-  const def = (liveMap && liveMap.DEFAULT) || fallbackDefault;
-  return {
-    challenge: Number(def.challenge),
-    block: Number(def.block),
-  };
+
+  const liveMap = await getSystemConfig("RISK_THRESHOLDS", pool);
+  const entry = liveMap && typeof liveMap === "object" ? liveMap[key] : null;
+  if (
+    !entry ||
+    entry.challenge === undefined ||
+    entry.challenge === null ||
+    entry.block === undefined ||
+    entry.block === null
+  ) {
+    throw httpError(
+      500,
+      `Hệ thống chưa thiết lập ngưỡng kiểm tra rủi ro cho luồng ${describeRiskFlow(key)}`,
+    );
+  }
+
+  const challenge = Number(entry.challenge);
+  const block = Number(entry.block);
+  if (!Number.isFinite(challenge) || !Number.isFinite(block)) {
+    throw httpError(
+      500,
+      `Cấu hình ngưỡng kiểm tra rủi ro cho luồng ${describeRiskFlow(key)} không hợp lệ`,
+    );
+  }
+
+  return { challenge, block };
 }
 
 module.exports = {
   invalidateLimitsCache,
   getSystemConfig,
+  getPositiveIntConfig,
   getTransactionPolicy,
   getUserCustomLimit,
   getEffectiveTransactionLimit,
   resolveRiskThreshold,
 };
-

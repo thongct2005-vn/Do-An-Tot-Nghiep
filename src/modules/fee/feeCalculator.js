@@ -1,4 +1,5 @@
 const { httpError } = require("../../utils/httpError");
+const { formatVnd } = require("../../utils/amount");
 require("dotenv").config();
 
 // Biểu thức chính quy kiểm tra định dạng UUID (v4 / v7) hợp lệ
@@ -61,51 +62,51 @@ const MONTHLY_STATUS = Object.freeze({
   PAST_DUE: "PAST_DUE",                 // Quá hạn thanh toán gói tháng (trong thời gian ân hạn)
 });
 
-// Bảng bậc thang tỷ lệ phí QR lũy tiến mặc định của Merchant theo doanh số tháng (dự phòng)
-// 0 -> 50tr: 1.00% (100 bps); 50tr -> 200tr: 0.80% (80 bps); trên 200tr: 0.60% (60 bps)
-const DEFAULT_MERCHANT_FEE_TIERS = Object.freeze([
-  Object.freeze({ from_amount: 0, rate_bps: 100 }),
-  Object.freeze({ from_amount: 50_000_000, rate_bps: 80 }),
-  Object.freeze({ from_amount: 200_000_000, rate_bps: 60 }),
-]);
+/**
+ * Đọc và kiểm tra trường số nguyên không âm bắt buộc từ cấu hình DB.
+ * Ném lỗi 500 nếu thiếu hoặc sai định dạng (không dùng giá trị dự phòng).
+ */
+function requireDbNonNegativeInt(value, fieldName, { max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (value === undefined || value === null || typeof value === "boolean") {
+    throw httpError(
+      500,
+      `Cấu hình ${fieldName} trong biểu phí hệ thống bị thiếu hoặc không hợp lệ`,
+    );
+  }
+  const num =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/.test(value.trim())
+        ? Number(value.trim())
+        : NaN;
+  if (!Number.isSafeInteger(num) || num < 0 || num > max) {
+    throw httpError(
+      500,
+      `Cấu hình ${fieldName} trong biểu phí hệ thống không hợp lệ`,
+    );
+  }
+  return num;
+}
 
-// Cấu hình biểu phí mặc định cho Merchant (dự phòng khi cơ sở dữ liệu chưa có cấu hình)
-const DEFAULT_MERCHANT_FEE_CONFIG = Object.freeze({
-  rate_bps: 100,                               // Tỷ lệ phí cơ bản mặc định: 1.00% (100 bps)
-  min_fee: 200,                                // Mức phí tối thiểu mỗi giao dịch: 200 VND
-  max_fee: null,                               // Mức phí tối đa mỗi giao dịch: không giới hạn
-  max_fee_unbounded: true,                     // Cờ đánh dấu không giới hạn trần phí
-  free_threshold_amount: 0,                    // Ngưỡng miễn phí đơn hàng nhỏ: 0 (không áp dụng)
-  transfer_fee_bps: 0,                         // Phí chuyển P2P chiều đi của merchant: 0%
-  transfer_min_fee: 0,                         // Mức phí chuyển P2P tối thiểu: 0 VND
-  transfer_max_fee: null,                      // Mức phí chuyển P2P tối đa: không giới hạn
-  transfer_max_fee_unbounded: true,            // Cờ không giới hạn trần phí chuyển P2P
-  withdraw_fee_bps: 50,                        // Tỷ lệ phí rút tiền về ngân hàng: 0.50% (50 bps)
-  withdraw_free_quota_per_month: 50_000_000,   // Hạn mức rút tiền miễn phí mỗi tháng: 50 triệu VND
-  monthly_plan_enabled: false,                 // Gói thuê bao tháng: tắt mặc định
-  monthly_plan_fee: 0,                         // Cước thuê bao tháng: 0 VND
-  monthly_grace_days: 7,                       // Số ngày ân hạn khi quá cước tháng: 7 ngày
-  tiers: DEFAULT_MERCHANT_FEE_TIERS,           // Bảng phân bậc doanh số mặc định
-});
-
-// Cấu hình biểu phí mặc định cho User cá nhân (miễn phí tất cả các luồng)
-const DEFAULT_USER_FEE_CONFIG = Object.freeze({
-  rate_bps: 0,                                 // Tỷ lệ phí giao dịch: 0%
-  min_fee: 0,                                  // Mức phí tối thiểu: 0 VND
-  max_fee: null,                               // Mức phí tối đa: không giới hạn
-  max_fee_unbounded: true,                     // Cờ không giới hạn trần phí
-  free_threshold_amount: 0,                    // Ngưỡng miễn phí: 0 VND
-  transfer_fee_bps: 0,                         // Tỷ lệ phí chuyển tiền P2P: 0%
-  transfer_min_fee: 0,                         // Mức phí chuyển P2P tối thiểu: 0 VND
-  transfer_max_fee: null,                      // Mức phí chuyển P2P tối đa: không giới hạn
-  transfer_max_fee_unbounded: true,            // Cờ không giới hạn trần phí chuyển P2P
-  withdraw_fee_bps: 0,                         // Tỷ lệ phí rút tiền về ngân hàng: 0% (miễn phí)
-  withdraw_free_quota_per_month: 0,            // Hạn mức rút miễn phí: 0 (mặc định đã miễn phí hoàn toàn)
-  monthly_plan_enabled: false,                 // Không áp dụng gói tháng
-  monthly_plan_fee: 0,                         // Cước tháng: 0 VND
-  monthly_grace_days: 7,                       // Số ngày ân hạn: 7 ngày
-  tiers: [],                                   // Không phân bậc doanh số
-});
+/**
+ * Đọc và kiểm tra trường mức phí tối đa (cho phép null = không giới hạn, không cho phép undefined).
+ */
+function requireDbNullableMaxFee(value, fieldName, minFee) {
+  if (value === undefined) {
+    throw httpError(500, `Cấu hình ${fieldName} trong biểu phí hệ thống bị thiếu`);
+  }
+  if (value === null) {
+    return null;
+  }
+  const num = requireDbNonNegativeInt(value, fieldName);
+  if (num < minFee) {
+    throw httpError(
+      500,
+      `Cấu hình ${fieldName} trong biểu phí hệ thống không được nhỏ hơn mức phí tối thiểu (${formatVnd(minFee)})`,
+    );
+  }
+  return num;
+}
 
 /**
  * Kiểm tra và ép kiểu giá trị đầu vào thành số nguyên không âm (>= 0).
@@ -160,7 +161,7 @@ function assertPositiveIntegerAmount(raw, fieldName = "Số tiền giao dịch")
  * @param {string} fieldName - Tên trường báo lỗi
  * @returns {number} Giá trị bps nguyên (0..10000)
  */
-function percentToBpsStrict(rawPercent, fieldName = "Tỉ lệ phí (%)") {
+function percentToBpsStrict(rawPercent, fieldName = "Tỷ lệ phí") {
   if (rawPercent === undefined || rawPercent === null || typeof rawPercent === "boolean") {
     throw httpError(400, `${fieldName} không hợp lệ`);
   }
@@ -170,14 +171,14 @@ function percentToBpsStrict(rawPercent, fieldName = "Tỉ lệ phí (%)") {
       ? rawPercent
       : NaN;
   if (!Number.isFinite(num) || num < 0 || num > 100) {
-    throw httpError(400, `${fieldName} phải nằm trong khoảng 0 đến 100`);
+    throw httpError(400, `${fieldName} phải nằm trong khoảng từ 0% đến 100%`);
   }
   const scaled = num * 100;
   const rounded = Math.round(scaled);
   if (Math.abs(scaled - rounded) > 1e-6) {
     throw httpError(
       400,
-      `${fieldName} chỉ hỗ trợ tối đa 2 chữ số thập phân (bội số 0.01%)`,
+      `${fieldName} chỉ hỗ trợ tối đa 2 chữ số thập phân (bội số 0,01%)`,
     );
   }
   return rounded;
@@ -191,7 +192,7 @@ function percentToBpsStrict(rawPercent, fieldName = "Tỉ lệ phí (%)") {
  * @param {string} fieldName - Tên trường báo lỗi
  * @returns {number|undefined} Giá trị bps đã chuẩn hóa
  */
-function normalizeRateBps(bpsRaw, percentRaw, fieldName = "rate_bps") {
+function normalizeRateBps(bpsRaw, percentRaw, fieldName = "Tỷ lệ phí") {
   const hasBps = bpsRaw !== undefined && bpsRaw !== null;
   const hasPercent = percentRaw !== undefined && percentRaw !== null;
   if (!hasBps && !hasPercent) return undefined;
@@ -208,7 +209,10 @@ function normalizeRateBps(bpsRaw, percentRaw, fieldName = "rate_bps") {
           ? Number(bpsRaw.trim())
           : NaN;
     if (!Number.isSafeInteger(num) || num < 0 || num > 10_000) {
-      throw httpError(400, `${fieldName} phải là số nguyên trong khoảng 0..10000 (0%..100%)`);
+      throw httpError(
+        400,
+        `${fieldName} theo điểm cơ bản phải là số nguyên từ 0 đến 10.000 (tương ứng 0% đến 100%)`,
+      );
     }
     bpsFromBps = num;
   }
@@ -219,7 +223,10 @@ function normalizeRateBps(bpsRaw, percentRaw, fieldName = "rate_bps") {
   }
 
   if (hasBps && hasPercent && bpsFromBps !== bpsFromPercent) {
-    throw httpError(400, `${fieldName} và phần trăm tương ứng không khớp nhau`);
+    throw httpError(
+      400,
+      `${fieldName} theo phần trăm và theo điểm cơ bản không khớp nhau`,
+    );
   }
   return hasBps ? bpsFromBps : bpsFromPercent;
 }
@@ -235,23 +242,23 @@ function normalizeTiersInput(rawTiers) {
     return [];
   }
   if (!Array.isArray(rawTiers)) {
-    throw httpError(400, "tiers phải là mảng");
+    throw httpError(400, "Danh sách bậc phí lũy tiến phải là một mảng hợp lệ");
   }
   const mapped = rawTiers.map((item, idx) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw httpError(400, `tiers[${idx}] không hợp lệ`);
+      throw httpError(400, `Thông tin bậc phí thứ ${idx + 1} không hợp lệ`);
     }
     const fromAmount = parseStrictNonNegativeInt(
       item.from_amount ?? item.from ?? 0,
-      `tiers[${idx}].from_amount`,
+      `Mốc doanh số của bậc phí thứ ${idx + 1}`,
     );
     const rateBps = normalizeRateBps(
       item.rate_bps,
       item.rate_percent ?? item.rate,
-      `tiers[${idx}].rate`,
+      `Tỷ lệ phí của bậc thứ ${idx + 1}`,
     );
     if (rateBps === undefined) {
-      throw httpError(400, `tiers[${idx}] thiếu rate_bps hoặc rate_percent`);
+      throw httpError(400, `Bậc phí thứ ${idx + 1} chưa có tỷ lệ phí`);
     }
     return {
       from_amount: fromAmount,
@@ -263,35 +270,53 @@ function normalizeTiersInput(rawTiers) {
   mapped.sort((a, b) => a.from_amount - b.from_amount);
   for (let i = 1; i < mapped.length; i += 1) {
     if (mapped[i].from_amount === mapped[i - 1].from_amount) {
-      throw httpError(400, `tiers bị trùng mốc from_amount = ${mapped[i].from_amount}`);
+      throw httpError(
+        400,
+        `Danh sách bậc phí bị trùng mốc doanh số ${formatVnd(mapped[i].from_amount)}`,
+      );
     }
   }
   return mapped;
 }
 
 /**
- * Ép kiểu an toàn dữ liệu bậc thang đọc từ JSON cơ sở dữ liệu sang mảng định dạng chuẩn.
- * Nếu dữ liệu không hợp lệ thì fallback về danh sách mặc định.
+ * Kiểm tra và chuẩn hóa danh sách bậc thang đọc từ JSON cơ sở dữ liệu.
+ * Bắt buộc phải có mảng hợp lệ; ném lỗi 500 nếu thiếu hoặc sai định dạng (không fallback).
  * @param {Array<object>} rawTiers - Dữ liệu bậc thang lưu trong DB
- * @param {Array<object>} fallbackTiers - Danh sách dự phòng
  * @returns {Array<{ from_amount: number, rate_bps: number, rate_percent: number }>}
  */
-function coerceStoredTiers(rawTiers, fallbackTiers = []) {
-  const source = rawTiers !== undefined ? rawTiers : fallbackTiers;
-  if (!Array.isArray(source)) {
-    return fallbackTiers.map((t) => ({
-      from_amount: Number(t.from_amount),
-      rate_bps: Number(t.rate_bps),
-      rate_percent: Number((Number(t.rate_bps) / 100).toFixed(2)),
-    }));
+function coerceStoredTiers(rawTiers) {
+  if (!Array.isArray(rawTiers)) {
+    throw httpError(
+      500,
+      "Cấu hình danh sách bậc phí lũy tiến trong biểu phí hệ thống bị thiếu hoặc không hợp lệ",
+    );
   }
-  return source
-    .map((item) => {
-      const fromAmount = Math.max(0, Math.trunc(Number(item?.from_amount ?? item?.from ?? 0) || 0));
-      const rateBps = Math.max(
-        0,
-        Math.min(10_000, Math.trunc(Number(item?.rate_bps ?? 0) || 0)),
+  const seen = new Set();
+  return rawTiers
+    .map((item, idx) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw httpError(
+          500,
+          `Cấu hình bậc phí thứ ${idx + 1} trong biểu phí hệ thống không hợp lệ`,
+        );
+      }
+      const fromAmount = requireDbNonNegativeInt(
+        item.from_amount ?? item.from,
+        `mốc doanh số bậc phí thứ ${idx + 1}`,
       );
+      const rateBps = requireDbNonNegativeInt(
+        item.rate_bps,
+        `tỷ lệ phí bậc thứ ${idx + 1}`,
+        { max: 10_000 },
+      );
+      if (seen.has(fromAmount)) {
+        throw httpError(
+          500,
+          `Cấu hình danh sách bậc phí lũy tiến trong biểu phí hệ thống bị trùng mốc doanh số ${formatVnd(fromAmount)}`,
+        );
+      }
+      seen.add(fromAmount);
       return {
         from_amount: fromAmount,
         rate_bps: rateBps,
@@ -301,125 +326,156 @@ function coerceStoredTiers(rawTiers, fallbackTiers = []) {
     .sort((a, b) => a.from_amount - b.from_amount);
 }
 
-/**
- * Chuẩn hóa đối tượng JSON cấu hình biểu phí thô đọc từ bảng `system_configs`.
- * - Hỗ trợ cả định dạng phẳng mới và định dạng cũ (lồng trong `PER_TRANSACTION` / `MONTHLY`).
- * - Áp dụng các giá trị dự phòng (fallback) theo `role` (MERCHANT hoặc USER) nếu dữ liệu thiếu trường.
- * - Đảm bảo các trường số luôn nguyên, không âm, tỷ lệ bps nằm trong khoảng 0..10000 (0..100%).
- * 
- * @param {object} raw - Dữ liệu JSON thô từ DB hoặc API
- * @param {string} [role="MERCHANT"] - Vai trò đối tượng áp dụng ('MERCHANT' hoặc 'USER')
- * @returns {object} Cấu hình chuẩn hóa với đầy đủ các trường
- */
-function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
-  const normalizedRole = String(role || "").toUpperCase();
-  const fallback =
-    normalizedRole === "USER"
-      ? DEFAULT_USER_FEE_CONFIG
-      : DEFAULT_MERCHANT_FEE_CONFIG;
-  const src = raw && typeof raw === "object" ? raw : {};
-  const legacyPerTx = src.PER_TRANSACTION && typeof src.PER_TRANSACTION === "object" ? src.PER_TRANSACTION : {};
-  const legacyMonthly = src.MONTHLY && typeof src.MONTHLY === "object" ? src.MONTHLY : {};
+function assertDbConfigObject(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw httpError(500, "Hệ thống chưa được cấu hình biểu phí hợp lệ");
+  }
+  return raw;
+}
 
-  const rateBpsRaw = src.rate_bps ?? legacyPerTx.percent_bps ?? fallback.rate_bps;
-  const rateBps = Math.max(0, Math.min(10_000, Math.trunc(Number(rateBpsRaw ?? fallback.rate_bps) || 0)));
+function extractPerTransactionFeeFields(raw) {
+  const src = assertDbConfigObject(raw);
+  const legacyPerTx =
+    src.PER_TRANSACTION && typeof src.PER_TRANSACTION === "object"
+      ? src.PER_TRANSACTION
+      : {};
 
-  const minFee = Math.max(
-    0,
-    Math.trunc(Number(src.min_fee ?? legacyPerTx.min_fee ?? fallback.min_fee) || 0),
+  const rateBps = requireDbNonNegativeInt(
+    src.rate_bps !== undefined ? src.rate_bps : legacyPerTx.percent_bps,
+    "tỷ lệ phí giao dịch",
+    { max: 10_000 },
   );
-
-  const explicitMaxRaw =
-    src.max_fee !== undefined
-      ? src.max_fee
-      : legacyPerTx.max_fee !== undefined
-        ? legacyPerTx.max_fee
-        : fallback.max_fee;
-
-  const maxFee =
-    explicitMaxRaw === null
-      ? null
-      : Math.max(minFee, Math.trunc(Number(explicitMaxRaw) || 0));
-  const maxFeeUnbounded = maxFee === null;
-
-  const freeThresholdAmount = Math.max(
-    0,
-    Math.trunc(Number(src.free_threshold_amount ?? fallback.free_threshold_amount) || 0),
+  const minFee = requireDbNonNegativeInt(
+    src.min_fee !== undefined ? src.min_fee : legacyPerTx.min_fee,
+    "phí giao dịch tối thiểu",
   );
-
-  const transferFeeBps = Math.max(
-    0,
-    Math.min(10_000, Math.trunc(Number(src.transfer_fee_bps ?? fallback.transfer_fee_bps) || 0)),
+  const maxFeeRaw =
+    src.max_fee !== undefined ? src.max_fee : legacyPerTx.max_fee;
+  const maxFee = requireDbNullableMaxFee(maxFeeRaw, "phí giao dịch tối đa", minFee);
+  const freeThresholdAmount = requireDbNonNegativeInt(
+    src.free_threshold_amount,
+    "ngưỡng miễn phí giao dịch",
   );
-  const transferMinFee = Math.max(
-    0,
-    Math.trunc(Number(src.transfer_min_fee ?? fallback.transfer_min_fee) || 0),
-  );
-  const explicitTransferMaxRaw =
-    src.transfer_max_fee !== undefined
-      ? src.transfer_max_fee
-      : fallback.transfer_max_fee;
-  const transferMaxFee =
-    explicitTransferMaxRaw === null
-      ? null
-      : Math.max(transferMinFee, Math.trunc(Number(explicitTransferMaxRaw) || 0));
-  const transferMaxFeeUnbounded = transferMaxFee === null;
-
-  const withdrawFeeBps = Math.max(
-    0,
-    Math.min(10_000, Math.trunc(Number(src.withdraw_fee_bps ?? fallback.withdraw_fee_bps) || 0)),
-  );
-  const withdrawFreeQuotaPerMonth = Math.max(
-    0,
-    Math.trunc(
-      Number(src.withdraw_free_quota_per_month ?? fallback.withdraw_free_quota_per_month) || 0,
-    ),
-  );
-  const monthlyPlanEnabled = Boolean(
-    src.monthly_plan_enabled ?? fallback.monthly_plan_enabled,
-  );
-  const monthlyPlanFee = Math.max(
-    0,
-    Math.trunc(
-      Number(src.monthly_plan_fee ?? legacyMonthly.monthly_fee ?? fallback.monthly_plan_fee) || 0,
-    ),
-  );
-  const monthlyGraceDays = Math.max(
-    0,
-    Math.min(31, Math.trunc(Number(src.monthly_grace_days ?? fallback.monthly_grace_days) || 0)),
-  );
-
-  const hasExplicitCustomRateWithoutTiers =
-    src.tiers === undefined &&
-    src.rate_bps !== undefined &&
-    Number(src.rate_bps) !== fallback.rate_bps;
-  const tiers = hasExplicitCustomRateWithoutTiers
-    ? []
-    : coerceStoredTiers(src.tiers, fallback.tiers);
+  const tiers = coerceStoredTiers(src.tiers);
 
   return {
     rate_bps: rateBps,
     rate_percent: Number((rateBps / 100).toFixed(2)),
     min_fee: minFee,
     max_fee: maxFee,
-    max_fee_unbounded: maxFeeUnbounded,
+    max_fee_unbounded: maxFee === null,
     free_threshold_amount: freeThresholdAmount,
+    tiers,
+  };
+}
+
+function extractTransferFeeFields(raw) {
+  const src = assertDbConfigObject(raw);
+  const transferFeeBps = requireDbNonNegativeInt(
+    src.transfer_fee_bps,
+    "tỷ lệ phí chuyển tiền",
+    { max: 10_000 },
+  );
+  const transferMinFee = requireDbNonNegativeInt(
+    src.transfer_min_fee,
+    "phí chuyển tiền tối thiểu",
+  );
+  const transferMaxFee = requireDbNullableMaxFee(
+    src.transfer_max_fee,
+    "phí chuyển tiền tối đa",
+    transferMinFee,
+  );
+
+  return {
     transfer_fee_bps: transferFeeBps,
     transfer_fee_percent: Number((transferFeeBps / 100).toFixed(2)),
     transfer_min_fee: transferMinFee,
     transfer_max_fee: transferMaxFee,
-    transfer_max_fee_unbounded: transferMaxFeeUnbounded,
+    transfer_max_fee_unbounded: transferMaxFee === null,
+  };
+}
+
+function extractWithdrawFeeFields(raw) {
+  const src = assertDbConfigObject(raw);
+  const withdrawFeeBps = requireDbNonNegativeInt(
+    src.withdraw_fee_bps,
+    "tỷ lệ phí rút tiền",
+    { max: 10_000 },
+  );
+  const withdrawFreeQuotaPerMonth = requireDbNonNegativeInt(
+    src.withdraw_free_quota_per_month,
+    "hạn mức rút tiền miễn phí mỗi tháng",
+  );
+
+  return {
     withdraw_fee_bps: withdrawFeeBps,
     withdraw_fee_percent: Number((withdrawFeeBps / 100).toFixed(2)),
     withdraw_free_quota_per_month: withdrawFreeQuotaPerMonth,
+  };
+}
+
+/**
+ * Chuẩn hóa đối tượng JSON cấu hình biểu phí đọc từ bảng `system_configs`.
+ * Bắt buộc đầy đủ các trường đã cấu hình trong DB; thiếu trường hoặc sai kiểu sẽ ném lỗi 500 (không fallback).
+ *
+ * @param {object} raw - Dữ liệu JSON đọc từ DB
+ * @param {string} [role="MERCHANT"] - Vai trò đối tượng áp dụng ('MERCHANT' hoặc 'USER')
+ * @returns {object} Cấu hình chuẩn hóa đầy đủ các trường
+ */
+function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
+  const normalizedRole = String(role || "").toUpperCase();
+  const src = assertDbConfigObject(raw);
+  const legacyMonthly =
+    src.MONTHLY && typeof src.MONTHLY === "object" ? src.MONTHLY : {};
+
+  const perTx = extractPerTransactionFeeFields(src);
+  const transfer = extractTransferFeeFields(src);
+  const withdraw = extractWithdrawFeeFields(src);
+
+  const isMerchant = normalizedRole !== "USER";
+  let monthlyPlanEnabled = false;
+  if (src.monthly_plan_enabled !== undefined) {
+    if (typeof src.monthly_plan_enabled !== "boolean") {
+      throw httpError(
+        500,
+        "Cấu hình trạng thái gói thu phí tháng trong biểu phí hệ thống không hợp lệ",
+      );
+    }
+    monthlyPlanEnabled = src.monthly_plan_enabled;
+  } else if (isMerchant) {
+    throw httpError(
+      500,
+      "Thiếu cấu hình trạng thái gói thu phí tháng trong biểu phí hệ thống",
+    );
+  }
+
+  const rawMonthlyFee =
+    src.monthly_plan_fee !== undefined
+      ? src.monthly_plan_fee
+      : legacyMonthly.monthly_fee;
+  const monthlyPlanFee =
+    rawMonthlyFee !== undefined || isMerchant
+      ? requireDbNonNegativeInt(rawMonthlyFee, "mức phí gói tháng")
+      : 0;
+
+  const monthlyGraceDays =
+    src.monthly_grace_days !== undefined || isMerchant
+      ? requireDbNonNegativeInt(src.monthly_grace_days, "số ngày ân hạn gói tháng", {
+        max: 31,
+      })
+      : 0;
+
+  return {
+    ...perTx,
+    ...transfer,
+    ...withdraw,
     monthly_plan_enabled: monthlyPlanEnabled,
     monthly_plan_fee: monthlyPlanFee,
     monthly_grace_days: monthlyGraceDays,
-    tiers,
     PER_TRANSACTION: {
-      percent_bps: rateBps,
-      min_fee: minFee,
-      max_fee: maxFee,
+      percent_bps: perTx.rate_bps,
+      min_fee: perTx.min_fee,
+      max_fee: perTx.max_fee,
     },
     MONTHLY: {
       monthly_fee: monthlyPlanFee,
@@ -457,19 +513,22 @@ function validateFeeConfigInput(
     normalized.rate_bps =
       input.rate_bps === null && isOverride
         ? null
-        : normalizeRateBps(input.rate_bps, input.rate_percent, "rate_percent / rate_bps");
+        : normalizeRateBps(input.rate_bps, input.rate_percent, "Tỷ lệ phí giao dịch");
   }
 
   if (input.min_fee !== undefined) {
     normalized.min_fee =
       input.min_fee === null && isOverride
         ? null
-        : parseStrictNonNegativeInt(input.min_fee, "min_fee");
+        : parseStrictNonNegativeInt(input.min_fee, "Phí giao dịch tối thiểu");
   }
 
   if (input.max_fee_unbounded !== undefined) {
     if (typeof input.max_fee_unbounded !== "boolean") {
-      throw httpError(400, "max_fee_unbounded phải là boolean");
+      throw httpError(
+        400,
+        "Tùy chọn không giới hạn phí tối đa chỉ chấp nhận giá trị đúng hoặc sai",
+      );
     }
     normalized.max_fee_unbounded = input.max_fee_unbounded;
   }
@@ -481,7 +540,7 @@ function validateFeeConfigInput(
         normalized.max_fee_unbounded = true;
       }
     } else {
-      normalized.max_fee = parseStrictNonNegativeInt(input.max_fee, "max_fee");
+      normalized.max_fee = parseStrictNonNegativeInt(input.max_fee, "Phí giao dịch tối đa");
       if (normalized.max_fee_unbounded === undefined) {
         normalized.max_fee_unbounded = false;
       }
@@ -494,7 +553,7 @@ function validateFeeConfigInput(
     normalized.free_threshold_amount =
       input.free_threshold_amount === null && isOverride
         ? null
-        : parseStrictNonNegativeInt(input.free_threshold_amount, "free_threshold_amount");
+        : parseStrictNonNegativeInt(input.free_threshold_amount, "Ngưỡng miễn phí giao dịch");
   }
 
   if (
@@ -507,7 +566,7 @@ function validateFeeConfigInput(
         : normalizeRateBps(
           input.transfer_fee_bps,
           input.transfer_fee_percent,
-          "transfer_fee_percent / transfer_fee_bps",
+          "Tỷ lệ phí chuyển tiền",
         );
   }
 
@@ -515,12 +574,15 @@ function validateFeeConfigInput(
     normalized.transfer_min_fee =
       input.transfer_min_fee === null && isOverride
         ? null
-        : parseStrictNonNegativeInt(input.transfer_min_fee, "transfer_min_fee");
+        : parseStrictNonNegativeInt(input.transfer_min_fee, "Phí chuyển tiền tối thiểu");
   }
 
   if (input.transfer_max_fee_unbounded !== undefined) {
     if (typeof input.transfer_max_fee_unbounded !== "boolean") {
-      throw httpError(400, "transfer_max_fee_unbounded phải là boolean");
+      throw httpError(
+        400,
+        "Tùy chọn không giới hạn phí chuyển tiền tối đa chỉ chấp nhận giá trị đúng hoặc sai",
+      );
     }
     normalized.transfer_max_fee_unbounded = input.transfer_max_fee_unbounded;
   }
@@ -534,7 +596,7 @@ function validateFeeConfigInput(
     } else {
       normalized.transfer_max_fee = parseStrictNonNegativeInt(
         input.transfer_max_fee,
-        "transfer_max_fee",
+        "Phí chuyển tiền tối đa",
       );
       if (normalized.transfer_max_fee_unbounded === undefined) {
         normalized.transfer_max_fee_unbounded = false;
@@ -554,7 +616,7 @@ function validateFeeConfigInput(
         : normalizeRateBps(
           input.withdraw_fee_bps,
           input.withdraw_fee_percent,
-          "withdraw_fee_percent / withdraw_fee_bps",
+          "Tỷ lệ phí rút tiền",
         );
   }
 
@@ -564,7 +626,7 @@ function validateFeeConfigInput(
         ? null
         : parseStrictNonNegativeInt(
           input.withdraw_free_quota_per_month,
-          "withdraw_free_quota_per_month",
+          "Hạn mức rút tiền miễn phí mỗi tháng",
         );
   }
 
@@ -574,7 +636,10 @@ function validateFeeConfigInput(
     } else if (typeof input.monthly_plan_enabled === "boolean") {
       normalized.monthly_plan_enabled = input.monthly_plan_enabled;
     } else {
-      throw httpError(400, "monthly_plan_enabled phải là boolean");
+      throw httpError(
+        400,
+        "Trạng thái bật/tắt gói thu phí tháng chỉ chấp nhận giá trị đúng hoặc sai",
+      );
     }
   }
 
@@ -582,16 +647,16 @@ function validateFeeConfigInput(
     normalized.monthly_plan_fee =
       input.monthly_plan_fee === null && isOverride
         ? null
-        : parseStrictNonNegativeInt(input.monthly_plan_fee, "monthly_plan_fee");
+        : parseStrictNonNegativeInt(input.monthly_plan_fee, "Mức phí gói tháng");
   }
 
   if (input.monthly_grace_days !== undefined) {
     const graceDays = parseStrictNonNegativeInt(
       input.monthly_grace_days,
-      "monthly_grace_days",
+      "Số ngày ân hạn gói tháng",
     );
     if (graceDays > 31) {
-      throw httpError(400, "monthly_grace_days không được vượt quá 31 ngày");
+      throw httpError(400, "Số ngày ân hạn gói tháng không được vượt quá 31 ngày");
     }
     normalized.monthly_grace_days = graceDays;
   }
@@ -605,12 +670,12 @@ function validateFeeConfigInput(
     if (input.effective_from !== undefined && input.effective_from !== null && input.effective_from !== "") {
       const parsed = new Date(input.effective_from);
       if (Number.isNaN(parsed.getTime())) {
-        throw httpError(400, "effective_from không đúng định dạng ngày giờ");
+        throw httpError(400, "Thời điểm bắt đầu áp dụng không đúng định dạng ngày giờ");
       }
       if (parsed.getTime() < nowDate.getTime()) {
         throw httpError(
           400,
-          "effective_from không được ở quá khứ (không áp dụng hồi tố giao dịch cũ)",
+          "Thời điểm bắt đầu áp dụng không được ở quá khứ (không áp dụng hồi tố giao dịch cũ)",
         );
       }
       normalized.effective_from = parsed;
@@ -627,7 +692,7 @@ function validateFeeConfigInput(
     normalized.max_fee !== null &&
     normalized.min_fee > normalized.max_fee
   ) {
-    throw httpError(400, "min_fee không được lớn hơn max_fee");
+    throw httpError(400, "Phí giao dịch tối thiểu không được lớn hơn phí giao dịch tối đa");
   }
 
   if (
@@ -637,7 +702,7 @@ function validateFeeConfigInput(
     normalized.transfer_max_fee !== null &&
     normalized.transfer_min_fee > normalized.transfer_max_fee
   ) {
-    throw httpError(400, "transfer_min_fee không được lớn hơn transfer_max_fee");
+    throw httpError(400, "Phí chuyển tiền tối thiểu không được lớn hơn phí chuyển tiền tối đa");
   }
 
   // Kiểm tra sau khi gộp với cấu hình nền (nếu có)
@@ -659,7 +724,7 @@ function validateFeeConfigInput(
     if (mergedMax !== null && mergedMin > mergedMax) {
       throw httpError(
         400,
-        `min_fee (${mergedMin}) không được lớn hơn max_fee (${mergedMax}) sau khi kế thừa cấu hình mặc định`,
+        `Phí giao dịch tối thiểu (${formatVnd(mergedMin)}) không được lớn hơn phí giao dịch tối đa (${formatVnd(mergedMax)}) sau khi kết hợp với cấu hình mặc định`,
       );
     }
 
@@ -679,7 +744,7 @@ function validateFeeConfigInput(
     if (mergedTransferMax !== null && mergedTransferMin > mergedTransferMax) {
       throw httpError(
         400,
-        `transfer_min_fee (${mergedTransferMin}) không được lớn hơn transfer_max_fee (${mergedTransferMax}) sau khi kế thừa cấu hình mặc định`,
+        `Phí chuyển tiền tối thiểu (${formatVnd(mergedTransferMin)}) không được lớn hơn phí chuyển tiền tối đa (${formatVnd(mergedTransferMax)}) sau khi kết hợp với cấu hình mặc định`,
       );
     }
   }
@@ -768,7 +833,7 @@ function mergeEffectiveFeeConfig(systemConfig, scheduleOverride = null, role = "
   const hasExplicitRateOverride =
     scheduleOverride.rate_bps !== null && scheduleOverride.rate_bps !== undefined;
   const tiers = hasExplicitTiersOverride
-    ? coerceStoredTiers(scheduleOverride.tiers, base.tiers)
+    ? coerceStoredTiers(scheduleOverride.tiers)
     : hasExplicitRateOverride
       ? []
       : base.tiers;
@@ -876,19 +941,15 @@ function roundBpsBigInt(baseInt, bpsInt) {
  * @returns {Array<{ from_amount: number, rate_bps: number }>}
  */
 function getEffectiveTierSchedule(cfg) {
-  const rawTiers = Array.isArray(cfg.tiers) ? cfg.tiers : [];
-  if (rawTiers.length === 0) {
-    return [{ from_amount: 0, rate_bps: cfg.rate_bps }];
+  const baseRateBps = requireDbNonNegativeInt(cfg?.rate_bps, "rate_bps", {
+    max: 10_000,
+  });
+  const normalized = coerceStoredTiers(cfg?.tiers);
+  if (normalized.length === 0) {
+    return [{ from_amount: 0, rate_bps: baseRateBps }];
   }
-  const normalized = rawTiers
-    .map((t) => ({
-      from_amount: Math.max(0, Math.trunc(Number(t?.from_amount ?? t?.from ?? 0) || 0)),
-      rate_bps: Math.max(0, Math.min(10_000, Math.trunc(Number(t?.rate_bps ?? 0) || 0))),
-    }))
-    .sort((a, b) => a.from_amount - b.from_amount);
-
   if (normalized[0].from_amount > 0) {
-    return [{ from_amount: 0, rate_bps: cfg.rate_bps }, ...normalized];
+    return [{ from_amount: 0, rate_bps: baseRateBps }, ...normalized];
   }
   return normalized;
 }
@@ -1001,8 +1062,8 @@ function calculatePerTransactionFeeDetails(
   // 1. Kiểm tra và chuẩn hóa số tiền giao dịch thành số nguyên dương
   const validAmount = assertPositiveIntegerAmount(amount);
 
-  // 2. Chuẩn hóa cấu hình biểu phí tương ứng với role (MERCHANT hoặc USER)
-  const cfg = normalizeSystemFeeConfig(effectiveConfig, role);
+  // 2. Kiểm tra và đọc đầy đủ các trường biểu phí giao dịch (bắt buộc có, không dùng dự phòng)
+  const cfg = extractPerTransactionFeeFields(effectiveConfig);
 
   // 3. Kiểm tra xem cấu hình có phân bậc thang hay không
   const isTiered = Array.isArray(cfg.tiers) && cfg.tiers.length > 0;
@@ -1141,7 +1202,7 @@ function calculatePerTransactionFeeDetails(
  * @returns {object} Chi tiết phí, thực nhận, số dư trừ và snapshot biểu phí
  */
 function calculateMerchantTransferFeeDetails(amount, effectiveConfig) {
-  const cfg = normalizeSystemFeeConfig(effectiveConfig, "MERCHANT");
+  const cfg = extractTransferFeeFields(effectiveConfig);
   const transferConfig = {
     source: effectiveConfig?.source || "SYSTEM_DEFAULT",
     schedule_id: effectiveConfig?.schedule_id || null,
@@ -1186,7 +1247,7 @@ function calculateWithdrawFeeDetails(
     alreadyWithdrawn,
     "alreadyWithdrawn",
   );
-  const cfg = normalizeSystemFeeConfig(effectiveConfig, role);
+  const cfg = extractWithdrawFeeFields(effectiveConfig);
 
   const quota = cfg.withdraw_free_quota_per_month;
   const remainingBefore = Math.max(0, quota - validAlreadyWithdrawn);
@@ -1407,7 +1468,7 @@ function previewFeeCalculation({
 
   throw httpError(
     400,
-    "transaction_type phải là PAYMENT, QR_PAYMENT, WITHDRAW, TRANSFER hoặc TOPUP",
+    "Loại giao dịch không hợp lệ để tính phí (chỉ hỗ trợ thanh toán, thanh toán QR, rút tiền, chuyển tiền hoặc nạp tiền)",
   );
 }
 
@@ -1458,9 +1519,6 @@ module.exports = {
   VN_OFFSET_MS,
   FEE_TYPES,
   MONTHLY_STATUS,
-  DEFAULT_MERCHANT_FEE_TIERS,
-  DEFAULT_MERCHANT_FEE_CONFIG,
-  DEFAULT_USER_FEE_CONFIG,
   assertPositiveIntegerAmount,
   parseStrictNonNegativeInt,
   percentToBpsStrict,

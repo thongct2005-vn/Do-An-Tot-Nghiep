@@ -11,11 +11,10 @@ const {
   sendOtpLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../config/limits");
 
-const loginRisk = riskGuard(RISK_THRESHOLDS.LOGIN);
-const registerRisk = riskGuard(RISK_THRESHOLDS.REGISTER);
-const otpRisk = riskGuard(RISK_THRESHOLDS.OTP);
+const loginRisk = riskGuard("LOGIN");
+const registerRisk = riskGuard("REGISTER");
+const otpRisk = riskGuard("OTP");
 
 router.post("/login", loginRisk, loginLimiter, authController.login);
 router.post(

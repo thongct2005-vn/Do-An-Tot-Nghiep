@@ -16,7 +16,7 @@ const { parseAmountInRange } = require("../../../../utils/amount");
 const pool = require("../../../../config/database");
 const {
   getEffectiveTransactionLimit,
-  getSystemConfig,
+  getPositiveIntConfig,
 } = require("../../../../utils/limitsDb");
 const { getTransactionLimitsSummary } = require("../../../../utils/dailyLimit");
 const {
@@ -34,7 +34,7 @@ const {
   assertKycBoth,
 } = require("../../../kyc/kyc.guard");
 
-const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+
 function toNumberOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
@@ -191,9 +191,7 @@ const merchantTransactionService = {
       throw httpError(400, "Loại giao dịch không hợp lệ");
     }
 
-    const exportMaxRows = Number(
-      await getSystemConfig("EXPORT_MAX_ROWS", pool),
-    ) || 50_000;
+    const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS", pool);
     const rows = await merchantTransactionRepository.exportHistory(userId, {
       keyword: normalizedKeyword,
       type: normalizedType,
@@ -249,9 +247,7 @@ const merchantTransactionService = {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
     }
 
-    const historyPageLimit = Number(
-      await getSystemConfig("HISTORY_PAGE_LIMIT", pool),
-    ) || 20;
+    const historyPageLimit = await getPositiveIntConfig("HISTORY_PAGE_LIMIT", pool);
     const maxLimit = Math.min(
       Number(limit) || historyPageLimit,
       historyPageLimit,
@@ -286,12 +282,12 @@ const merchantTransactionService = {
     if (normalizedSortBy === "amount" && cursorId) {
       const sepIdx = String(cursorId).indexOf(":");
       if (sepIdx <= 0) {
-        throw httpError(400, "Cursor không hợp lệ");
+        throw httpError(400, "Con trỏ phân trang không hợp lệ");
       }
       const amtNum = Number(String(cursorId).slice(0, sepIdx));
       const txIdPart = String(cursorId).slice(sepIdx + 1).trim();
       if (!Number.isFinite(amtNum) || !txIdPart) {
-        throw httpError(400, "Cursor không hợp lệ");
+        throw httpError(400, "Con trỏ phân trang không hợp lệ");
       }
       parsedCursorAmount = Math.trunc(amtNum);
       parsedCursorId = txIdPart;
@@ -590,7 +586,7 @@ const merchantTransactionService = {
       !idempotencyKey ||
       idempotencyKey.length > 100
     ) {
-      throw httpError(400, "Thiếu hoặc sai idempotency key của giao dịch");
+      throw httpError(400, "Thiếu hoặc sai mã chống trùng lặp giao dịch");
     }
     // Tính trước khi kiểm tra OTP để dữ liệu sai không bị tính vào số lần nhập sai OTP.
     const binding = computePinBinding(action, params);

@@ -14,9 +14,8 @@ const {
 } = require("../../middlewares/ratelimit.middleware");
 const { uploadKycImages } = require("../../middlewares/upload.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../config/limits");
 
-const forgotRisk = riskGuard(RISK_THRESHOLDS.FORGOT);
+const forgotRisk = riskGuard("FORGOT");
 
 router.get(
   "/find-user",

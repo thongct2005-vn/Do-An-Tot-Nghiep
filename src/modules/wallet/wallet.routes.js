@@ -8,10 +8,9 @@ const {
   sendOtpLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
-const { RISK_THRESHOLDS } = require("../../config/limits");
 
-const moneyRisk = riskGuard(RISK_THRESHOLDS.TRANSACTION);
-const otpRisk = riskGuard(RISK_THRESHOLDS.OTP);
+const moneyRisk = riskGuard("TRANSACTION");
+const otpRisk = riskGuard("OTP");
 
 router.get(
   "/balance",

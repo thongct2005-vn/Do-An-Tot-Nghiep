@@ -377,6 +377,138 @@ const merchantAuthController = {
       next(e);
     }
   },
+
+  // ===== Đổi email Merchant (đang đăng nhập) =====
+  async changeEmailRequest(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const { password } = req.body;
+      const result = await merchantAuthService.changeEmailRequest({
+        userId,
+        password,
+      });
+      clearFailure(phone);
+      const message =
+        result.otp_method === "totp"
+          ? "Vui lòng nhập mã Google Authenticator để xác nhận"
+          : "Vui lòng nhập mã OTP đã gửi về email hiện tại để xác nhận";
+      return successResponse(res, 200, message, result);
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
+      next(e);
+    }
+  },
+
+  async changeEmailResendOtp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { ev: emailVersion, pv: passwordVersion } = req.otpUser || {};
+      const result = await merchantAuthService.changeEmailResendOtp({
+        userId,
+        emailVersion,
+        passwordVersion,
+      });
+      return successResponse(res, 200, "Đã gửi lại mã OTP xác thực", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async changeEmailVerify(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const { ev: emailVersion, pv: passwordVersion } = req.otpUser || {};
+      const { otp } = req.body;
+      const result = await merchantAuthService.changeEmailVerify({
+        userId,
+        otp,
+        emailVersion,
+        passwordVersion,
+      });
+      clearFailure(phone);
+      return successResponse(
+        res,
+        200,
+        "Xác thực thành công, vui lòng nhập email mới",
+        result,
+      );
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
+      next(e);
+    }
+  },
+
+  async changeEmailSendNewOtp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { ev: emailVersion, pv: passwordVersion } = req.otpUser || {};
+      const { new_email: newEmail } = req.body;
+      const result = await merchantAuthService.changeEmailSendNewOtp({
+        userId,
+        newEmail,
+        emailVersion,
+        passwordVersion,
+      });
+      return successResponse(res, 200, "Đã gửi mã OTP đến email mới", result);
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async changeEmailResendNewOtp(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const {
+        new_email: newEmail,
+        ev: emailVersion,
+        pv: passwordVersion,
+      } = req.otpUser || {};
+      const result = await merchantAuthService.changeEmailResendNewOtp({
+        userId,
+        newEmail,
+        emailVersion,
+        passwordVersion,
+      });
+      return successResponse(
+        res,
+        200,
+        "Đã gửi lại mã OTP đến email mới",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async changeEmailConfirm(req, res, next) {
+    try {
+      const { user_id: userId, phone } = req.user;
+      const {
+        new_email: newEmail,
+        ev: emailVersion,
+        pv: passwordVersion,
+      } = req.otpUser || {};
+      const { otp } = req.body;
+      const result = await merchantAuthService.changeEmailConfirm({
+        userId,
+        otp,
+        newEmail,
+        emailVersion,
+        passwordVersion,
+      });
+      clearFailure(phone);
+      return successResponse(res, 200, "Đổi email thành công", result);
+    } catch (e) {
+      if (e.statusCode && e.statusCode < 500) {
+        recordFailure(req.user?.phone);
+      }
+      next(e);
+    }
+  },
 };
 
 module.exports = merchantAuthController;

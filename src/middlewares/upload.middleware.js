@@ -17,7 +17,7 @@ Object.values(folders).forEach((dir) => {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = folders[file.fieldname];
-    if (!dir) return cb(new Error("Field name không hợp lệ"), null);
+    if (!dir) return cb(new Error("Tên trường tải lên không hợp lệ"), null);
     cb(null, dir);
   },
   filename: (req, file, cb) => {

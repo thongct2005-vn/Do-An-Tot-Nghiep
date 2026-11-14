@@ -14,7 +14,7 @@ const { httpError } = require("../../utils/httpError");
 const tokenUtil = require("../../utils/jwt");
 const { emitToUser } = require("../../utils/socket");
 const { maskPhone, maskEmail } = require("../../utils/mask");
-const { getSystemConfig } = require("../../utils/limitsDb");
+const { getPositiveIntConfig } = require("../../utils/limitsDb");
 
 async function getResettableUser(userId) {
   const user = await userRepository.getCredentialState(userId);
@@ -96,7 +96,7 @@ const userService = {
       throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
-    const maxPhones = Number(await getSystemConfig("CONTACT_CHECK_MAX_PHONES")) || 500;
+    const maxPhones = await getPositiveIntConfig("CONTACT_CHECK_MAX_PHONES");
     if (phones.length > maxPhones) {
       throw httpError(413, "Danh bạ quá lớn, vui lòng đồng bộ từng phần");
     }
@@ -148,7 +148,7 @@ const userService = {
 
   async updateFmcToken({ userId, fcmToken }) {
     if (!userId || !fcmToken) {
-      throw httpError(400, "Thiếu thông tin để cập nhật fcm token");
+      throw httpError(400, "Thiếu thông tin để cập nhật token thông báo");
     }
 
     await userRepository.updateFmcToken({ userId, fcmToken });
@@ -156,7 +156,7 @@ const userService = {
 
   async getFcmToken(userId) {
     if (!userId) {
-      throw httpError(400, "Thiếu thông tin để lấy dữ fcm token");
+      throw httpError(400, "Thiếu thông tin để lấy token thông báo");
     }
     const result = await userRepository.getFcmToken(userId);
     return result;

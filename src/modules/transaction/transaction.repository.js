@@ -330,15 +330,6 @@ const TransactionRepository = {
       });
     }
 
-    if (
-      destUser.role === "MERCHANT" ||
-      effectiveFeeNum > 0 ||
-      merchantFeeNum > 0
-    ) {
-      console.info(
-        `[tx-fee] tx=${createdTxId} type=${transactionType} merchant=${destUser.id} amount=${amountNum} fee=${effectiveFeeNum} merchant_fee=${merchantFeeNum} net=${netAmount} rate_pct=${txFeeRateSnapshot?.rate_percent ?? 0}%`,
-      );
-    }
 
     await TransactionRepository.recordAudit(client, {
       eventType: "TRANSACTION_COMPLETED",
@@ -736,7 +727,7 @@ const TransactionRepository = {
     } = {},
   ) {
     const validCursorId =
-      cursorId && String(cursorId).trim() !== "" ? Number(cursorId) : null;
+      cursorId && String(cursorId).trim() !== "" ? String(cursorId).trim() : null;
     const hasCursor = Boolean(validCursorId);
     const hasKeyword = Boolean(keyword && keyword.trim());
     const hasStartDate = Boolean(startDate);
@@ -786,7 +777,10 @@ const TransactionRepository = {
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
-        AND ($2::boolean = false OR t.id < $3)
+        AND (
+          $2::boolean = false
+          OR (t.created_at, t.id) < ((SELECT c.created_at FROM transactions c WHERE c.id = $3::varchar), $3::varchar)
+        )
         AND (
           $5::boolean = false
           OR (
@@ -812,7 +806,7 @@ const TransactionRepository = {
           $9::boolean = false
           OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
          )
-      ORDER BY t.id DESC
+      ORDER BY t.created_at DESC, t.id DESC
       LIMIT $4
       `,
       [

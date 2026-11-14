@@ -107,6 +107,12 @@ router.get(
 );
 
 router.get(
+  "/revenue-chart",
+  authMiddleware.verifyAccessToken,
+  transactionController.getRevenueChart,
+);
+
+router.get(
   "/stats/export",
   authMiddleware.verifyAccessToken,
   exportLimiter,

@@ -146,12 +146,12 @@ const merchantTransactionRepository = {
         ? `(t.amount > $15::bigint OR (t.amount = $15::bigint AND t.id < $3))`
         : `(t.amount < $15::bigint OR (t.amount = $15::bigint AND t.id < $3))`
       : isAsc
-        ? `t.id > $3`
-        : `t.id < $3`;
+        ? `(t.created_at, t.id) > ((SELECT c.created_at FROM transactions c WHERE c.id = $3), $3)`
+        : `(t.created_at, t.id) < ((SELECT c.created_at FROM transactions c WHERE c.id = $3), $3)`;
 
     const orderByClause = isAmountSort
       ? `t.amount ${isAsc ? "ASC" : "DESC"}, t.id DESC`
-      : `t.id ${isAsc ? "ASC" : "DESC"}`;
+      : `t.created_at ${isAsc ? "ASC" : "DESC"}, t.id ${isAsc ? "ASC" : "DESC"}`;
 
     const result = await pool.query(
       `
@@ -482,12 +482,49 @@ const merchantTransactionRepository = {
     };
   },
 
+  async getDailyRevenueStats(
+    userId,
+    { startDate = null, endDate = null } = {},
+  ) {
+    const hasStartDate = Boolean(startDate);
+    const hasEndDate = Boolean(endDate);
+
+    const dailyResult = await pool.query(
+      `
+      SELECT
+        TO_CHAR(t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date_str,
+        COALESCE(SUM(t.amount - COALESCE(t.merchant_fee, 0)), 0) AS revenue,
+        COALESCE(SUM(t.amount), 0) AS gross_revenue,
+        COALESCE(SUM(COALESCE(t.merchant_fee, 0)), 0) AS merchant_fee,
+        COUNT(t.id) AS order_count
+      FROM transactions t
+      WHERE t.destination_user_id = $1
+        AND t.transaction_type = 'PAYMENT'
+        AND t.status = 'SUCCESS'
+        AND (
+          $2::boolean = false
+          OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        )
+        AND (
+          $4::boolean = false
+          OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        )
+      GROUP BY date_str
+      ORDER BY date_str ASC
+      `,
+      [userId, hasStartDate, startDate, hasEndDate, endDate],
+    );
+
+    return dailyResult.rows;
+  },
+
   async getMerchantStats(userId, { startDate = null, endDate = null } = {}) {
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
 
-    const result = await pool.query(
-      `
+    const [result, dailyRows] = await Promise.all([
+      pool.query(
+        `
       SELECT
         -- Tổng doanh thu thực nhận sau phí: PAYMENT thành công mà merchant là bên nhận
         COALESCE(SUM(CASE 
@@ -529,37 +566,14 @@ const merchantTransactionRepository = {
           OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
         )
       `,
-      [userId, hasStartDate, startDate, hasEndDate, endDate],
-    );
-    const dailyResult = await pool.query(
-      `
-      SELECT
-        TO_CHAR(t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date_str,
-        COALESCE(SUM(t.amount - COALESCE(t.merchant_fee, 0)), 0) AS revenue,
-        COALESCE(SUM(t.amount), 0) AS gross_revenue,
-        COALESCE(SUM(COALESCE(t.merchant_fee, 0)), 0) AS merchant_fee,
-        COUNT(t.id) AS order_count
-      FROM transactions t
-      WHERE t.destination_user_id = $1
-        AND t.transaction_type = 'PAYMENT'
-        AND t.status = 'SUCCESS'
-        AND (
-          $2::boolean = false
-          OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
-        )
-        AND (
-          $4::boolean = false
-          OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        )
-      GROUP BY date_str
-      ORDER BY date_str ASC
-      `,
-      [userId, hasStartDate, startDate, hasEndDate, endDate],
-    );
+        [userId, hasStartDate, startDate, hasEndDate, endDate],
+      ),
+      this.getDailyRevenueStats(userId, { startDate, endDate }),
+    ]);
 
     return {
       summary: result.rows[0],
-      daily_stats: dailyResult.rows,
+      daily_stats: dailyRows,
     };
   },
 };

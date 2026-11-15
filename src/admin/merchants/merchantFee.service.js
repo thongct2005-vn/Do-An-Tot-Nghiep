@@ -2,10 +2,9 @@ const pool = require("../../config/database");
 const { uuidv7 } = require("uuidv7");
 const { httpError } = require("../../utils/httpError");
 const { formatVnd } = require("../../utils/amount");
-const { invalidateLimitsCache } = require("../../utils/limitsDb");
+const { invalidateLimitsCache } = require("../../utils/limits/limitsDb");
 const merchantFeeService = require("../../modules/merchant/production/fee/fee.service");
 const {
-  assertSystemFeeWalletConfigured,
   normalizeSystemFeeConfig,
   validateFeeConfigInput,
   mergeEffectiveFeeConfig,
@@ -341,7 +340,8 @@ const adminMerchantFeeService = {
         [configKey, JSON.stringify(newPlain), adminId],
       );
 
-      const { walletId: feeWalletId } = assertSystemFeeWalletConfigured();
+      const { walletId: feeWalletId } =
+        await merchantFeeService.verifySystemFeeWallet(client);
 
       const auditHistoryRes = await client.query(
         `INSERT INTO admin_user_change_history

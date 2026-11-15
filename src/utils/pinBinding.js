@@ -8,6 +8,7 @@ const PIN_ACTIONS = {
   TOPUP: ["linked_bank_account_id", "amount"],
   WITHDRAW: ["linked_bank_account_id", "amount"],
   QR_PAYMENT: ["reference_code"],
+  POSTPAID_REPAY: ["amount"],
   BANK_LINK: ["bank_id"],
   BANK_SHOW_BALANCE: ["linked_bank_account_id"],
   BANK_UNLINK: ["linked_bank_account_id"],

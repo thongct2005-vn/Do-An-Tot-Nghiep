@@ -49,7 +49,7 @@ describe('Blocked Merchant access HTTP / PostgreSQL', {
     process.env.DASHBOARD_ORIGINS = 'https://merchant.example.test';
     pool = require('../src/config/database');
     tokenUtil = require('../src/utils/jwt');
-    encryption = require('../src/utils/hashSecretKey');
+    encryption = require('../src/utils/keys/secretKey');
     adminTokens = tokenUtil.generateAuthTokens({id:adminId,role:'ADMIN'});
     await pool.query("INSERT INTO users(id,role,status,refresh_token) VALUES($1,'ADMIN','ACTIVE',$2)",[adminId,adminTokens.refreshToken]);
     const express = require('express');

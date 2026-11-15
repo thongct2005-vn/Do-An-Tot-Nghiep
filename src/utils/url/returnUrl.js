@@ -1,4 +1,4 @@
-const { computeSignature } = require("./hashSecretKey");
+const { computeSignature } = require("../keys/secretKey");
 
 function buildSignedReturnUrl({
   returnUrl,

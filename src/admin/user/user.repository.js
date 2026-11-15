@@ -7,7 +7,7 @@ const { claimEmail } = require("../../utils/emailClaim");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
 const { httpError } = require("../../utils/httpError");
 const { maskPhone } = require("../../utils/mask");
-const { assertDailyLimit, getDailyUsage } = require("../../utils/dailyLimit");
+const { assertDailyLimit, getDailyUsage } = require("../../utils/limits/dailyLimit");
 
 const adminUserRepository = {
   async getUserStats() {

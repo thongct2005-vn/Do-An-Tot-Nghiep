@@ -19,8 +19,8 @@ const {
   getTransactionPolicy,
   getEffectiveTransactionLimit,
   getEffectiveWalletCapacity,
-} = require("../../utils/limitsDb");
-const { getDailyUsed } = require("../../utils/dailyLimit");
+} = require("../../utils/limits/limitsDb");
+const { getDailyUsed } = require("../../utils/limits/dailyLimit");
 const { formatVnd, parseAmount } = require("../../utils/amount");
 const { uuidv7 } = require("uuidv7");
 const pool = require("../../config/database");

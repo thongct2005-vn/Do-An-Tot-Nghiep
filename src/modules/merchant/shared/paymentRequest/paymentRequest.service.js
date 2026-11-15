@@ -7,9 +7,9 @@ const QRCode = require("qrcode");
 const { httpError } = require("../../../../utils/httpError");
 const MAX_ITEMS = 100;
 const { parseAmountInRange } = require("../../../../utils/amount");
-const { getEffectiveTransactionLimit } = require("../../../../utils/limitsDb");
+const { getEffectiveTransactionLimit } = require("../../../../utils/limits/limitsDb");
 const pool = require("../../../../config/database");
-const { validateReturnUrlForSave } = require("../../../../utils/urlGuard");
+const { validateReturnUrlForSave } = require("../../../../utils/url/urlGuard");
 
 function normalizeItems(items) {
   if (items === undefined || items === null) return [];

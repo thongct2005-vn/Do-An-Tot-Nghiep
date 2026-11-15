@@ -1,6 +1,6 @@
 const pool = require("../../../../config/database");
 const { httpError } = require("../../../../utils/httpError");
-const { assertDailyLimit } = require("../../../../utils/dailyLimit");
+const { assertDailyLimit } = require("../../../../utils/limits/dailyLimit");
 const transactionRepository = require("../../../transaction/transaction.repository");
 
 const merchantTransactionRepository = {
@@ -165,20 +165,36 @@ const merchantTransactionRepository = {
       SELECT
         t.id,
         t.transaction_type,
-        t.source_user_id,
-        su.full_name AS source_display_name,
-        CASE 
-          WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3 
+        CASE WHEN pp.user_id IS NOT NULL THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
+        COALESCE(
+          pp.full_name,
+          CASE
+            WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+            WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+            ELSE su.full_name
+          END
+        ) AS source_display_name,
+        CASE
+          WHEN pp.phone IS NOT NULL AND LENGTH(pp.phone) >= 3
+          THEN '*********' || RIGHT(pp.phone, 3)
+          WHEN pp.phone IS NOT NULL THEN pp.phone
+          WHEN su.role = 'SYSTEM' THEN NULL
+          WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3
           THEN '*********' || RIGHT(su.phone, 3)
-          ELSE su.phone 
+          ELSE su.phone
         END AS source_display_phone,
         
         t.destination_user_id,
-        du.full_name AS destination_display_name,
-        CASE 
-          WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3 
+        CASE
+          WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE du.full_name
+        END AS destination_display_name,
+        CASE
+          WHEN du.role = 'SYSTEM' THEN NULL
+          WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3
           THEN '*********' || RIGHT(du.phone, 3)
-          ELSE du.phone 
+          ELSE du.phone
         END AS destination_display_phone,
 
         t.amount,
@@ -202,6 +218,13 @@ const merchantTransactionRepository = {
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
       FROM transactions t
+      LEFT JOIN LATERAL (
+        SELECT pe.user_id, u.full_name, u.phone
+          FROM postpaid_entries pe
+          JOIN users u ON u.id = pe.user_id
+         WHERE pe.tx_id = t.id AND pe.action = 'PURCHASE'
+         LIMIT 1
+      ) pp ON true
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
@@ -213,7 +236,7 @@ const merchantTransactionRepository = {
           $5::boolean = false
           OR (
             (t.source_user_id = $1 AND du.full_name ILIKE '%' || $6 || '%')
-            OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $6 || '%')
+            OR (t.destination_user_id = $1 AND COALESCE(pp.full_name, su.full_name) ILIKE '%' || $6 || '%')
             OR t.id ILIKE '%' || $6 || '%'
             OR t.description ILIKE '%' || $6 || '%'
             OR b.name ILIKE '%' || $6 || '%'
@@ -315,15 +338,25 @@ const merchantTransactionRepository = {
         t.id,
         t.transaction_type,
         t.source_user_id,
-        su.full_name AS source_display_name,
         CASE
+          WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE su.full_name
+        END AS source_display_name,
+        CASE
+          WHEN su.role = 'SYSTEM' THEN NULL
           WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3
           THEN '*********' || RIGHT(su.phone, 3)
           ELSE su.phone
         END AS source_display_phone,
         t.destination_user_id,
-        du.full_name AS destination_display_name,
         CASE
+          WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE du.full_name
+        END AS destination_display_name,
+        CASE
+          WHEN du.role = 'SYSTEM' THEN NULL
           WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3
           THEN '*********' || RIGHT(du.phone, 3)
           ELSE du.phone
@@ -409,11 +442,19 @@ const merchantTransactionRepository = {
         t.created_at,
         t.completed_at,
         t.source_user_id,
-        su.full_name AS source_full_name,
-        su.phone AS source_phone,
+        CASE
+          WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE su.full_name
+        END AS source_full_name,
+        CASE WHEN su.role = 'SYSTEM' THEN NULL ELSE su.phone END AS source_phone,
         t.destination_user_id,
-        du.full_name AS destination_full_name,
-        du.phone AS destination_phone,
+        CASE
+          WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE du.full_name
+        END AS destination_full_name,
+        CASE WHEN du.role = 'SYSTEM' THEN NULL ELSE du.phone END AS destination_phone,
         CASE
           WHEN t.transaction_type = 'TOPUP' THEN 'IN'
           WHEN t.source_user_id = $1 THEN 'OUT'

@@ -1,9 +1,36 @@
 const { uuidv7 } = require("uuidv7");
+const pool = require("../../../../config/database");
+const { httpError } = require("../../../../utils/httpError");
+const {
+  assertValidSystemWalletRow,
+  verifySystemWalletInDb,
+} = require("../../../../utils/systemWallet");
 const {
   assertSystemFeeWalletConfigured,
 } = require("../../../fee/feeCalculator");
 
+function buildSystemFeeWalletSpec(expectedPhone) {
+  return {
+    expectedRole: "SYSTEM",
+    expectedFullName: "SYSTEM_FEE_WALLET",
+    expectedPhone: expectedPhone || null,
+    activeStatus: "ACTIVE",
+    displayLabel: "ví thu phí hệ thống",
+    inactiveMessage: "Ví thu phí hệ thống chưa sẵn sàng",
+  };
+}
+
 const merchantFeeRepository = {
+  async verifySystemFeeWallet(db = pool) {
+    const { walletId: feeWalletId, walletPhone: feeWalletPhone } =
+      assertSystemFeeWalletConfigured();
+    return verifySystemWalletInDb(db, {
+      walletId: feeWalletId,
+      otherSystemWalletId: process.env.SYSTEM_POSTPAID_WALLET_ID,
+      collisionMessage: "Ví thu phí hệ thống và ví nguồn Ví trả sau không được trùng ID",
+      spec: buildSystemFeeWalletSpec(feeWalletPhone),
+    });
+  },
   async getMerchantUser(db, merchantUserId, { forUpdate = false } = {}) {
     const res = await db.query(
       `SELECT id, role, status, balance
@@ -83,20 +110,31 @@ const merchantFeeRepository = {
       throw new Error("Thiếu mã giao dịch để ghi nhận phí vào ví hệ thống");
     }
 
-    const { walletId: feeWalletId } = assertSystemFeeWalletConfigured();
+    const { walletId: feeWalletId, walletPhone: feeWalletPhone } =
+      assertSystemFeeWalletConfigured();
+    const postpaidWalletId = String(
+      process.env.SYSTEM_POSTPAID_WALLET_ID || "",
+    ).trim();
+    if (postpaidWalletId && postpaidWalletId === feeWalletId) {
+      throw httpError(
+        500,
+        "Ví thu phí hệ thống và ví nguồn Ví trả sau không được trùng ID",
+      );
+    }
 
     // Khóa ví SYSTEM_FEE_WALLET trước khi kiểm tra/chèn sổ cái để tránh trùng khi retry hoặc chạy song song
     const walletLockRes = await client.query(
-      `SELECT balance
+      `SELECT id, role, status, full_name, phone, balance
          FROM users
         WHERE id = $1
         FOR UPDATE`,
       [feeWalletId],
     );
 
-    if (!walletLockRes.rows[0]) {
-      throw new Error("Không tìm thấy ví thu phí hệ thống");
-    }
+    const lockedFeeWallet = assertValidSystemWalletRow(
+      walletLockRes.rows[0],
+      buildSystemFeeWalletSpec(feeWalletPhone),
+    );
 
     const existing = await client.query(
       `SELECT id
@@ -109,7 +147,7 @@ const merchantFeeRepository = {
       return { credited: false, alreadyRecorded: true, ledgerId: existing.rows[0].id };
     }
 
-    const balanceBefore = Number(walletLockRes.rows[0].balance);
+    const balanceBefore = Number(lockedFeeWallet.balance);
     const balanceAfter = balanceBefore + feeAmount;
     const ledgerId = uuidv7();
 

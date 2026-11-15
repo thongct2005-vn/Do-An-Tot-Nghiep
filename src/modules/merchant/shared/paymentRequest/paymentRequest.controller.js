@@ -1,5 +1,5 @@
 const { successResponse } = require("../../../../utils/apiResponse");
-const { getPublicBaseUrl } = require("../../../../utils/publicUrl");
+const { getPublicBaseUrl } = require("../../../../utils/url/publicUrl");
 function createPaymentRequestController(paymentMerchantRequestService) {
   return {
     async createDynamicQRToken(req, res, next) {

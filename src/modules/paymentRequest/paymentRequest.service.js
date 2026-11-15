@@ -5,7 +5,7 @@ const { uuidv7 } = require("uuidv7");
 const userRepository = require("../user/user.repository");
 const { httpError } = require("../../utils/httpError");
 const { parseAmountInRange } = require("../../utils/amount");
-const { getEffectiveTransactionLimit } = require("../../utils/limitsDb");
+const { getEffectiveTransactionLimit } = require("../../utils/limits/limitsDb");
 const pool = require("../../config/database");
 
 

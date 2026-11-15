@@ -1,6 +1,6 @@
 const dns = require("dns");
 const net = require("net");
-const { httpError } = require("./httpError");
+const { httpError } = require("../httpError");
 
 // --- Cấu hình môi trường ---
 

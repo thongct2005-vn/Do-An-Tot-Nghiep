@@ -66,16 +66,35 @@ const bankRepository = {
     );
   },
 
-  async enableShowBalance({ userId, linkedBankAccountId }) {
+  async setShowBalanceVisibility({ userId, linkedBankAccountId, isShowBalance }) {
+    const show = Boolean(isShowBalance);
     const result = await pool.query(
       `UPDATE linked_bank_accounts
-       SET is_show_balance = true,
+       SET is_show_balance = $3,
            updated_at = NOW()
        WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'
-       RETURNING id, is_show_balance, balance`,
-      [linkedBankAccountId, userId],
+       RETURNING id,
+                 is_show_balance,
+                 CASE WHEN is_show_balance = true THEN balance ELSE NULL END AS balance`,
+      [linkedBankAccountId, userId, show],
     );
     return result.rows[0] ?? null;
+  },
+
+  async enableShowBalance({ userId, linkedBankAccountId }) {
+    return this.setShowBalanceVisibility({
+      userId,
+      linkedBankAccountId,
+      isShowBalance: true,
+    });
+  },
+
+  async hideBalance({ userId, linkedBankAccountId }) {
+    return this.setShowBalanceVisibility({
+      userId,
+      linkedBankAccountId,
+      isShowBalance: false,
+    });
   },
 
   async unlinkBankAccount({ userId, linkedBankAccountId }) {

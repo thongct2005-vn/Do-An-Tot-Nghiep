@@ -1,6 +1,7 @@
 const { successResponse } = require("../../utils/apiResponse");
 const adminTransactionService = require("./transaction.service");
 const { sendXlsxResponse } = require("./transaction.export");
+const postpaidService = require("../../modules/postpaid/postpaid.service");
 
 const adminTransactionController = {
   async exportTransactions(req, res, next) {
@@ -152,6 +153,32 @@ const adminTransactionController = {
         res,
         200,
         "Cập nhật hồ sơ tra soát thành công",
+        result
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async refundPostpaid(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { amount, reason } = req.body || {};
+      const actorId = req.user?.user_id || req.user?.id || null;
+      const idempotencyKey = req.headers["idempotency-key"] || null;
+
+      const result = await postpaidService.refundPostpaidTransaction({
+        originalTxId: id,
+        refundAmount: amount ?? null,
+        reason: reason || "",
+        actorId,
+        idempotencyKey,
+      });
+
+      return successResponse(
+        res,
+        200,
+        "Hoàn tiền giao dịch Ví trả sau thành công",
         result
       );
     } catch (e) {

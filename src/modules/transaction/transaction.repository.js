@@ -2,7 +2,7 @@ const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
-const { assertDailyLimit, assertWalletCapacity } = require("../../utils/dailyLimit");
+const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
 const { uuidv7 } = require("uuidv7");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
 const {
@@ -744,6 +744,8 @@ const TransactionRepository = {
       cursorId = null,
       limit,
       keyword = null,
+      type = null,
+      direction = null,
       startDate = null,
       endDate = null,
     } = {},
@@ -752,6 +754,8 @@ const TransactionRepository = {
       cursorId && String(cursorId).trim() !== "" ? String(cursorId).trim() : null;
     const hasCursor = Boolean(validCursorId);
     const hasKeyword = Boolean(keyword && keyword.trim());
+    const hasType = Boolean(type && String(type).trim());
+    const hasDirection = Boolean(direction && String(direction).trim());
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
 
@@ -759,18 +763,92 @@ const TransactionRepository = {
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
 
+    // Khi không lọc keyword/direction, mỗi nhánh UNION chỉ cần lấy tối đa `limit` dòng mới nhất
+    // vì top `limit` toàn cục theo (created_at DESC, id DESC) luôn nằm trong top `limit` từng nhánh.
+    const branchLimitClause =
+      !hasKeyword && !hasDirection
+        ? "ORDER BY t.created_at DESC, t.id DESC LIMIT $4"
+        : "";
+
     const result = await pool.query(
       `
+      WITH cursor_ref AS (
+        SELECT c.created_at
+          FROM transactions c
+         WHERE $2::boolean = true AND c.id = $3::varchar
+         LIMIT 1
+      ),
+      candidate_tx AS (
+        (
+          SELECT t.id
+            FROM transactions t
+           WHERE t.source_user_id = $1
+             AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
+             AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+             AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
+             AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+           ${branchLimitClause}
+        )
+        UNION
+        (
+          SELECT t.id
+            FROM transactions t
+           WHERE t.destination_user_id = $1
+             AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
+             AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+             AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
+             AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+           ${branchLimitClause}
+        )
+        UNION
+        (
+          SELECT t.id
+            FROM (
+              SELECT DISTINCT pe.tx_id
+                FROM postpaid_entries pe
+               WHERE pe.user_id = $1
+                 AND pe.action IN ('PURCHASE', 'REFUND')
+                 AND pe.tx_id IS NOT NULL
+            ) pe_ids
+            JOIN LATERAL (
+              SELECT t.id, t.created_at
+                FROM transactions t
+               WHERE t.id = pe_ids.tx_id
+                 AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
+                 AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                 AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
+                 AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+               LIMIT 1
+            ) t ON true
+           ${branchLimitClause}
+        )
+      )
       SELECT
         t.id,
         t.transaction_type,
-        t.source_user_id,
-        su.full_name AS source_display_name,
-        su.phone AS source_display_phone,
+        CASE WHEN pp.action = 'PURCHASE' THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
+        CASE
+          WHEN pp.action = 'PURCHASE' THEN pp.payer_name
+          WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE su.full_name
+        END AS source_display_name,
+        CASE
+          WHEN pp.action = 'PURCHASE' THEN pp.payer_phone
+          WHEN su.role = 'SYSTEM' THEN NULL
+          ELSE su.phone
+        END AS source_display_phone,
         
         t.destination_user_id,
-        du.full_name AS destination_display_name,
-        du.phone AS destination_display_phone,
+        CASE
+          WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE du.full_name
+        END AS destination_display_name,
+        CASE
+          WHEN du.role = 'SYSTEM' THEN NULL
+          ELSE du.phone
+        END AS destination_display_phone,
 
         t.amount,
         t.fee,
@@ -785,49 +863,121 @@ const TransactionRepository = {
         t.created_at,
         b.name AS bank_name,
         pr.order_id AS order_id,
+        CASE WHEN pp.user_id IS NOT NULL THEN 'POSTPAID' ELSE 'MAIN_WALLET' END AS funding_source,
+        pp.action AS postpaid_action,
         CASE
           WHEN t.transaction_type = 'TOPUP' THEN 'IN'
+          WHEN pp.action = 'PURCHASE' AND pp.user_id = $1 THEN 'OUT'
+          WHEN pp.action = 'REFUND' AND pp.user_id = $1 THEN 'IN'
           WHEN t.source_user_id = $1 THEN 'OUT'
           ELSE 'IN'
         END AS direction,
-        CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
-        CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
-      FROM transactions t
+        CASE
+          WHEN pp.action IN ('PURCHASE', 'REFUND') AND pp.user_id = $1 THEN COALESCE(
+            (SELECT GREATEST(0, pw.credit_limit - pp.used_before) FROM postpaid_wallets pw WHERE pw.user_id = $1),
+            0
+          )
+          WHEN t.source_user_id = $1 THEN t.source_balance_before
+          ELSE t.dest_balance_before
+        END AS balance_before,
+        CASE
+          WHEN pp.action IN ('PURCHASE', 'REFUND') AND pp.user_id = $1 THEN COALESCE(
+            (SELECT GREATEST(0, pw.credit_limit - pp.used_after) FROM postpaid_wallets pw WHERE pw.user_id = $1),
+            0
+          )
+          WHEN t.source_user_id = $1 THEN t.source_balance_after
+          ELSE t.dest_balance_after
+        END AS balance_after
+      FROM candidate_tx ct
+      JOIN transactions t ON t.id = ct.id
+      LEFT JOIN LATERAL (
+        SELECT pe.user_id, pe.action, pe.used_before, pe.used_after, pu.full_name AS payer_name, pu.phone AS payer_phone
+          FROM postpaid_entries pe
+          JOIN users pu ON pu.id = pe.user_id
+         WHERE pe.tx_id = t.id
+         ORDER BY CASE WHEN pe.action IN ('PURCHASE', 'REFUND') THEN 0 ELSE 1 END ASC, pe.created_at DESC
+         LIMIT 1
+      ) pp ON true
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
-        AND (
-          $2::boolean = false
-          OR (t.created_at, t.id) < ((SELECT c.created_at FROM transactions c WHERE c.id = $3::varchar), $3::varchar)
-        )
-        AND (
+      WHERE (
           $5::boolean = false
           OR (
-            unaccent(COALESCE(du.full_name, '')) ILIKE '%' || unaccent($6) || '%'
-            OR unaccent(COALESCE(su.full_name, '')) ILIKE '%' || unaccent($6) || '%'
-            OR COALESCE(du.phone, '') LIKE '%' || $6 || '%'
-            OR COALESCE(su.phone, '') LIKE '%' || $6 || '%'
+            unaccent(COALESCE(
+              CASE
+                WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+                WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+                ELSE du.full_name
+              END,
+              ''
+            )) ILIKE '%' || unaccent($6) || '%'
+            OR unaccent(COALESCE(
+              CASE
+                WHEN pp.action = 'PURCHASE' THEN pp.payer_name
+                WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+                WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+                ELSE su.full_name
+              END,
+              ''
+            )) ILIKE '%' || unaccent($6) || '%'
+            OR (du.role IS DISTINCT FROM 'SYSTEM' AND COALESCE(du.phone, '') LIKE '%' || $6 || '%')
+            OR COALESCE(
+              CASE
+                WHEN pp.action = 'PURCHASE' THEN pp.payer_phone
+                WHEN su.role = 'SYSTEM' THEN NULL
+                ELSE su.phone
+              END,
+              ''
+            ) LIKE '%' || $6 || '%'
             OR t.id::text LIKE '%' || $6 || '%'
             OR unaccent(COALESCE(t.description, '')) ILIKE '%' || unaccent($6) || '%'
             OR unaccent(COALESCE(b.name, '')) ILIKE '%' || unaccent($6) || '%'
             OR COALESCE(pr.order_id, '') ILIKE '%' || $6 || '%'
-            OR (t.transaction_type = 'TOPUP' AND ('nap tien vao vi' ILIKE '%' || unaccent($6) || '%' OR 'nap tien' ILIKE '%' || unaccent($6) || '%'))
-            OR (t.transaction_type = 'WITHDRAW' AND ('rut tien tu vi' ILIKE '%' || unaccent($6) || '%' OR 'rut tien' ILIKE '%' || unaccent($6) || '%'))
-            OR (t.transaction_type = 'TRANSFER' AND ('chuyen tien' ILIKE '%' || unaccent($6) || '%' OR 'nhan tien' ILIKE '%' || unaccent($6) || '%'))
-            OR (t.transaction_type = 'PAYMENT' AND ('thanh toan' ILIKE '%' || unaccent($6) || '%'))
+            OR (t.transaction_type = 'TOPUP' AND (
+              ('nap tien vao vi tu ' || unaccent(COALESCE(b.name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('nap tien tu ' || unaccent(COALESCE(b.name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('nap tu ' || unaccent(COALESCE(b.name, ''))) ILIKE '%' || unaccent($6) || '%'
+            ))
+            OR (t.transaction_type = 'WITHDRAW' AND (
+              ('rut tien tu vi ve ' || unaccent(COALESCE(b.name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('rut tien ve ' || unaccent(COALESCE(b.name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('rut ve ' || unaccent(COALESCE(b.name, ''))) ILIKE '%' || unaccent($6) || '%'
+            ))
+            OR (t.transaction_type = 'TRANSFER' AND t.source_user_id = $1 AND (
+              ('chuyen tien den ' || unaccent(COALESCE(du.full_name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('chuyen den ' || unaccent(COALESCE(du.full_name, ''))) ILIKE '%' || unaccent($6) || '%'
+            ))
+            OR (t.transaction_type = 'TRANSFER' AND t.source_user_id IS DISTINCT FROM $1 AND (
+              ('nhan tien tu ' || unaccent(COALESCE(su.full_name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('nhan tu ' || unaccent(COALESCE(su.full_name, ''))) ILIKE '%' || unaccent($6) || '%'
+            ))
+            OR (t.transaction_type = 'PAYMENT' AND (
+              ('thanh toan ' || unaccent(COALESCE(
+                CASE
+                  WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+                  WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+                  ELSE du.full_name
+                END,
+                ''
+              ))) ILIKE '%' || unaccent($6) || '%'
+            ))
           )
         )
         AND (
-       $7::boolean = false
-         OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+          $13::boolean = false
+          OR (
+            CASE
+              WHEN t.transaction_type = 'TOPUP' THEN 'IN'
+              WHEN pp.action = 'PURCHASE' AND pp.user_id = $1 THEN 'OUT'
+              WHEN pp.action = 'REFUND' AND pp.user_id = $1 THEN 'IN'
+              WHEN t.source_user_id = $1 THEN 'OUT'
+              ELSE 'IN'
+            END
+          ) = $14::text
         )
-        AND (
-          $9::boolean = false
-          OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
-         )
       ORDER BY t.created_at DESC, t.id DESC
       LIMIT $4
       `,
@@ -842,6 +992,10 @@ const TransactionRepository = {
         startDate,
         hasEndDate,
         endDate,
+        hasType,
+        hasType ? String(type).trim().toUpperCase() : null,
+        hasDirection,
+        hasDirection ? String(direction).trim().toUpperCase() : null,
       ],
     );
 
@@ -881,15 +1035,25 @@ const TransactionRepository = {
         t.id,
         t.transaction_type,
         t.source_user_id,
-        su.full_name AS source_display_name,
         CASE
+          WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE su.full_name
+        END AS source_display_name,
+        CASE
+          WHEN su.role = 'SYSTEM' THEN NULL
           WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3
           THEN '*********' || RIGHT(su.phone, 3)
           ELSE su.phone
         END AS source_display_phone,
         t.destination_user_id,
-        du.full_name AS destination_display_name,
         CASE
+          WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+          WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+          ELSE du.full_name
+        END AS destination_display_name,
+        CASE
+          WHEN du.role = 'SYSTEM' THEN NULL
           WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3
           THEN '*********' || RIGHT(du.phone, 3)
           ELSE du.phone
@@ -924,10 +1088,24 @@ const TransactionRepository = {
         AND (
           $2::boolean = false
           OR (
-            unaccent(COALESCE(du.full_name, '')) ILIKE '%' || unaccent($3::text) || '%'
-            OR unaccent(COALESCE(su.full_name, '')) ILIKE '%' || unaccent($3::text) || '%'
-            OR COALESCE(du.phone, '') LIKE '%' || $3::text || '%'
-            OR COALESCE(su.phone, '') LIKE '%' || $3::text || '%'
+            unaccent(COALESCE(
+              CASE
+                WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+                WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+                ELSE du.full_name
+              END,
+              ''
+            )) ILIKE '%' || unaccent($3::text) || '%'
+            OR unaccent(COALESCE(
+              CASE
+                WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+                WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+                ELSE su.full_name
+              END,
+              ''
+            )) ILIKE '%' || unaccent($3::text) || '%'
+            OR (du.role IS DISTINCT FROM 'SYSTEM' AND COALESCE(du.phone, '') LIKE '%' || $3::text || '%')
+            OR (su.role IS DISTINCT FROM 'SYSTEM' AND COALESCE(su.phone, '') LIKE '%' || $3::text || '%')
             OR t.id::text LIKE '%' || $3::text || '%'
             OR unaccent(COALESCE(t.description, '')) ILIKE '%' || unaccent($3::text) || '%'
             OR unaccent(COALESCE(b.name, '')) ILIKE '%' || unaccent($3::text) || '%'

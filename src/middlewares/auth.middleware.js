@@ -1,7 +1,7 @@
 const tokenUtil = require("../utils/jwt");
 const { httpError } = require("../utils/httpError");
 const { computePinBinding } = require("../utils/pinBinding");
-const { computeSignature, isSameSignature } = require("../utils/hashSecretKey");
+const { computeSignature, isSameSignature } = require("../utils/keys/secretKey");
 const dashboardRepository = require("../modules/merchant/shared/dashboard/dashboard.repository");
 const MERCHANT_TIMESTAMP_TOLERANCE = 5 * 60;
 

@@ -102,7 +102,7 @@ CREATE TABLE fee_ledger_entries (
   transaction_id varchar REFERENCES transactions(id) ON DELETE RESTRICT,
   merchant_user_id uuid REFERENCES users(id) ON DELETE RESTRICT,
   payer_user_id uuid REFERENCES users(id) ON DELETE RESTRICT,
-  fee_type varchar(30) NOT NULL CHECK (fee_type IN ('QR_FEE', 'USER_FEE', 'WITHDRAW_FEE', 'MONTHLY_PLAN_FEE')),
+  fee_type varchar(30) NOT NULL CHECK (fee_type IN ('QR_FEE', 'USER_FEE', 'WITHDRAW_FEE', 'MONTHLY_PLAN_FEE', 'POSTPAID_LATE_FEE')),
   amount bigint NOT NULL CHECK (amount >= 0),
   fee_wallet_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   fee_wallet_balance_before bigint NOT NULL,
@@ -111,8 +111,65 @@ CREATE TABLE fee_ledger_entries (
   created_at timestamptz NOT NULL DEFAULT NOW(),
   UNIQUE (transaction_id, fee_type)
 );
+CREATE TABLE postpaid_wallets (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
+  status varchar(20) NOT NULL DEFAULT 'ACTIVE'
+    CHECK (status IN ('INACTIVE', 'ACTIVE', 'PAST_DUE', 'FROZEN')),
+  credit_limit bigint NOT NULL CHECK (credit_limit >= 0),
+  used_amount bigint NOT NULL DEFAULT 0 CHECK (used_amount >= 0),
+  billed_amount bigint NOT NULL DEFAULT 0 CHECK (billed_amount >= 0),
+  late_fee_amount bigint NOT NULL DEFAULT 0 CHECK (late_fee_amount >= 0),
+  current_cycle_month varchar(7),
+  due_date date,
+  activated_at timestamptz NOT NULL DEFAULT NOW(),
+  updated_at timestamptz NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_postpaid_debt_bounds
+    CHECK (billed_amount + late_fee_amount <= used_amount)
+);
+CREATE OR REPLACE FUNCTION public.uuid_generate_v7()
+RETURNS uuid
+AS $$
+  SELECT encode(
+    set_byte(b, 6, (get_byte(b, 6) & 15) | 112),
+    'hex'
+  )::uuid
+  FROM (
+    SELECT overlay(
+      decode(replace(gen_random_uuid()::text, '-', ''), 'hex')
+      placing substring(int8send(floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint) FROM 3 FOR 6)
+      FROM 1 FOR 6
+    ) AS b
+  ) t;
+$$
+LANGUAGE sql
+VOLATILE;
+
+CREATE TABLE postpaid_entries (
+  id uuid PRIMARY KEY DEFAULT public.uuid_generate_v7(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  tx_id varchar REFERENCES transactions(id) ON DELETE RESTRICT,
+  ref_tx_id varchar REFERENCES transactions(id) ON DELETE RESTRICT,
+  action varchar(30) NOT NULL CHECK (action IN (
+    'PURCHASE', 'REPAY_PRINCIPAL', 'REPAY_LATE_FEE',
+    'LATE_FEE', 'REFUND', 'STATEMENT_CLOSE', 'LIMIT_ADJUST'
+  )),
+  amount bigint NOT NULL CHECK (amount >= 0),
+  delta_used bigint NOT NULL,
+  used_before bigint NOT NULL CHECK (used_before >= 0),
+  used_after bigint NOT NULL CHECK (used_after >= 0),
+  cycle_month varchar(7),
+  note text,
+  created_at timestamptz NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_postpaid_entries_user_time ON postpaid_entries (user_id, created_at DESC);
+CREATE INDEX idx_postpaid_entries_tx ON postpaid_entries (tx_id) WHERE tx_id IS NOT NULL;
+CREATE INDEX idx_postpaid_entries_ref_tx ON postpaid_entries (ref_tx_id) WHERE ref_tx_id IS NOT NULL;
+CREATE UNIQUE INDEX uk_postpaid_statement_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'STATEMENT_CLOSE';
+CREATE UNIQUE INDEX uk_postpaid_late_fee_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'LATE_FEE';
 INSERT INTO users (id, role, full_name, email, phone, status, balance)
-VALUES ('00000000-0000-7000-8000-000000000001', 'SYSTEM', 'SYSTEM_FEE_WALLET', 'system_fee_wallet@system.internal', 'SYS_FEE_01', 'ACTIVE', 0);
+VALUES
+  ('00000000-0000-7000-8000-000000000001', 'SYSTEM', 'SYSTEM_FEE_WALLET', 'system_fee_wallet@system.internal', 'SYS_FEE_01', 'ACTIVE', 0),
+  ('00000000-0000-7000-8000-000000000002', 'SYSTEM', 'SYSTEM_POSTPAID_WALLET', 'system_postpaid_wallet@system.internal', 'SYS_BNPL_1', 'ACTIVE', 100000000000);
 INSERT INTO system_configs (key, value, description) VALUES
   ('CONTACT_CHECK_MAX_PHONES', '500'::jsonb, 'Max phones per contact check'),
   ('DAILY_LIMIT_TIMEZONE', '"Asia/Ho_Chi_Minh"'::jsonb, 'Timezone for daily transaction limits'),
@@ -120,7 +177,11 @@ INSERT INTO system_configs (key, value, description) VALUES
   ('HISTORY_PAGE_LIMIT', '20'::jsonb, 'Max items per transaction history page'),
   ('RISK_THRESHOLDS', '{"DEFAULT":{"challenge":40,"block":70},"LOGIN":{"challenge":40,"block":70},"REGISTER":{"challenge":35,"block":60},"SEND_OTP":{"challenge":30,"block":55},"OTP":{"challenge":35,"block":60},"FORGOT":{"challenge":35,"block":60},"TRANSACTION":{"challenge":35,"block":65}}'::jsonb, 'Default risk guard thresholds'),
   ('MERCHANT_FEE_CONFIG', '{"rate_bps":100,"min_fee":200,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":50,"withdraw_free_quota_per_month":50000000,"monthly_plan_enabled":false,"monthly_plan_fee":0,"monthly_grace_days":7,"tiers":[{"from_amount":0,"rate_bps":100},{"from_amount":50000000,"rate_bps":80},{"from_amount":200000000,"rate_bps":60}]}'::jsonb, 'Default merchant fee config'),
-  ('USER_FEE_CONFIG', '{"rate_bps":0,"min_fee":0,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":0,"withdraw_free_quota_per_month":0,"tiers":[]}'::jsonb, 'Default user fee config');
+  ('USER_FEE_CONFIG', '{"rate_bps":0,"min_fee":0,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":0,"withdraw_free_quota_per_month":0,"tiers":[]}'::jsonb, 'Default user fee config'),
+  ('POSTPAID_CONFIG', '{"enabled":true,"default_credit_limit":2000000,"min_account_days":0,"billing_day":20,"due_day":5,"late_fee_bps":200,"min_late_fee":10000}'::jsonb, 'Default postpaid wallet config'),
+  ('POSTPAID_STATUS', '{"INACTIVE":"Chưa kích hoạt","ACTIVE":"Đang hoạt động","PAST_DUE":"Quá hạn thanh toán","FROZEN":"Đang tạm khóa"}'::jsonb, 'Postpaid wallet statuses'),
+  ('POSTPAID_ENTRY_ACTIONS', '{"PURCHASE":"Thanh toán QR bằng Ví trả sau","REPAY_PRINCIPAL":"Trả nợ gốc Ví trả sau","REPAY_LATE_FEE":"Thanh toán phí trễ hạn","LATE_FEE":"Phí trễ hạn kỳ sao kê","REFUND":"Hoàn tiền giao dịch Ví trả sau","STATEMENT_CLOSE":"Chốt sao kê kỳ","LIMIT_ADJUST":"Điều chỉnh hạn mức"}'::jsonb, 'Postpaid entry action types'),
+  ('WALLET_CAPACITY_CONFIG', '{"USER":{"min_capacity":10000000,"default_capacity":100000000,"max_capacity":200000000},"MERCHANT":{"min_capacity":50000000,"default_capacity":2000000000,"max_capacity":5000000000}}'::jsonb, 'Default wallet capacity config');
 INSERT INTO transaction_limit_policies (role, transaction_type, min_amount, max_amount, daily_limit) VALUES
   ('MERCHANT', 'TOPUP', 10000, 50000000, 50000000),
   ('MERCHANT', 'WITHDRAW', 10000, 200000000, 500000000),

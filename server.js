@@ -12,7 +12,7 @@ const { startBackgroundJobs, stopBackgroundJobs } = require("./src/jobs");
 const {
   pageRouter: payPageRouter,
 } = require("./src/modules/paymentPage/paymentPage.routes");
-const { assertPublicBaseUrlConfigured } = require("./src/utils/publicUrl");
+const { assertPublicBaseUrlConfigured } = require("./src/utils/url/publicUrl");
 const {
   assertSystemFeeWalletConfigured,
 } = require("./src/modules/fee/feeCalculator");

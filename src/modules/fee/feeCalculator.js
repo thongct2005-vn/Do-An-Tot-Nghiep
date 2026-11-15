@@ -52,6 +52,7 @@ const FEE_TYPES = Object.freeze({
   USER_FEE: "USER_FEE",                 // Phí dịch vụ hoặc phí chuyển tiền người gửi trả
   WITHDRAW_FEE: "WITHDRAW_FEE",         // Phí rút tiền về ngân hàng
   MONTHLY_PLAN_FEE: "MONTHLY_PLAN_FEE", // Phí duy trì gói cước theo tháng
+  POSTPAID_LATE_FEE: "POSTPAID_LATE_FEE", // Phí phạt quá hạn Ví trả sau
 });
 
 // Danh mục các trạng thái gói thu phí theo tháng của merchant

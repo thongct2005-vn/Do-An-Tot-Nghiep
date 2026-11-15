@@ -10,7 +10,7 @@ const {
   resolveAdminDateRange,
   generateTimeBuckets,
   getMondayOfDateStr,
-} = require("../../utils/adminDateRange");
+} = require("../../utils/dateRange");
 
 const MAX_ADMIN_AUTH_ATTEMPTS = 5;
 const ADMIN_LOCK_MINUTES = 30;

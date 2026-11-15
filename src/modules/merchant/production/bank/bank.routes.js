@@ -27,6 +27,11 @@ router.patch(
   authMiddleware.verifyTransactionOtpToken("BANK_SHOW_BALANCE"),
   merchantBankController.enableShowBalance,
 );
+router.patch(
+  "/hide-balance",
+  authMiddleware.verifyAccessToken,
+  merchantBankController.hideBalance,
+);
 router.post(
   "/unlink",
   authMiddleware.verifyAccessToken,

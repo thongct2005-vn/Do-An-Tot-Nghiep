@@ -1,5 +1,5 @@
-const { httpError } = require("./httpError");
-const { formatVnd } = require("./amount");
+const { httpError } = require("../httpError");
+const { formatVnd } = require("../amount");
 const {
   getSystemConfig,
   getTransactionPolicy,

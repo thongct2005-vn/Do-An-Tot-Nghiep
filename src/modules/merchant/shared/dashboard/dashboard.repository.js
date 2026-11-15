@@ -1,7 +1,7 @@
 const pool = require("../../../../config/database");
 const {
   decryptSecretKey,
-} = require("../../../../utils/hashSecretKey");
+} = require("../../../../utils/keys/secretKey");
 
 const dashboardRepository = {
   async getMerchantAccountStatus(userId) {

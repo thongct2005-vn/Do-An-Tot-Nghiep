@@ -2,7 +2,7 @@ const adminDashboardRepository = require("./dashboard.repository");
 const {
   resolveAdminDateRange,
   generateTimeBuckets,
-} = require("../../utils/adminDateRange");
+} = require("../../utils/dateRange");
 
 const CANONICAL_TX_TYPES = [
   { type: "TOPUP", label: "Nạp tiền" },

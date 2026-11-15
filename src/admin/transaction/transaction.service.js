@@ -9,7 +9,7 @@ const {
   resolveAdminDateRange,
   getCurrentMonthBoundsInVietnam,
   getMondayOfDateStr,
-} = require("../../utils/adminDateRange");
+} = require("../../utils/dateRange");
 
 const VALID_TRANSACTION_TYPES = [
   "ALL",

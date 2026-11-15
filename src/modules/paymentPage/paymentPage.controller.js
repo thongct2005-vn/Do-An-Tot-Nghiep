@@ -2,8 +2,8 @@ const QRCode = require("qrcode");
 const { successResponse } = require("../../utils/apiResponse");
 const { httpError } = require("../../utils/httpError");
 const paymentPageRepository = require("./paymentPage.repository");
-const { decryptSecretKey } = require("../../utils/hashSecretKey");
-const { buildSignedReturnUrl } = require("../../utils/returnUrl");
+const { decryptSecretKey } = require("../../utils/keys/secretKey");
+const { buildSignedReturnUrl } = require("../../utils/url/returnUrl");
 
 // reference_code sinh từ bảng chữ cái chữ + số (xem generateReferenceCode)
 const REFERENCE_PATTERN = /^[A-Za-z0-9]{8,64}$/;

@@ -18,7 +18,8 @@ function adminAudit(req, res, next) {
     const route = template
       ? `${req.baseUrl}${Array.isArray(template) ? template[0] : template}`
       : "/admin/*";
-    const adminId = res.locals.auditAdminId || req.user?.user_id || req.user?.id || null;
+    const adminId = res.locals.auditAdminId ||
+      (req.user?.type === "ADMIN" ? req.user.user_id : null);
     const status = res.statusCode;
     void recordAdminAction({
       admin_id: adminId == null ? null : String(adminId),

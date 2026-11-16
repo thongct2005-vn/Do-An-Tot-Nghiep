@@ -34,6 +34,9 @@ test("MongoDB login events aggregate by Vietnam day and exclude FAILED", async (
     assert.ok(await recordSuccessfulUserLogin({ userId, loggedInAt: new Date("2026-11-01T00:00:00+07:00") }));
   }
   await UserLoginEvent.create({ user_id: "u3", status: "FAILED", logged_in_at: new Date("2026-11-01T12:00:00+07:00") });
+  for (const at of ["2026-10-31T23:59:59.999+07:00", "2026-11-02T00:00:00+07:00"]) {
+    await recordSuccessfulUserLogin({ userId: "outside-period", loggedInAt: new Date(at) });
+  }
   const rows = await UserLoginEvent.aggregate([
     { $match: { status: "SUCCESS", logged_in_at: { $gte: new Date("2026-10-31T17:00:00Z"), $lt: new Date("2026-11-01T17:00:00Z") } } },
     { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$logged_in_at", timezone: "Asia/Ho_Chi_Minh" } }, total: { $sum: 1 }, users: { $addToSet: "$user_id" } } },
@@ -50,7 +53,7 @@ test("admin GET and login audit omit secrets and preserve route template", async
   app.use(express.json());
   app.use("/api/v2/admin", adminAudit);
   app.get("/api/v2/admin/user/:id", (req, res) => {
-    req.user = { user_id: "admin-1" };
+    req.user = { user_id: "admin-1", type: "ADMIN" };
     res.json({ ok: true });
   });
   app.post("/api/v2/admin/auth/login", (req, res) => {
@@ -59,7 +62,7 @@ test("admin GET and login audit omit secrets and preserve route template", async
     res.json({ token: "secret-token" });
   });
   app.patch('/api/v2/admin/user/:id', (req, res) => {
-    req.user = {user_id:'admin-1'};
+    req.user = {user_id:'admin-1', type:'ADMIN'};
     res.status(200).json({updated:true});
   });
   const server = app.listen(0);
@@ -202,6 +205,7 @@ test('OTP and TOTP auth paths persist one event each, rejected/challenge paths p
 });
 
 test('login stats routes authorize ADMIN and agree across production/sandbox prefixes', async () => {
+  const previousAuditIds = await AdminActionLog.distinct('_id');
   const jwt = require('../src/utils/jwt');
   const adminRepo = require('../src/admin/auth/auth.repository');
   const original = adminRepo.findAdminSessionById;
@@ -210,6 +214,8 @@ test('login stats routes authorize ADMIN and agree across production/sandbox pre
   adminRepo.findAdminSessionById = async()=>({status:'ACTIVE',refresh_token:admin.refreshToken});
   const app = express();
   const routes = require('../src/admin/user/user.routes');
+  app.use('/api/v2/admin', adminAudit);
+  app.use('/sb/api/v2/admin', adminAudit);
   app.use('/api/v2/admin/user',routes);
   app.use('/sb/api/v2/admin/user',routes);
   app.use((err,req,res,next)=>res.status(err.statusCode||500).json({message:err.message}));
@@ -226,6 +232,17 @@ test('login stats routes authorize ADMIN and agree across production/sandbox pre
       assert.equal(body.data.buckets.length,24);
       assert.equal(body.data.buckets[0].total_logins,3);
     }
+    // Denied USER requests must never be attributed to an admin identity.
+    let logs = [];
+    for (let i = 0; i < 30; i++) {
+      logs = await AdminActionLog.find({ _id: { $nin: previousAuditIds } }).lean();
+      if (logs.length === 6) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(logs.length, 6);
+    assert.equal(logs.filter(row => row.status_code === 403).length, 2);
+    assert.ok(logs.filter(row => row.status_code === 403).every(row => row.admin_id == null));
+    assert.equal(logs.filter(row => row.status_code === 200 && row.admin_id === 'admin-test').length, 2);
   } finally {
     adminRepo.findAdminSessionById=original;
     await new Promise(r=>server.close(r));

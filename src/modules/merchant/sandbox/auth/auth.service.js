@@ -14,6 +14,10 @@ const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
 } = require("../../../../utils/keys/apiKeyGenerator");
+const {
+  buildFirstLoginChallenge,
+  changeFirstLoginPassword,
+} = require("../../shared/firstLoginPassword");
 const { validateCallbackUrlForSave } = require("../../../../utils/url/urlGuard");
 
 

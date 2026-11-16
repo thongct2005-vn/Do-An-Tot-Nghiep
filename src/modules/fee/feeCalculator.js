@@ -53,6 +53,7 @@ const FEE_TYPES = Object.freeze({
   WITHDRAW_FEE: "WITHDRAW_FEE",         // Phí rút tiền về ngân hàng
   MONTHLY_PLAN_FEE: "MONTHLY_PLAN_FEE", // Phí duy trì gói cước theo tháng
   POSTPAID_LATE_FEE: "POSTPAID_LATE_FEE", // Phí phạt quá hạn Ví trả sau
+  POSTPAID_SERVICE_FEE: "POSTPAID_SERVICE_FEE", // Phí quản lý dịch vụ Ví trả sau hàng tháng
 });
 
 // Danh mục các trạng thái gói thu phí theo tháng của merchant
@@ -429,7 +430,7 @@ function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
   if (normalizedRole === 'MERCHANT' && Array.isArray(src.tiers)) {
     for (let i = 1; i < src.tiers.length; i++) {
       if (Number(src.tiers[i]?.from_amount ?? src.tiers[i]?.from) <= Number(src.tiers[i - 1]?.from_amount ?? src.tiers[i - 1]?.from)) {
-        throw httpError(500, 'Các bậc phí hóa đơn trong cấu hình phải tăng dần');
+        throw httpError(500, 'Các bậc doanh số trong cấu hình phí phải tăng dần');
       }
     }
   }
@@ -1376,9 +1377,7 @@ function previewFeeCalculation({
   const validAmount = assertPositiveIntegerAmount(amount);
 
   if (txType === "PAYMENT" || txType === "QR_PAYMENT") {
-    const details = normalizedRole === "MERCHANT"
-      ? calculateMerchantInvoiceFeeDetails(validAmount, effectiveConfig)
-      : calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
+    const details = calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
       monthlyPlanActive,
       monthlyStatus,
       alreadyMonthlyGross,
@@ -1440,9 +1439,15 @@ function previewFeeCalculation({
 
     let inboundMerchantDetails = null;
     if (destIsMerchant) {
-      inboundMerchantDetails = calculateMerchantInvoiceFeeDetails(
+      inboundMerchantDetails = calculatePerTransactionFeeDetails(
         validAmount,
         recipientEffectiveConfig,
+        {
+          monthlyPlanActive: false,
+          alreadyMonthlyGross: recipientMonthlyGross,
+          role: "MERCHANT",
+          feeType: FEE_TYPES.QR_FEE,
+        },
       );
     }
 

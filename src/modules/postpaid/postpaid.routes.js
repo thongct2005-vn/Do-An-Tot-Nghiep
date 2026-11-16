@@ -10,7 +10,30 @@ const moneyRisk = riskGuard("TRANSACTION");
 
 router.get("/info", authMiddleware.verifyAccessToken, postpaidController.getInfo);
 router.get("/wallet", authMiddleware.verifyAccessToken, postpaidController.getWallet);
-router.post("/activate", authMiddleware.verifyAccessToken, postpaidController.activate);
+router.post(
+  "/activate",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("POSTPAID_ACTIVATE"),
+  postpaidController.activate,
+);
+router.post(
+  "/freeze",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("POSTPAID_FREEZE"),
+  postpaidController.freeze,
+);
+router.post(
+  "/unfreeze",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("POSTPAID_UNFREEZE"),
+  postpaidController.unfreeze,
+);
+router.post(
+  "/close",
+  authMiddleware.verifyAccessToken,
+  authMiddleware.requirePinToken("POSTPAID_CLOSE"),
+  postpaidController.close,
+);
 router.get("/entries", authMiddleware.verifyAccessToken, postpaidController.getEntries);
 
 router.post(

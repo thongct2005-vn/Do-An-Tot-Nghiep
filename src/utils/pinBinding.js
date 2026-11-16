@@ -8,6 +8,10 @@ const PIN_ACTIONS = {
   TOPUP: ["linked_bank_account_id", "amount"],
   WITHDRAW: ["linked_bank_account_id", "amount"],
   QR_PAYMENT: ["reference_code"],
+  POSTPAID_ACTIVATE: [],
+  POSTPAID_FREEZE: [],
+  POSTPAID_UNFREEZE: [],
+  POSTPAID_CLOSE: [],
   POSTPAID_REPAY: ["amount"],
   BANK_LINK: ["bank_id"],
   BANK_SHOW_BALANCE: ["linked_bank_account_id"],
@@ -46,13 +50,21 @@ function computePinBinding(action, params) {
   const fields = PIN_ACTIONS[action];
   if (!fields) throw httpError(400, "Loại giao dịch không hợp lệ");
 
-  // params là body của request, phải là object -> { destination_user_id: 42, amount: 50000 }
-  if (!params || typeof params !== "object") {
+  // params là body của request; với action không có trường ký (vd: POSTPAID_ACTIVATE) cho phép object rỗng / undefined.
+  const resolvedParams =
+    params && typeof params === "object"
+      ? params
+      : fields.length === 0
+        ? {}
+        : null;
+  if (!resolvedParams) {
     throw httpError(400, "Thiếu dữ liệu giao dịch để xác thực PIN");
   }
 
   // Lấy đúng các trường cần ký, chuẩn hóa từng giá trị
-  const values = fields.map((field) => normalizeField(field, params[field]));
+  const values = fields.map((field) =>
+    normalizeField(field, resolvedParams[field]),
+  );
 
   // Băm JSON dạng mảng [action, giá trị1, giá trị2...]
   return crypto

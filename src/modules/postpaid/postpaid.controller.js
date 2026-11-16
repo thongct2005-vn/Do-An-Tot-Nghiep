@@ -48,6 +48,52 @@ const postpaidController = {
     }
   },
 
+  async freeze(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const data = await postpaidService.freezeWallet(userId);
+      return successResponse(
+        res,
+        200,
+        "Đã tạm khóa Ví trả sau",
+        data,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async unfreeze(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const data = await postpaidService.unfreezeWallet(userId);
+      return successResponse(
+        res,
+        200,
+        "Đã mở khóa Ví trả sau",
+        data,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async close(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { reason } = req.body || {};
+      const data = await postpaidService.closeWallet(userId, { reason });
+      return successResponse(
+        res,
+        200,
+        "Đã hủy Ví trả sau thành công",
+        data,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
   async getEntries(req, res, next) {
     try {
       const { user_id: userId } = req.user;

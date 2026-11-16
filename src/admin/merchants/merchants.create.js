@@ -1,5 +1,9 @@
 const { httpError } = require("../../utils/httpError");
-const { isValidPhone, isValidEmail } = require("../../utils/validators");
+const {
+  isValidPhone,
+  isValidEmail,
+  normalizeMerchantAddress,
+} = require("../../utils/validators");
 const { validateCallbackUrlForSave } = require("../../utils/url/urlGuard");
 
 const ALLOWED_CREATE_FIELDS = new Set([
@@ -104,18 +108,12 @@ async function parseCreateMerchantPayload(body) {
   }
 
   let address = null;
-  if (Object.hasOwn(body, "address") && body.address !== undefined && body.address !== null) {
-    if (typeof body.address !== "string") {
-      throw httpError(400, "Địa chỉ phải là chuỗi hoặc null");
+  if (Object.hasOwn(body, "address")) {
+    const normalizedAddress = normalizeMerchantAddress(body.address);
+    if (!normalizedAddress.valid) {
+      throw httpError(400, normalizedAddress.message);
     }
-    const rawAddress = body.address.trim();
-    if (rawAddress.includes("\0")) {
-      throw httpError(400, "Địa chỉ chứa ký tự không hợp lệ");
-    }
-    if ([...rawAddress].length > 255) {
-      throw httpError(400, "Địa chỉ không được vượt quá 255 ký tự");
-    }
-    address = rawAddress.length > 0 ? rawAddress : null;
+    address = normalizedAddress.value;
   }
 
   if (!Object.hasOwn(body, "reason") || body.reason === undefined || body.reason === null) {

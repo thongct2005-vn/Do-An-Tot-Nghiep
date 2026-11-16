@@ -151,6 +151,7 @@ const merchantAuthController = {
         tax_code: taxCode,
         call_back_url: callbackUrl,
         store_name: storeName,
+        address,
         fee_plan: feePlan,
       } = req.body;
       const { user_id: userId, phone, email } = req.otpUser;
@@ -163,6 +164,7 @@ const merchantAuthController = {
         taxCode,
         callbackUrl,
         storeName,
+        address,
         feePlan,
       });
       clearFailure(phone);

@@ -24,6 +24,29 @@ const postpaidService = {
     return postpaidRepository.activateWallet({ userId });
   },
 
+  async freezeWallet(userId) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    return postpaidRepository.freezeWallet({ userId });
+  },
+
+  async unfreezeWallet(userId) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    return postpaidRepository.unfreezeWallet({ userId });
+  },
+
+  async closeWallet(userId, { reason = "" } = {}) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    const cleanReason =
+      typeof reason === "string" ? reason.trim().slice(0, 200) : "";
+    return postpaidRepository.closeWallet({ userId, reason: cleanReason });
+  },
+
   async getEntries(
     userId,
     {

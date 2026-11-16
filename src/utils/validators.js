@@ -43,7 +43,25 @@ function isValidOtp(code) {
   return isValidPasswordOrPin(code);
 }
 
-
+/**
+ * Chuẩn hóa và kiểm tra trường địa chỉ merchant trước khi lưu vào `user_kyc.address`.
+ */
+function normalizeMerchantAddress(value) {
+  if (value === undefined || value === null) {
+    return { valid: true, value: null };
+  }
+  if (typeof value !== "string") {
+    return { valid: false, message: "Địa chỉ phải là chuỗi hoặc null" };
+  }
+  const trimmed = value.trim();
+  if (trimmed.includes("\0")) {
+    return { valid: false, message: "Địa chỉ chứa ký tự không hợp lệ" };
+  }
+  if ([...trimmed].length > 255) {
+    return { valid: false, message: "Địa chỉ không được vượt quá 255 ký tự" };
+  }
+  return { valid: true, value: trimmed.length > 0 ? trimmed : null };
+}
 
 module.exports = {
   isValidPhone,
@@ -52,5 +70,6 @@ module.exports = {
   isValidPasswordMerchant,
   isValidPhonesHash,
   isValidDateOnly,
-  isValidOtp
+  isValidOtp,
+  normalizeMerchantAddress,
 };

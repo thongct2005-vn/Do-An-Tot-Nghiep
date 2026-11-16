@@ -115,6 +115,7 @@ const merchantAuthRepository = {
     role = "MERCHANT",
     storeName,
     taxCode,
+    address = null,
     callbackUrl,
     apiKey,
     secretKey,
@@ -148,10 +149,10 @@ const merchantAuthRepository = {
 
       await client.query(
         `
-        INSERT INTO user_kyc(id, user_id, status)
-        VALUES ($1, $2, $3)
+        INSERT INTO user_kyc(id, user_id, address, status)
+        VALUES ($1, $2, $3, $4)
         `,
-        [taxCode, userId, status],
+        [taxCode, userId, address, status],
       );
 
       await merchantFeeService.initFeeSettingOnRegisterTx(client, {

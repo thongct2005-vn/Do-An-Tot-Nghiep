@@ -3,6 +3,19 @@ const { httpError } = require("../../../../utils/httpError");
 const { assertDailyLimit } = require("../../../../utils/limits/dailyLimit");
 const transactionRepository = require("../../../transaction/transaction.repository");
 
+// Giao dịch QR bằng Ví trả sau ghi source_user_id là SYSTEM_POSTPAID_WALLET; join sang
+// postpaid_entries (PURCHASE) để hiển thị đúng thông tin người mua và nguồn thanh toán.
+const POSTPAID_PAYER_JOIN = `
+      LEFT JOIN LATERAL (
+        SELECT pe.user_id, u.full_name, u.phone
+          FROM postpaid_entries pe
+          JOIN users u ON u.id = pe.user_id
+         WHERE pe.tx_id = t.id AND pe.action = 'PURCHASE'
+         LIMIT 1
+      ) pp ON true`;
+
+const FUNDING_SOURCE_SELECT = `CASE WHEN pp.user_id IS NOT NULL THEN 'POSTPAID' ELSE 'MAIN_WALLET' END AS funding_source`;
+
 const merchantTransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
     const result = await pool.query(
@@ -210,6 +223,7 @@ const merchantTransactionRepository = {
         t.created_at,
         b.name AS bank_name,
         pr.order_id AS order_id,
+        ${FUNDING_SOURCE_SELECT},
         CASE
           WHEN t.transaction_type = 'TOPUP' THEN 'IN'
           WHEN t.source_user_id = $1 THEN 'OUT'
@@ -218,13 +232,7 @@ const merchantTransactionRepository = {
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
       FROM transactions t
-      LEFT JOIN LATERAL (
-        SELECT pe.user_id, u.full_name, u.phone
-          FROM postpaid_entries pe
-          JOIN users u ON u.id = pe.user_id
-         WHERE pe.tx_id = t.id AND pe.action = 'PURCHASE'
-         LIMIT 1
-      ) pp ON true
+      ${POSTPAID_PAYER_JOIN}
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
@@ -337,13 +345,19 @@ const merchantTransactionRepository = {
       SELECT
         t.id,
         t.transaction_type,
-        t.source_user_id,
+        CASE WHEN pp.user_id IS NOT NULL THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
+        COALESCE(
+          pp.full_name,
+          CASE
+            WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+            WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+            ELSE su.full_name
+          END
+        ) AS source_display_name,
         CASE
-          WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
-          WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
-          ELSE su.full_name
-        END AS source_display_name,
-        CASE
+          WHEN pp.phone IS NOT NULL AND LENGTH(pp.phone) >= 3
+          THEN '*********' || RIGHT(pp.phone, 3)
+          WHEN pp.phone IS NOT NULL THEN pp.phone
           WHEN su.role = 'SYSTEM' THEN NULL
           WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3
           THEN '*********' || RIGHT(su.phone, 3)
@@ -374,6 +388,7 @@ const merchantTransactionRepository = {
         t.created_at,
         b.name AS bank_name,
         pr.order_id AS order_id,
+        ${FUNDING_SOURCE_SELECT},
         CASE
           WHEN t.transaction_type = 'TOPUP' THEN 'IN'
           WHEN t.source_user_id = $1 THEN 'OUT'
@@ -382,6 +397,7 @@ const merchantTransactionRepository = {
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_before ELSE t.dest_balance_before END AS balance_before,
         CASE WHEN t.source_user_id = $1 THEN t.source_balance_after ELSE t.dest_balance_after END AS balance_after
       FROM transactions t
+      ${POSTPAID_PAYER_JOIN}
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
@@ -392,7 +408,7 @@ const merchantTransactionRepository = {
           $2::boolean = false
           OR (
             (t.source_user_id = $1 AND du.full_name ILIKE '%' || $3::text || '%')
-            OR (t.destination_user_id = $1 AND su.full_name ILIKE '%' || $3::text || '%')
+            OR (t.destination_user_id = $1 AND COALESCE(pp.full_name, su.full_name) ILIKE '%' || $3::text || '%')
             OR t.id ILIKE '%' || $3::text || '%'
             OR t.description ILIKE '%' || $3::text || '%'
             OR b.name ILIKE '%' || $3::text || '%'
@@ -441,13 +457,21 @@ const merchantTransactionRepository = {
         t.description,
         t.created_at,
         t.completed_at,
-        t.source_user_id,
+        CASE WHEN pp.user_id IS NOT NULL THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
+        COALESCE(
+          pp.full_name,
+          CASE
+            WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+            WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
+            ELSE su.full_name
+          END
+        ) AS source_full_name,
         CASE
-          WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
-          WHEN su.role = 'SYSTEM' THEN 'Hệ thống'
-          ELSE su.full_name
-        END AS source_full_name,
-        CASE WHEN su.role = 'SYSTEM' THEN NULL ELSE su.phone END AS source_phone,
+          WHEN pp.phone IS NOT NULL THEN pp.phone
+          WHEN su.role = 'SYSTEM' THEN NULL
+          ELSE su.phone
+        END AS source_phone,
+        ${FUNDING_SOURCE_SELECT},
         t.destination_user_id,
         CASE
           WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
@@ -475,6 +499,7 @@ const merchantTransactionRepository = {
         pr.paid_at,
         pr.expires_at
       FROM transactions t
+      ${POSTPAID_PAYER_JOIN}
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id

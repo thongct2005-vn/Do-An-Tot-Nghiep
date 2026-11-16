@@ -839,7 +839,8 @@ const TransactionRepository = {
         END AS source_display_name,
         CASE
           WHEN pp.action = 'PURCHASE' THEN pp.payer_phone
-          WHEN su.role = 'SYSTEM' THEN NULL
+          WHEN pp.action = 'REFUND' THEN NULL
+          WHEN su.role IN ('SYSTEM', 'MERCHANT') THEN NULL
           ELSE su.phone
         END AS source_display_phone,
         
@@ -850,7 +851,8 @@ const TransactionRepository = {
           ELSE du.full_name
         END AS destination_display_name,
         CASE
-          WHEN du.role = 'SYSTEM' THEN NULL
+          WHEN pp.action = 'REFUND' THEN NULL
+          WHEN du.role IN ('SYSTEM', 'MERCHANT') THEN NULL
           ELSE du.phone
         END AS destination_display_phone,
 
@@ -895,7 +897,7 @@ const TransactionRepository = {
       FROM candidate_tx ct
       JOIN transactions t ON t.id = ct.id
       LEFT JOIN LATERAL (
-        SELECT pe.user_id, pe.action, pe.used_before, pe.used_after, pu.full_name AS payer_name, pu.phone AS payer_phone
+        SELECT pe.user_id, pe.action, pe.ref_tx_id, pe.used_before, pe.used_after, pu.full_name AS payer_name, pu.phone AS payer_phone
           FROM postpaid_entries pe
           JOIN users pu ON pu.id = pe.user_id
          WHERE pe.tx_id = t.id
@@ -906,7 +908,7 @@ const TransactionRepository = {
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
-      LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
+      LEFT JOIN payment_requests pr ON pr.transaction_id = COALESCE(pp.ref_tx_id, t.id)
       WHERE (
           $5::boolean = false
           OR (
@@ -927,11 +929,17 @@ const TransactionRepository = {
               END,
               ''
             )) ILIKE '%' || unaccent($6) || '%'
-            OR (du.role IS DISTINCT FROM 'SYSTEM' AND COALESCE(du.phone, '') LIKE '%' || $6 || '%')
+            OR (
+              COALESCE(pp.action, '') <> 'REFUND'
+              AND du.role IS DISTINCT FROM 'SYSTEM'
+              AND du.role IS DISTINCT FROM 'MERCHANT'
+              AND COALESCE(du.phone, '') LIKE '%' || $6 || '%'
+            )
             OR COALESCE(
               CASE
                 WHEN pp.action = 'PURCHASE' THEN pp.payer_phone
-                WHEN su.role = 'SYSTEM' THEN NULL
+                WHEN pp.action = 'REFUND' THEN NULL
+                WHEN su.role IN ('SYSTEM', 'MERCHANT') THEN NULL
                 ELSE su.phone
               END,
               ''
@@ -1045,7 +1053,7 @@ const TransactionRepository = {
           ELSE su.full_name
         END AS source_display_name,
         CASE
-          WHEN su.role = 'SYSTEM' THEN NULL
+          WHEN su.role IN ('SYSTEM', 'MERCHANT') THEN NULL
           WHEN su.phone IS NOT NULL AND LENGTH(su.phone) >= 3
           THEN '*********' || RIGHT(su.phone, 3)
           ELSE su.phone
@@ -1057,7 +1065,7 @@ const TransactionRepository = {
           ELSE du.full_name
         END AS destination_display_name,
         CASE
-          WHEN du.role = 'SYSTEM' THEN NULL
+          WHEN du.role IN ('SYSTEM', 'MERCHANT') THEN NULL
           WHEN du.phone IS NOT NULL AND LENGTH(du.phone) >= 3
           THEN '*********' || RIGHT(du.phone, 3)
           ELSE du.phone
@@ -1108,8 +1116,8 @@ const TransactionRepository = {
               END,
               ''
             )) ILIKE '%' || unaccent($3::text) || '%'
-            OR (du.role IS DISTINCT FROM 'SYSTEM' AND COALESCE(du.phone, '') LIKE '%' || $3::text || '%')
-            OR (su.role IS DISTINCT FROM 'SYSTEM' AND COALESCE(su.phone, '') LIKE '%' || $3::text || '%')
+            OR (du.role IS DISTINCT FROM 'SYSTEM' AND du.role IS DISTINCT FROM 'MERCHANT' AND COALESCE(du.phone, '') LIKE '%' || $3::text || '%')
+            OR (su.role IS DISTINCT FROM 'SYSTEM' AND su.role IS DISTINCT FROM 'MERCHANT' AND COALESCE(su.phone, '') LIKE '%' || $3::text || '%')
             OR t.id::text LIKE '%' || $3::text || '%'
             OR unaccent(COALESCE(t.description, '')) ILIKE '%' || unaccent($3::text) || '%'
             OR unaccent(COALESCE(b.name, '')) ILIKE '%' || unaccent($3::text) || '%'

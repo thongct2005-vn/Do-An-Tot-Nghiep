@@ -1,6 +1,6 @@
 const pool = require('../../config/database');
 const { httpError } = require('../../utils/httpError');
-const { resolveAdminDateRange } = require('../../utils/adminDateRange');
+const { resolveAdminDateRange } = require('../../utils/dateRange');
 
 function filters(input = {}) {
   for (const key of ['start_date', 'end_date', 'merchant_id', 'transaction_type', 'group_by', 'role']) {

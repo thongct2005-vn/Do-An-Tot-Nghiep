@@ -101,6 +101,7 @@ const merchantAuthRepository = {
     passwordHash,
     role = "MERCHANT",
     storeName,
+    address = null,
     callbackUrl,
     apiKey,
     secretKey,
@@ -132,10 +133,10 @@ const merchantAuthRepository = {
 
       await client.query(
         `
-        INSERT INTO user_kyc(id, user_id)
-        VALUES ($1, $2)
+        INSERT INTO user_kyc(id, user_id, address)
+        VALUES ($1, $2, $3)
         `,
-        [phone, userId],
+        [phone, userId, address],
       );
 
       await client.query("COMMIT");

@@ -613,6 +613,7 @@ const merchantTransactionService = {
       transaction_type: type,
       status: row.status,
       direction: row.direction,
+      funding_source: row.funding_source || "MAIN_WALLET",
       amount: Number(row.amount),
       fee: Number(row.fee),
       merchant_fee: Number(row.merchant_fee || 0),

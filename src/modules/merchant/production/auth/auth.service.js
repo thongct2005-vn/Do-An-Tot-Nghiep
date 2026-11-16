@@ -7,6 +7,7 @@ const {
   isValidPasswordMerchant,
   isValidEmail,
   isValidOtp,
+  normalizeMerchantAddress,
 } = require("../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../../utils/jwt");
@@ -475,6 +476,7 @@ const merchantAuthService = {
     taxCode,
     callbackUrl,
     storeName,
+    address,
     feePlan,
   }) {
     const merchantFeeService = require("../fee/fee.service");
@@ -502,6 +504,10 @@ const merchantAuthService = {
     if (!storeName) {
       throw httpError(400, "Thiếu tên cửa hàng");
     }
+    const normalizedAddress = normalizeMerchantAddress(address);
+    if (!normalizedAddress.valid) {
+      throw httpError(400, normalizedAddress.message);
+    }
     const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
 
     await otpService.verifyOtp({ email, phone, otp });
@@ -525,6 +531,7 @@ const merchantAuthService = {
       passwordHash,
       storeName,
       taxCode,
+      address: normalizedAddress.value,
       callbackUrl: safeCallbackUrl,
       apiKey,
       secretKey,

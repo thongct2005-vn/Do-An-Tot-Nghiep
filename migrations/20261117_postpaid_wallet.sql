@@ -29,13 +29,13 @@ VALUES
     '{
       "enabled": true,
       "default_credit_limit": 2000000,
-      "min_account_days": 0,
+      "min_account_days": 1,
       "billing_day": 20,
       "due_day": 5,
       "late_fee_bps": 200,
       "min_late_fee": 10000
     }'::jsonb,
-    'Cấu hình Ví trả sau (hạn mức mặc định 2.000.000đ, chốt kỳ ngày 20, hạn trả ngày 5 tháng sau, phí trễ hạn 2% min 10.000đ)',
+    'Cấu hình Ví trả sau (hạn mức mặc định 2.000.000đ, tài khoản tạo tối thiểu 1 ngày/24h, chốt kỳ ngày 20, hạn trả ngày 5 tháng sau, phí trễ hạn 2% min 10.000đ)',
     NOW()
   ),
   (

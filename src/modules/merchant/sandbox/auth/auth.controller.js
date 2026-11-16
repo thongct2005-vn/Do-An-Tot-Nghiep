@@ -109,6 +109,7 @@ const merchantAuthController = {
         password,
         call_back_url: callbackUrl,
         store_name: storeName,
+        address,
       } = req.body;
       const result = await merchantAuthService.register({
         phone,
@@ -116,6 +117,7 @@ const merchantAuthController = {
         password,
         callbackUrl,
         storeName,
+        address,
       });
       return successResponse(res, 200, "Đăng ký tài khoản thành công", {
         user_info: result.user_info,

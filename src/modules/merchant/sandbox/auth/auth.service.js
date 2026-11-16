@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const {
   isValidPhone,
   isValidEmail,
+  normalizeMerchantAddress,
 } = require("../../../../utils/validators");
 const { uuidv7 } = require("uuidv7");
 const tokenUtil = require("../../../../utils/jwt");
@@ -170,6 +171,7 @@ const merchantAuthService = {
     password,
     callbackUrl,
     storeName,
+    address,
   }) {
     if (!phone || !email) {
       throw httpError(400, "Thiếu số điện thoại hoặc email!");
@@ -194,6 +196,10 @@ const merchantAuthService = {
     const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
     if (!storeName) {
       throw httpError(400, "Thiếu tên cửa hàng");
+    }
+    const normalizedAddress = normalizeMerchantAddress(address);
+    if (!normalizedAddress.valid) {
+      throw httpError(400, normalizedAddress.message);
     }
 
     const existingPhone =
@@ -222,6 +228,7 @@ const merchantAuthService = {
       email,
       passwordHash,
       storeName,
+      address: normalizedAddress.value,
       callbackUrl: safeCallbackUrl,
       apiKey,
       secretKey,

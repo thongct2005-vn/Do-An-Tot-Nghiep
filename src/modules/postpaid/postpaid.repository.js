@@ -86,6 +86,8 @@ const POSTPAID_CONFIG_FIELD_LABELS = Object.freeze({
   due_day: "ngày đến hạn thanh toán Ví trả sau",
   late_fee_bps: "tỷ lệ phí trễ hạn Ví trả sau",
   min_late_fee: "phí trễ hạn tối thiểu của Ví trả sau",
+  monthly_service_fee: "phí dịch vụ hàng tháng của Ví trả sau",
+  free_service_fee_tx_count: "số giao dịch miễn phí dịch vụ ban đầu của Ví trả sau",
 });
 
 function parseNonNegIntConfig(raw, fieldName) {
@@ -133,6 +135,8 @@ function normalizePostpaidConfig(raw) {
     due_day: dueDay,
     late_fee_bps: parseNonNegIntConfig(raw, "late_fee_bps"),
     min_late_fee: parseNonNegIntConfig(raw, "min_late_fee"),
+    monthly_service_fee: parseNonNegIntConfig(raw, "monthly_service_fee"),
+    free_service_fee_tx_count: parseNonNegIntConfig(raw, "free_service_fee_tx_count"),
   };
 }
 
@@ -171,7 +175,8 @@ async function lockUsersByIdsOrdered(client, rawIds) {
   const ids = [...new Set(rawIds.map((x) => String(x)).filter(Boolean))].sort();
   if (ids.length === 0) return new Map();
   const res = await client.query(
-    `SELECT id, role, status, full_name, phone, balance, created_at
+    `SELECT id, role, status, full_name, phone, balance, created_at,
+            EXTRACT(EPOCH FROM (NOW() - created_at)) AS account_age_seconds
        FROM users
       WHERE id = ANY($1::uuid[])
       ORDER BY id ASC
@@ -183,6 +188,68 @@ async function lockUsersByIdsOrdered(client, rawIds) {
     byId.set(String(row.id), row);
   }
   return byId;
+}
+
+function resolveActivationEligibility({
+  user,
+  isKyc,
+  hasLinkedBank,
+  config,
+}) {
+  const requiredDays = Math.max(1, Number(config.min_account_days || 0));
+  const requiredHours = requiredDays * 24;
+  const requiredSeconds = requiredHours * 3600;
+  const ageSeconds = Math.max(0, Number(user?.account_age_seconds || 0));
+  const accountAgeHours = Math.floor(ageSeconds / 3600);
+  const isAccountAgeEligible = ageSeconds >= requiredSeconds;
+
+  let eligible = true;
+  let ineligibleReason = null;
+  let statusCode = 200;
+
+  if (!config.enabled) {
+    eligible = false;
+    statusCode = 503;
+    ineligibleReason = "Tính năng Ví trả sau hiện đang tạm bảo trì";
+  } else if (!user) {
+    eligible = false;
+    statusCode = 404;
+    ineligibleReason = "Không tìm thấy người dùng";
+  } else if (user.role !== "USER") {
+    eligible = false;
+    statusCode = 403;
+    ineligibleReason = "Loại tài khoản này chưa hỗ trợ Ví trả sau";
+  } else if (user.status !== "ACTIVE") {
+    eligible = false;
+    statusCode = 403;
+    ineligibleReason = "Tài khoản đang bị khóa hoặc không hoạt động";
+  } else if (!isKyc) {
+    eligible = false;
+    statusCode = 403;
+    ineligibleReason = "Vui lòng xác thực danh tính (eKYC) để mở Ví trả sau";
+  } else if (!hasLinkedBank) {
+    eligible = false;
+    statusCode = 403;
+    ineligibleReason =
+      "Vui lòng liên kết ít nhất 1 tài khoản ngân hàng để mở Ví trả sau";
+  } else if (!isAccountAgeEligible) {
+    eligible = false;
+    statusCode = 403;
+    ineligibleReason =
+      requiredDays === 1
+        ? `Tài khoản cần được tạo ít nhất 24 giờ để mở Ví trả sau (hiện tại: ${accountAgeHours}/24 giờ)`
+        : `Tài khoản cần hoạt động tối thiểu ${requiredDays} ngày để mở Ví trả sau`;
+  }
+
+  return {
+    eligible,
+    statusCode,
+    ineligibleReason,
+    requiredDays,
+    requiredHours,
+    accountAgeHours,
+    isAccountAgeEligible,
+  };
 }
 
 /**
@@ -228,6 +295,12 @@ function buildPostpaidInfoPayload(catalog) {
   const sampleBilled = 1_000_000;
   const sampleRateFee = Math.round((sampleBilled * config.late_fee_bps) / 10000);
   const sampleAppliedFee = Math.max(config.min_late_fee, sampleRateFee);
+  const serviceFeeRule =
+    config.monthly_service_fee > 0
+      ? config.free_service_fee_tx_count > 0
+        ? `Miễn phí ${config.free_service_fee_tx_count} giao dịch đầu tiên. Từ sau lượt miễn phí, thu ${formatVndDot(config.monthly_service_fee)}/tháng vào ngày chốt sao kê nếu kỳ đó có phát sinh giao dịch (0đ nếu không dùng).`
+        : `Thu ${formatVndDot(config.monthly_service_fee)}/tháng vào ngày chốt sao kê cho kỳ có phát sinh giao dịch (0đ nếu kỳ đó không sử dụng).`
+      : "Miễn phí duy trì dịch vụ Ví trả sau hàng tháng (0đ).";
 
   return {
     source: "system_configs",
@@ -240,26 +313,31 @@ function buildPostpaidInfoPayload(catalog) {
       late_fee_bps: config.late_fee_bps,
       late_fee_percent: lateFeePercent,
       min_late_fee: config.min_late_fee,
+      monthly_service_fee: config.monthly_service_fee,
+      free_service_fee_tx_count: config.free_service_fee_tx_count,
     },
     statement_cycle: {
       billing_day: config.billing_day,
       due_day: config.due_day,
       timezone: "Asia/Ho_Chi_Minh",
-      billed_formula: "max(0, used_amount - late_fee_amount)",
+      billed_formula: "max(0, used_amount - service_fee_amount - late_fee_amount)",
       summary: `Chốt sao kê tự động vào ngày ${config.billing_day} hàng tháng. Toàn bộ dư nợ gốc đang sử dụng được chốt thành dư nợ kỳ sao kê.`,
       due_rule: `Hạn thanh toán là ngày ${config.due_day} của tháng kế tiếp sau kỳ chốt sao kê.`,
-      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ kỳ sao kê vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}", tạm khóa chi tiêu QR mới và tính phí trễ hạn.`,
+      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}", tạm khóa chi tiêu QR mới và tính phí trễ hạn.`,
     },
     fee_rules: {
       activation_fee: 0,
       qr_payment_fee: 0,
       repayment_fee: 0,
+      monthly_service_fee: config.monthly_service_fee,
+      free_service_fee_tx_count: config.free_service_fee_tx_count,
+      service_fee_rule: serviceFeeRule,
       late_fee_bps: config.late_fee_bps,
       late_fee_percent: lateFeePercent,
       min_late_fee: config.min_late_fee,
-      calculation_basis: "billed_amount",
-      formula: "max(min_late_fee, round(billed_amount * late_fee_bps / 10000))",
-      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. Khi quá hạn, phí trễ hạn tính ${lateFeePercentText}% trên dư nợ kỳ sao kê chưa trả (tối thiểu ${formatVndDot(config.min_late_fee)}).`,
+      calculation_basis: "billed_amount + service_fee_amount",
+      formula: "max(min_late_fee, round((billed_amount + service_fee_amount) * late_fee_bps / 10000))",
+      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí trễ hạn tính ${lateFeePercentText}% trên dư nợ kỳ sao kê chưa trả (tối thiểu ${formatVndDot(config.min_late_fee)}).`,
       example: {
         billed_amount: sampleBilled,
         rate_fee: sampleRateFee,
@@ -269,21 +347,32 @@ function buildPostpaidInfoPayload(catalog) {
     },
     repayment_rules: {
       source_wallet: "MAIN_WALLET",
-      priority_order: ["LATE_FEE", "BILLED_PRINCIPAL", "UNBILLED_PRINCIPAL"],
-      summary: `Thanh toán dư nợ từ Ví chính theo thứ tự ưu tiên: (1) Phí trễ hạn → (2) Dư nợ gốc đã chốt kỳ sao kê → (3) Dư nợ gốc phát sinh kỳ mới.`,
-      unlock_rule: `Ví đang "${pastDueLabel}" tự động trở lại "${activeLabel}" ngay khi phí trễ hạn và dư nợ kỳ sao kê đều bằng 0đ.`,
+      priority_order: [
+        "LATE_FEE",
+        "SERVICE_FEE",
+        "BILLED_PRINCIPAL",
+        "UNBILLED_PRINCIPAL",
+      ],
+      summary: `Thanh toán dư nợ từ Ví chính theo thứ tự ưu tiên: (1) Phí trễ hạn → (2) Phí dịch vụ tháng → (3) Dư nợ gốc đã chốt kỳ sao kê → (4) Dư nợ gốc phát sinh kỳ mới.`,
+      unlock_rule: `Ví đang "${pastDueLabel}" tự động trở lại "${activeLabel}" ngay khi phí trễ hạn, phí dịch vụ tháng và dư nợ kỳ sao kê đều bằng 0đ.`,
     },
-    activation_rules: {
-      enabled: config.enabled,
-      allowed_role: "USER",
-      kyc_required: true,
-      min_account_days: config.min_account_days,
-      default_credit_limit: config.default_credit_limit,
-      summary:
-        config.min_account_days > 0
-          ? `Áp dụng cho tài khoản cá nhân đang hoạt động, đã xác thực eKYC và hoạt động tối thiểu ${config.min_account_days} ngày. Hạn mức mặc định ${formatVndDot(config.default_credit_limit)}.`
-          : `Áp dụng cho tài khoản cá nhân đang hoạt động và đã xác thực eKYC. Hạn mức mặc định ${formatVndDot(config.default_credit_limit)}.`,
-    },
+    activation_rules: (() => {
+      const effectiveMinDays = Math.max(1, config.min_account_days);
+      const minAgeText =
+        effectiveMinDays === 1
+          ? "được tạo tối thiểu 24 giờ"
+          : `hoạt động tối thiểu ${effectiveMinDays} ngày`;
+      return {
+        enabled: config.enabled,
+        allowed_role: "USER",
+        kyc_required: true,
+        bank_link_required: true,
+        min_account_days: config.min_account_days,
+        min_account_hours: effectiveMinDays * 24,
+        default_credit_limit: config.default_credit_limit,
+        summary: `Áp dụng cho tài khoản cá nhân đang hoạt động, đã xác thực eKYC, đã liên kết ít nhất 1 tài khoản ngân hàng và ${minAgeText}. Hạn mức mặc định ${formatVndDot(config.default_credit_limit)}.`,
+      };
+    })(),
     status_labels: statusLabels,
     entry_action_labels: entryActionLabels,
   };
@@ -315,9 +404,11 @@ function resolvePostpaidEntryActionFilter(rawAction, entryActions) {
   const resolved = new Set();
   for (const token of requestedTokens) {
     if (token === "REPAY") {
-      const repayActions = ["REPAY_PRINCIPAL", "REPAY_LATE_FEE"].filter((code) =>
-        available.has(code),
-      );
+      const repayActions = [
+        "REPAY_PRINCIPAL",
+        "REPAY_SERVICE_FEE",
+        "REPAY_LATE_FEE",
+      ].filter((code) => available.has(code));
       if (repayActions.length === 0) {
         throw httpError(400, "Loại biến động Ví trả sau không hợp lệ");
       }
@@ -415,11 +506,11 @@ const postpaidRepository = {
   },
 
   async getWalletOverview(userId, db = pool) {
-    const [catalog, userRes, kycRes, walletRes] = await Promise.all([
+    const [catalog, userRes, kycRes, bankRes, walletRes] = await Promise.all([
       postpaidRepository.getSystemCatalog(db),
       db.query(
         `SELECT id, role, status, balance, created_at,
-                FLOOR(EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400)::int AS account_age_days
+                EXTRACT(EPOCH FROM (NOW() - created_at)) AS account_age_seconds
            FROM users
           WHERE id = $1`,
         [userId],
@@ -429,8 +520,13 @@ const postpaidRepository = {
         [userId],
       ),
       db.query(
+        `SELECT 1 FROM linked_bank_accounts WHERE user_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+        [userId],
+      ),
+      db.query(
         `SELECT user_id, status, credit_limit, used_amount, billed_amount,
-                late_fee_amount, current_cycle_month, due_date, activated_at, updated_at
+                service_fee_amount, late_fee_amount, current_cycle_month, due_date,
+                activated_at, updated_at
            FROM postpaid_wallets
           WHERE user_id = $1`,
         [userId],
@@ -445,39 +541,34 @@ const postpaidRepository = {
     }
 
     const isKyc = kycRes.rows.length > 0;
-    const accountAgeDays = Math.max(0, Number(user.account_age_days || 0));
+    const hasLinkedBank = bankRes.rows.length > 0;
     const pw = walletRes.rows[0] || null;
+    const eligibility = resolveActivationEligibility({
+      user,
+      isKyc,
+      hasLinkedBank,
+      config,
+    });
 
-    let eligible = true;
-    let ineligibleReason = null;
-    if (!config.enabled) {
-      eligible = false;
-      ineligibleReason = "Tính năng Ví trả sau hiện đang tạm bảo trì";
-    } else if (user.role !== "USER") {
-      eligible = false;
-      ineligibleReason = "Loại tài khoản này chưa hỗ trợ Ví trả sau";
-    } else if (user.status !== "ACTIVE") {
-      eligible = false;
-      ineligibleReason = "Tài khoản đang bị khóa hoặc không hoạt động";
-    } else if (!isKyc) {
-      eligible = false;
-      ineligibleReason = "Vui lòng xác thực danh tính (eKYC) để mở Ví trả sau";
-    } else if (accountAgeDays < config.min_account_days) {
-      eligible = false;
-      ineligibleReason = `Tài khoản cần hoạt động tối thiểu ${config.min_account_days} ngày`;
-    }
+    const inactiveStatus = requireCatalogCode(
+      statuses,
+      "INACTIVE",
+      STATUS_CATALOG_LABEL,
+    );
+    const isActivated = Boolean(pw && pw.status !== inactiveStatus);
 
-    const creditLimit = pw ? Number(pw.credit_limit) : config.default_credit_limit;
-    const usedAmount = pw ? Number(pw.used_amount) : 0;
-    const billedAmount = pw ? Number(pw.billed_amount) : 0;
-    const lateFeeAmount = pw ? Number(pw.late_fee_amount) : 0;
-    const unbilledAmount = pw
-      ? Math.max(0, usedAmount - billedAmount - lateFeeAmount)
+    const creditLimit = isActivated
+      ? Number(pw.credit_limit)
+      : config.default_credit_limit;
+    const usedAmount = isActivated ? Number(pw.used_amount) : 0;
+    const billedAmount = isActivated ? Number(pw.billed_amount) : 0;
+    const serviceFeeAmount = isActivated ? Number(pw.service_fee_amount) : 0;
+    const lateFeeAmount = isActivated ? Number(pw.late_fee_amount) : 0;
+    const unbilledAmount = isActivated
+      ? Math.max(0, usedAmount - billedAmount - serviceFeeAmount - lateFeeAmount)
       : 0;
-    const availableLimit = pw ? Math.max(0, creditLimit - usedAmount) : 0;
-    const currentStatus = pw
-      ? pw.status
-      : requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+    const availableLimit = isActivated ? Math.max(0, creditLimit - usedAmount) : 0;
+    const currentStatus = isActivated ? pw.status : inactiveStatus;
     const currentStatusLabel = requireCatalogCode(
       statusLabels,
       currentStatus,
@@ -485,21 +576,26 @@ const postpaidRepository = {
     );
 
     return {
-      activated: Boolean(pw),
+      activated: isActivated,
       is_kyc: isKyc,
-      eligible_to_activate: !pw && eligible,
-      ineligible_reason: pw ? null : ineligibleReason,
+      has_linked_bank: hasLinkedBank,
+      account_age_hours: eligibility.accountAgeHours,
+      min_account_hours: eligibility.requiredHours,
+      is_account_age_eligible: eligibility.isAccountAgeEligible,
+      eligible_to_activate: !isActivated && eligibility.eligible,
+      ineligible_reason: isActivated ? null : eligibility.ineligibleReason,
       status: currentStatus,
       status_label: currentStatusLabel,
       credit_limit: creditLimit,
       used_amount: usedAmount,
       available_limit: availableLimit,
       billed_amount: billedAmount,
+      service_fee_amount: serviceFeeAmount,
       late_fee_amount: lateFeeAmount,
       unbilled_amount: unbilledAmount,
-      current_cycle_month: pw?.current_cycle_month || null,
-      due_date: pw?.due_date || null,
-      activated_at: pw?.activated_at || null,
+      current_cycle_month: isActivated ? pw.current_cycle_month || null : null,
+      due_date: isActivated ? pw.due_date || null : null,
+      activated_at: isActivated ? pw.activated_at || null : null,
       updated_at: pw?.updated_at || null,
       main_balance: Number(user.balance),
       config,
@@ -517,6 +613,108 @@ const postpaidRepository = {
       throw httpError(503, "Tính năng Ví trả sau hiện đang tạm bảo trì");
     }
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+    const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const usersMap = await lockUsersByIdsOrdered(client, [userId]);
+      const user = usersMap.get(String(userId));
+      if (!user) {
+        throw httpError(404, "Không tìm thấy người dùng");
+      }
+
+      const [kycRes, bankRes] = await Promise.all([
+        client.query(
+          `SELECT 1 FROM user_kyc WHERE user_id = $1 AND status = 'APPROVED' LIMIT 1`,
+          [userId],
+        ),
+        client.query(
+          `SELECT 1 FROM linked_bank_accounts WHERE user_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+          [userId],
+        ),
+      ]);
+
+      const eligibility = resolveActivationEligibility({
+        user,
+        isKyc: kycRes.rows.length > 0,
+        hasLinkedBank: bankRes.rows.length > 0,
+        config,
+      });
+      if (!eligibility.eligible) {
+        throw httpError(eligibility.statusCode, eligibility.ineligibleReason);
+      }
+
+      const existingRes = await client.query(
+        `SELECT user_id, status FROM postpaid_wallets WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const existingWallet = existingRes.rows[0] || null;
+      if (existingWallet && existingWallet.status !== inactiveStatus) {
+        throw httpError(409, "Ví trả sau đã được kích hoạt trước đó");
+      }
+
+      if (existingWallet) {
+        await client.query(
+          `UPDATE postpaid_wallets
+              SET status = $2,
+                  credit_limit = $3,
+                  used_amount = 0,
+                  billed_amount = 0,
+                  service_fee_amount = 0,
+                  late_fee_amount = 0,
+                  current_cycle_month = NULL,
+                  due_date = NULL,
+                  activated_at = NOW(),
+                  updated_at = NOW()
+            WHERE user_id = $1`,
+          [userId, activeStatus, config.default_credit_limit],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO postpaid_wallets (
+             user_id, status, credit_limit, used_amount, billed_amount, service_fee_amount, late_fee_amount
+           )
+           VALUES ($1, $2, $3, 0, 0, 0, 0)`,
+          [userId, activeStatus, config.default_credit_limit],
+        );
+      }
+
+      await recordAudit(client, "POSTPAID_ACTIVATED", {
+        user_id: userId,
+        credit_limit: config.default_credit_limit,
+        reactivated: Boolean(existingWallet),
+      });
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    return postpaidRepository.getWalletOverview(userId);
+  },
+
+  async transitionWalletLifecycle({
+    userId,
+    nextStatusKey,
+    auditEvent,
+    clearCycle = false,
+    extraAuditPayload = {},
+    validateWallet,
+  }) {
+    const [{ statuses }] = await Promise.all([
+      postpaidRepository.getSystemCatalog(pool),
+      postpaidRepository.verifySystemPostpaidWallet(pool),
+    ]);
+    const nextStatus = requireCatalogCode(
+      statuses,
+      nextStatusKey,
+      STATUS_CATALOG_LABEL,
+    );
 
     const client = await pool.connect();
     try {
@@ -534,45 +732,33 @@ const postpaidRepository = {
         throw httpError(403, "Tài khoản đang bị khóa hoặc không khả dụng");
       }
 
-      const kycRes = await client.query(
-        `SELECT 1 FROM user_kyc WHERE user_id = $1 AND status = 'APPROVED' LIMIT 1`,
+      const pwRes = await client.query(
+        `SELECT user_id, status, credit_limit, used_amount, billed_amount,
+                service_fee_amount, late_fee_amount
+           FROM postpaid_wallets
+          WHERE user_id = $1
+          FOR UPDATE`,
         [userId],
       );
-      if (kycRes.rows.length === 0) {
-        throw httpError(403, "Tài khoản chưa xác thực danh tính (eKYC)");
-      }
+      const pw = pwRes.rows[0] || null;
+      validateWallet(pw, statuses);
 
-      const ageRes = await client.query(
-        `SELECT FLOOR(EXTRACT(EPOCH FROM (NOW() - $1::timestamptz)) / 86400)::int AS age_days`,
-        [user.created_at],
-      );
-      const ageDays = Math.max(0, Number(ageRes.rows[0]?.age_days || 0));
-      if (ageDays < config.min_account_days) {
-        throw httpError(
-          403,
-          `Tài khoản cần hoạt động tối thiểu ${config.min_account_days} ngày để mở Ví trả sau`,
-        );
-      }
-
-      const existingRes = await client.query(
-        `SELECT user_id FROM postpaid_wallets WHERE user_id = $1 FOR UPDATE`,
-        [userId],
-      );
-      if (existingRes.rows[0]) {
-        throw httpError(409, "Ví trả sau đã được kích hoạt trước đó");
-      }
-
+      const clearCycleClause = clearCycle
+        ? ", current_cycle_month = NULL, due_date = NULL"
+        : "";
       await client.query(
-        `INSERT INTO postpaid_wallets (
-           user_id, status, credit_limit, used_amount, billed_amount, late_fee_amount
-         )
-         VALUES ($1, $2, $3, 0, 0, 0)`,
-        [userId, activeStatus, config.default_credit_limit],
+        `UPDATE postpaid_wallets
+            SET status = $1${clearCycleClause},
+                updated_at = NOW()
+          WHERE user_id = $2`,
+        [nextStatus, userId],
       );
 
-      await recordAudit(client, "POSTPAID_ACTIVATED", {
+      await recordAudit(client, auditEvent, {
         user_id: userId,
-        credit_limit: config.default_credit_limit,
+        previous_status: pw.status,
+        next_status: nextStatus,
+        ...extraAuditPayload,
       });
 
       await client.query("COMMIT");
@@ -584,6 +770,86 @@ const postpaidRepository = {
     }
 
     return postpaidRepository.getWalletOverview(userId);
+  },
+
+  async freezeWallet({ userId }) {
+    return postpaidRepository.transitionWalletLifecycle({
+      userId,
+      nextStatusKey: "FROZEN",
+      auditEvent: "POSTPAID_FROZEN",
+      validateWallet: (pw, statuses) => {
+        const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+        const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+        const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
+        const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
+
+        if (!pw || pw.status === inactiveStatus) {
+          throw httpError(404, "Bạn chưa kích hoạt Ví trả sau");
+        }
+        if (pw.status === frozenStatus) {
+          throw httpError(409, "Ví trả sau đã được tạm khóa trước đó");
+        }
+        if (pw.status === pastDueStatus) {
+          throw httpError(
+            400,
+            "Ví đang quá hạn thanh toán, vui lòng tất toán kỳ sao kê trước khi tạm khóa",
+          );
+        }
+        if (pw.status !== activeStatus) {
+          throw httpError(400, "Không thể tạm khóa Ví trả sau ở trạng thái hiện tại");
+        }
+      },
+    });
+  },
+
+  async unfreezeWallet({ userId }) {
+    return postpaidRepository.transitionWalletLifecycle({
+      userId,
+      nextStatusKey: "ACTIVE",
+      auditEvent: "POSTPAID_UNFROZEN",
+      validateWallet: (pw, statuses) => {
+        const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+        const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+        const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
+
+        if (!pw || pw.status === inactiveStatus) {
+          throw httpError(404, "Bạn chưa kích hoạt Ví trả sau");
+        }
+        if (pw.status === activeStatus) {
+          throw httpError(409, "Ví trả sau hiện đang hoạt động");
+        }
+        if (pw.status !== frozenStatus) {
+          throw httpError(400, "Chỉ có thể mở khóa khi Ví trả sau đang tạm khóa");
+        }
+      },
+    });
+  },
+
+  async closeWallet({ userId, reason = "" }) {
+    return postpaidRepository.transitionWalletLifecycle({
+      userId,
+      nextStatusKey: "INACTIVE",
+      auditEvent: "POSTPAID_CLOSED",
+      clearCycle: true,
+      extraAuditPayload: reason ? { reason } : {},
+      validateWallet: (pw, statuses) => {
+        const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+        if (!pw || pw.status === inactiveStatus) {
+          throw httpError(404, "Ví trả sau chưa kích hoạt hoặc đã hủy trước đó");
+        }
+        if (
+          Number(pw.used_amount) > 0 ||
+          Number(pw.billed_amount) > 0 ||
+          Number(pw.service_fee_amount) > 0 ||
+          Number(pw.late_fee_amount) > 0
+        ) {
+          throw httpError(
+            400,
+            "Vui lòng thanh toán hết toàn bộ dư nợ trước khi hủy Ví trả sau",
+          );
+        }
+      },
+    });
   },
   async getEntries(
     userId,
@@ -723,6 +989,7 @@ const postpaidRepository = {
     }
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+    const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
     const purchaseAction = requireCatalogCode(
       entryActions,
       "PURCHASE",
@@ -804,7 +1071,7 @@ const postpaidRepository = {
         [sourceUserId],
       );
       const pw = pwRes.rows[0];
-      if (!pw) {
+      if (!pw || pw.status === inactiveStatus) {
         throw httpError(403, "Bạn chưa kích hoạt Ví trả sau");
       }
       if (pw.status === pastDueStatus) {
@@ -931,6 +1198,12 @@ const postpaidRepository = {
         });
       }
 
+      await merchantFeeService.addMonthlyUsageTx(client, {
+        userId: destUser.id,
+        monthKey: merchantFeeDetails?.month_key || getVnDateMeta().cycleMonth,
+        qrGrossDelta: amountNum,
+      });
+
       await client.query(
         `INSERT INTO postpaid_entries (
            id, user_id, tx_id, action, amount, delta_used, used_before, used_after, note
@@ -1021,9 +1294,15 @@ const postpaidRepository = {
       await postpaidRepository.getSystemCatalog(pool);
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+    const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
     const repayLateFeeAction = requireCatalogCode(
       entryActions,
       "REPAY_LATE_FEE",
+      ACTION_CATALOG_LABEL,
+    );
+    const repayServiceFeeAction = requireCatalogCode(
+      entryActions,
+      "REPAY_SERVICE_FEE",
       ACTION_CATALOG_LABEL,
     );
     const repayPrincipalAction = requireCatalogCode(
@@ -1060,20 +1339,21 @@ const postpaidRepository = {
 
       const pwRes = await client.query(
         `SELECT user_id, status, credit_limit, used_amount, billed_amount,
-                late_fee_amount, current_cycle_month
+                service_fee_amount, late_fee_amount, current_cycle_month
            FROM postpaid_wallets
           WHERE user_id = $1
           FOR UPDATE`,
         [userId],
       );
       const pw = pwRes.rows[0];
-      if (!pw) {
+      if (!pw || pw.status === inactiveStatus) {
         throw httpError(404, "Bạn chưa kích hoạt Ví trả sau");
       }
 
       const creditLimit = Number(pw.credit_limit);
       const oldUsed = Number(pw.used_amount);
       const oldBilled = Number(pw.billed_amount);
+      const oldServiceFee = Number(pw.service_fee_amount);
       const oldLateFee = Number(pw.late_fee_amount);
 
       if (oldUsed <= 0) {
@@ -1089,20 +1369,25 @@ const postpaidRepository = {
       }
 
       const paidLateFee = Math.min(repayAmount, oldLateFee);
-      const paidPrincipal = repayAmount - paidLateFee;
+      const remainingAfterLateFee = repayAmount - paidLateFee;
+      const paidServiceFee = Math.min(remainingAfterLateFee, oldServiceFee);
+      const paidPrincipal = remainingAfterLateFee - paidServiceFee;
+      const paidFeeTotal = paidLateFee + paidServiceFee;
 
       const newLateFee = oldLateFee - paidLateFee;
+      const newServiceFee = oldServiceFee - paidServiceFee;
       const billedDeduction = Math.min(paidPrincipal, oldBilled);
       const newBilled = oldBilled - billedDeduction;
       const newUsed = oldUsed - repayAmount;
 
-      if (newBilled + newLateFee > newUsed) {
+      if (newBilled + newServiceFee + newLateFee > newUsed) {
         throw httpError(500, "Lỗi toàn vẹn công thức trừ nợ Ví trả sau");
       }
 
       const newStatus =
         pw.status === pastDueStatus &&
         newLateFee === 0 &&
+        newServiceFee === 0 &&
         newBilled === 0
           ? activeStatus
           : pw.status;
@@ -1128,11 +1413,15 @@ const postpaidRepository = {
       }
 
       const description =
-        paidLateFee > 0 && paidPrincipal > 0
-          ? "Thanh toán dư nợ & phí trễ hạn Ví trả sau"
-          : paidLateFee > 0
-            ? "Thanh toán phí trễ hạn Ví trả sau"
-            : "Thanh toán dư nợ Ví trả sau";
+        paidFeeTotal > 0 && paidPrincipal > 0
+          ? "Thanh toán dư nợ & phí Ví trả sau"
+          : paidLateFee > 0 && paidServiceFee > 0
+            ? "Thanh toán phí trễ hạn & phí dịch vụ Ví trả sau"
+            : paidLateFee > 0
+              ? "Thanh toán phí trễ hạn Ví trả sau"
+              : paidServiceFee > 0
+                ? "Thanh toán phí dịch vụ Ví trả sau"
+                : "Thanh toán dư nợ Ví trả sau";
 
       const hasPrincipal = paidPrincipal > 0;
       const txInsertRes = await client.query(
@@ -1152,18 +1441,18 @@ const postpaidRepository = {
           hasPrincipal ? postpaidWalletId : null,
           hasPrincipal ? sysBefore : null,
           hasPrincipal ? sysAfter : null,
-          hasPrincipal ? paidPrincipal : paidLateFee,
-          hasPrincipal ? paidLateFee : 0,
+          hasPrincipal ? paidPrincipal : paidFeeTotal,
+          hasPrincipal ? paidFeeTotal : 0,
           JSON.stringify(
-            paidLateFee > 0
+            paidFeeTotal > 0
               ? {
-                  fee_type: FEE_TYPES.POSTPAID_LATE_FEE,
                   cycle_month: pw.current_cycle_month,
                   late_fee_paid: paidLateFee,
+                  service_fee_paid: paidServiceFee,
                 }
               : null,
           ),
-          hasPrincipal ? paidPrincipal : paidLateFee,
+          hasPrincipal ? paidPrincipal : paidFeeTotal,
           description,
           idempotencyKey,
         ],
@@ -1171,20 +1460,37 @@ const postpaidRepository = {
 
       const createdTx = txInsertRes.rows[0];
       const createdTxId = createdTx.id;
+      let cursorUsed = oldUsed;
 
-      if (paidLateFee > 0) {
+      for (const feePart of [
+        {
+          amount: paidLateFee,
+          feeType: FEE_TYPES.POSTPAID_LATE_FEE,
+          action: repayLateFeeAction,
+          note: "Trả phí trễ hạn Ví trả sau",
+        },
+        {
+          amount: paidServiceFee,
+          feeType: FEE_TYPES.POSTPAID_SERVICE_FEE,
+          action: repayServiceFeeAction,
+          note: "Thanh toán phí dịch vụ Ví trả sau",
+        },
+      ]) {
+        if (feePart.amount <= 0) continue;
+
         await merchantFeeService.creditSystemFeeWalletAndLedgerTx(client, {
           transactionId: createdTxId,
           payerUserId: userId,
-          feeType: FEE_TYPES.POSTPAID_LATE_FEE,
-          amount: paidLateFee,
+          feeType: feePart.feeType,
+          amount: feePart.amount,
           rateSnapshot: {
             cycle_month: pw.current_cycle_month,
-            fee_type: FEE_TYPES.POSTPAID_LATE_FEE,
+            fee_type: feePart.feeType,
           },
           idempotencyKey,
         });
 
+        const usedAfterPart = cursorUsed - feePart.amount;
         await client.query(
           `INSERT INTO postpaid_entries (
              id, user_id, tx_id, action, amount, delta_used, used_before, used_after, cycle_month, note
@@ -1194,19 +1500,19 @@ const postpaidRepository = {
             uuidv7(),
             userId,
             createdTxId,
-            repayLateFeeAction,
-            paidLateFee,
-            -paidLateFee,
-            oldUsed,
-            oldUsed - paidLateFee,
+            feePart.action,
+            feePart.amount,
+            -feePart.amount,
+            cursorUsed,
+            usedAfterPart,
             pw.current_cycle_month,
-            "Trả phí trễ hạn Ví trả sau",
+            feePart.note,
           ],
         );
+        cursorUsed = usedAfterPart;
       }
 
       if (paidPrincipal > 0) {
-        const usedBeforePrincipal = oldUsed - paidLateFee;
         await client.query(
           `INSERT INTO postpaid_entries (
              id, user_id, tx_id, action, amount, delta_used, used_before, used_after, cycle_month, note
@@ -1219,7 +1525,7 @@ const postpaidRepository = {
             repayPrincipalAction,
             paidPrincipal,
             -paidPrincipal,
-            usedBeforePrincipal,
+            cursorUsed,
             newUsed,
             pw.current_cycle_month,
             "Thanh toán gốc dư nợ Ví trả sau",
@@ -1231,11 +1537,12 @@ const postpaidRepository = {
         `UPDATE postpaid_wallets
             SET used_amount = $1,
                 billed_amount = $2,
-                late_fee_amount = $3,
-                status = $4,
+                service_fee_amount = $3,
+                late_fee_amount = $4,
+                status = $5,
                 updated_at = NOW()
-          WHERE user_id = $5`,
-        [newUsed, newBilled, newLateFee, newStatus, userId],
+          WHERE user_id = $6`,
+        [newUsed, newBilled, newServiceFee, newLateFee, newStatus, userId],
       );
 
       await recordAudit(client, "POSTPAID_REPAY", {
@@ -1243,10 +1550,12 @@ const postpaidRepository = {
         transaction_id: createdTxId,
         repay_amount: repayAmount,
         paid_late_fee: paidLateFee,
+        paid_service_fee: paidServiceFee,
         paid_principal: paidPrincipal,
         used_before: oldUsed,
         used_after: newUsed,
         billed_after: newBilled,
+        service_fee_after: newServiceFee,
         late_fee_after: newLateFee,
         status_after: newStatus,
       });
@@ -1259,11 +1568,13 @@ const postpaidRepository = {
         createdAt: createdTx.created_at,
         amount: repayAmount,
         paidPrincipal,
+        paidServiceFee,
         paidLateFee,
         mainBalanceAfter: userAfter,
         usedAmountAfter: newUsed,
         availableLimitAfter: creditLimit - newUsed,
         billedAmountAfter: newBilled,
+        serviceFeeAfter: newServiceFee,
         lateFeeAfter: newLateFee,
         postpaidStatus: newStatus,
       };
@@ -1294,6 +1605,7 @@ const postpaidRepository = {
       await postpaidRepository.getSystemCatalog(pool);
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+    const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
     const purchaseAction = requireCatalogCode(
       entryActions,
       "PURCHASE",
@@ -1392,7 +1704,8 @@ const postpaidRepository = {
       }
 
       const pwRes = await client.query(
-        `SELECT user_id, status, credit_limit, used_amount, billed_amount, late_fee_amount
+        `SELECT user_id, status, credit_limit, used_amount, billed_amount,
+                service_fee_amount, late_fee_amount
            FROM postpaid_wallets
           WHERE user_id = $1
           FOR UPDATE`,
@@ -1410,9 +1723,14 @@ const postpaidRepository = {
 
       const oldUsed = Number(pw.used_amount);
       const oldBilled = Number(pw.billed_amount);
+      const oldServiceFee = Number(pw.service_fee_amount);
       const oldLateFee = Number(pw.late_fee_amount);
 
-      const creditToReduce = Math.min(actualRefundAmount, oldUsed);
+      const principalDebtRemaining = Math.max(
+        0,
+        oldUsed - oldServiceFee - oldLateFee,
+      );
+      const creditToReduce = Math.min(actualRefundAmount, principalDebtRemaining);
       const excessToMainWallet = actualRefundAmount - creditToReduce;
       const newUsed = oldUsed - creditToReduce;
 
@@ -1429,7 +1747,7 @@ const postpaidRepository = {
         ? new Date(stmtRes.rows[0].created_at).getTime()
         : null;
       const purchaseTime = new Date(origTx.created_at).getTime();
-      const maxAllowedBilled = Math.max(0, newUsed - oldLateFee);
+      const maxAllowedBilled = Math.max(0, newUsed - oldServiceFee - oldLateFee);
 
       let newBilled = oldBilled;
       if (lastStatementCloseAt !== null && purchaseTime <= lastStatementCloseAt) {
@@ -1442,6 +1760,7 @@ const postpaidRepository = {
       const newStatus =
         pw.status === pastDueStatus &&
         oldLateFee === 0 &&
+        oldServiceFee === 0 &&
         newBilled === 0
           ? activeStatus
           : pw.status;
@@ -1628,6 +1947,17 @@ const postpaidRepository = {
     ]);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
+    const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
+    const purchaseAction = requireCatalogCode(
+      entryActions,
+      "PURCHASE",
+      ACTION_CATALOG_LABEL,
+    );
+    const serviceFeeAction = requireCatalogCode(
+      entryActions,
+      "SERVICE_FEE",
+      ACTION_CATALOG_LABEL,
+    );
     const statementCloseAction = requireCatalogCode(
       entryActions,
       "STATEMENT_CLOSE",
@@ -1654,15 +1984,77 @@ const postpaidRepository = {
         await client.query("BEGIN");
 
         const batchRes = await client.query(
-          `SELECT user_id, used_amount, late_fee_amount
-             FROM postpaid_wallets
-            WHERE (used_amount - late_fee_amount) > 0
-              AND status IN ($3, $4)
-              AND (current_cycle_month IS DISTINCT FROM $1)
-            ORDER BY user_id ASC
+          `SELECT pw.user_id,
+                  pw.used_amount,
+                  pw.service_fee_amount,
+                  pw.late_fee_amount,
+                  (
+                    SELECT COUNT(*)::int
+                      FROM postpaid_entries pe
+                     WHERE pe.user_id = pw.user_id
+                       AND pe.action = $7
+                  ) AS lifetime_purchase_count,
+                  (
+                    SELECT COUNT(*)::int
+                      FROM postpaid_entries pe
+                     WHERE pe.user_id = pw.user_id
+                       AND pe.action = $7
+                       AND NOT EXISTS (
+                         SELECT 1
+                           FROM postpaid_entries st
+                          WHERE st.user_id = pw.user_id
+                            AND st.action = $8
+                            AND (
+                              st.created_at > pe.created_at
+                              OR (st.created_at = pe.created_at AND st.id >= pe.id)
+                            )
+                       )
+                  ) AS cycle_purchase_count
+             FROM postpaid_wallets pw
+            WHERE pw.status IN ($3, $4, $5)
+              AND (pw.current_cycle_month IS DISTINCT FROM $1)
+              AND (
+                (pw.used_amount - pw.service_fee_amount - pw.late_fee_amount) > 0
+                OR (
+                  $6::bigint > 0
+                  AND EXISTS (
+                    SELECT 1
+                      FROM postpaid_entries pe
+                     WHERE pe.user_id = pw.user_id
+                       AND pe.action = $7
+                       AND NOT EXISTS (
+                         SELECT 1
+                           FROM postpaid_entries st
+                          WHERE st.user_id = pw.user_id
+                            AND st.action = $8
+                            AND (
+                              st.created_at > pe.created_at
+                              OR (st.created_at = pe.created_at AND st.id >= pe.id)
+                            )
+                       )
+                  )
+                  AND (
+                    SELECT COUNT(*)
+                      FROM postpaid_entries pe
+                     WHERE pe.user_id = pw.user_id
+                       AND pe.action = $7
+                  ) > $9::int
+                )
+              )
+            ORDER BY pw.user_id ASC
             LIMIT $2
             FOR UPDATE SKIP LOCKED`,
-          [vnMeta.cycleMonth, safeBatch, activeStatus, pastDueStatus],
+          [
+            vnMeta.cycleMonth,
+            safeBatch,
+            activeStatus,
+            pastDueStatus,
+            frozenStatus,
+            config.monthly_service_fee,
+            purchaseAction,
+            statementCloseAction,
+            config.free_service_fee_tx_count,
+          ],
         );
 
         batchCount = batchRes.rows.length;
@@ -1672,12 +2064,59 @@ const postpaidRepository = {
         }
 
         for (const row of batchRes.rows) {
-          const used = Number(row.used_amount);
-          const lateFee = Number(row.late_fee_amount);
-          // Bắt buộc trừ late_fee_amount khỏi used_amount để billed_amount chỉ giữ phần gốc đã chốt
-          const newBilled = Math.max(0, used - lateFee);
-          if (newBilled <= 0) continue;
+          const usedBefore = Number(row.used_amount);
+          const oldServiceFee = Number(row.service_fee_amount);
+          const oldLateFee = Number(row.late_fee_amount);
+          const lifetimePurchases = Number(row.lifetime_purchase_count || 0);
+          const cyclePurchases = Number(row.cycle_purchase_count || 0);
 
+          // Bắt buộc trừ service_fee_amount & late_fee_amount khỏi used_amount để billed_amount chỉ giữ phần gốc
+          const newBilled = Math.max(0, usedBefore - oldServiceFee - oldLateFee);
+          const qualifiesServiceFee =
+            config.monthly_service_fee > 0 &&
+            cyclePurchases > 0 &&
+            lifetimePurchases > config.free_service_fee_tx_count;
+
+          if (newBilled <= 0 && !qualifiesServiceFee) continue;
+
+          const existingStmtRes = await client.query(
+            `SELECT 1
+               FROM postpaid_entries
+              WHERE user_id = $1
+                AND cycle_month = $2
+                AND action = $3
+              LIMIT 1`,
+            [row.user_id, vnMeta.cycleMonth, statementCloseAction],
+          );
+          if (existingStmtRes.rows[0]) continue;
+
+          let serviceFeeAdded = 0;
+          if (qualifiesServiceFee) {
+            const feeInsert = await client.query(
+              `INSERT INTO postpaid_entries (
+                 id, user_id, action, amount, delta_used, used_before, used_after, cycle_month, note
+               )
+               VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)
+               ON CONFLICT (user_id, cycle_month) WHERE action = 'SERVICE_FEE'
+               DO NOTHING
+               RETURNING id`,
+              [
+                uuidv7(),
+                row.user_id,
+                serviceFeeAction,
+                config.monthly_service_fee,
+                usedBefore,
+                usedBefore + config.monthly_service_fee,
+                vnMeta.cycleMonth,
+                `Phí dịch vụ Ví trả sau kỳ ${formatCycleMonthDisplay(vnMeta.cycleMonth)}`,
+              ],
+            );
+            if (feeInsert.rows[0]) {
+              serviceFeeAdded = config.monthly_service_fee;
+            }
+          }
+
+          const usedAfterServiceFee = usedBefore + serviceFeeAdded;
           const stmtInsert = await client.query(
             `INSERT INTO postpaid_entries (
                id, user_id, action, amount, delta_used, used_before, used_after, cycle_month, note
@@ -1690,8 +2129,8 @@ const postpaidRepository = {
               uuidv7(),
               row.user_id,
               statementCloseAction,
-              newBilled,
-              used,
+              newBilled + serviceFeeAdded,
+              usedAfterServiceFee,
               vnMeta.cycleMonth,
               `Chốt sao kê kỳ ${formatCycleMonthDisplay(vnMeta.cycleMonth)}`,
             ],
@@ -1702,11 +2141,20 @@ const postpaidRepository = {
           await client.query(
             `UPDATE postpaid_wallets
                 SET billed_amount = $1,
-                    current_cycle_month = $2,
-                    due_date = $3::date,
+                    service_fee_amount = $2,
+                    used_amount = $3,
+                    current_cycle_month = $4,
+                    due_date = $5::date,
                     updated_at = NOW()
-              WHERE user_id = $4`,
-            [newBilled, vnMeta.cycleMonth, dueDateStr, row.user_id],
+              WHERE user_id = $6`,
+            [
+              newBilled,
+              oldServiceFee + serviceFeeAdded,
+              usedAfterServiceFee,
+              vnMeta.cycleMonth,
+              dueDateStr,
+              row.user_id,
+            ],
           );
           totalProcessed += 1;
         }
@@ -1740,6 +2188,7 @@ const postpaidRepository = {
     ]);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
+    const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
     const lateFeeAction = requireCatalogCode(
       entryActions,
       "LATE_FEE",
@@ -1761,16 +2210,17 @@ const postpaidRepository = {
         await client.query("BEGIN");
 
         const batchRes = await client.query(
-          `SELECT user_id, used_amount, billed_amount, late_fee_amount, current_cycle_month, due_date
+          `SELECT user_id, used_amount, billed_amount, service_fee_amount,
+                  late_fee_amount, current_cycle_month, due_date
              FROM postpaid_wallets
-            WHERE status = $3
-              AND billed_amount > 0
+            WHERE status IN ($3, $4)
+              AND (billed_amount + service_fee_amount) > 0
               AND due_date IS NOT NULL
               AND due_date < $1::date
             ORDER BY user_id ASC
             LIMIT $2
             FOR UPDATE SKIP LOCKED`,
-          [vnMeta.todayDateStr, safeBatch, activeStatus],
+          [vnMeta.todayDateStr, safeBatch, activeStatus, frozenStatus],
         );
 
         batchCount = batchRes.rows.length;
@@ -1782,10 +2232,12 @@ const postpaidRepository = {
         for (const row of batchRes.rows) {
           const usedBefore = Number(row.used_amount);
           const billed = Number(row.billed_amount);
+          const serviceFee = Number(row.service_fee_amount);
           const oldLateFee = Number(row.late_fee_amount);
           const cycleMonth = row.current_cycle_month || vnMeta.cycleMonth;
 
-          const rateFee = Math.round((billed * config.late_fee_bps) / 10000);
+          const overdueBasis = billed + serviceFee;
+          const rateFee = Math.round((overdueBasis * config.late_fee_bps) / 10000);
           const penalty = Math.max(config.min_late_fee, rateFee);
 
           if (penalty > 0) {

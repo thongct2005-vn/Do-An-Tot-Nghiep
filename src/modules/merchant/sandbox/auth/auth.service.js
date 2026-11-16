@@ -12,17 +12,8 @@ const { httpError } = require("../../../../utils/httpError");
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
-<<<<<<< HEAD
-} = require("../../../../utils/generateApikeySecretkey");
-const { validateCallbackUrlForSave } = require("../../../../utils/urlGuard");
-const {
-  buildFirstLoginChallenge,
-  changeFirstLoginPassword,
-} = require("../../shared/firstLoginPassword");
-=======
 } = require("../../../../utils/keys/apiKeyGenerator");
 const { validateCallbackUrlForSave } = require("../../../../utils/url/urlGuard");
->>>>>>> 26667ab7f952df102eb35114109e10b593553592
 
 
 const MAX_LOGIN_ATTEMPTS = 5;

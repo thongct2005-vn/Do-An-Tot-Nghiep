@@ -12,7 +12,7 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
   const gateway = require('../src/modules/merchant/shared/paymentRequest/paymentRequest.repository');
   const tx = require('../src/modules/transaction/transaction.repository');
   const fees = require('../src/modules/merchant/production/fee/fee.service');
-  const limits = require('../src/utils/limitsDb');
+  const limits = require('../src/utils/limits/limitsDb');
   const calculator = require('../src/modules/fee/feeCalculator');
   const jwt = require('../src/utils/jwt');
   let server;
@@ -223,7 +223,7 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
       }
     });
     await t.test('Admin policy to QR settlement to Dashboard, report and Excel reconcile against SQL', async () => {
-      const range = require('../src/utils/adminDateRange').getCurrentMonthBoundsInVietnam();
+      const range = require('../src/utils/dateRange').getCurrentMonthBoundsInVietnam();
       const query = new URLSearchParams({start_date:range.startDate,end_date:range.endDate,merchant_id:merchant});
       const r = await request(`/reports/overview?${query}`,{token:adminTokens.accessToken});
       assert.equal(r.status,200,JSON.stringify(r));

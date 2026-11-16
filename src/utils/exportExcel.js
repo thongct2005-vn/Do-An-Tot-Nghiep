@@ -27,6 +27,7 @@ const COLUMNS = [
   { header: "Mã đơn hàng", width: 22 },
   { header: "Số tiền (VND)", width: 17 },
   { header: "Phí (VND)", width: 13 },
+  { header: "Thực nhận (VND)", width: 18 },
   { header: "Số dư trước (VND)", width: 19 },
   { header: "Số dư sau (VND)", width: 19 },
   { header: "Trạng thái", width: 14 },
@@ -70,6 +71,12 @@ function toSheetRow(row) {
   const amount = num(row.amount);
   const merchantFee = isIn ? num(row.merchant_fee) : 0;
   const displayFee = isIn ? merchantFee : num(row.fee);
+  const netAmount =
+    row.net_amount !== null && row.net_amount !== undefined
+      ? num(row.net_amount)
+      : isIn
+        ? Math.max(0, amount - merchantFee)
+        : amount;
   return {
     isIn,
     isSuccess: row.status === "SUCCESS",
@@ -87,6 +94,7 @@ function toSheetRow(row) {
       row.order_id || "",
       isIn ? amount : -amount,
       displayFee,
+      netAmount,
       num(row.balance_before),
       num(row.balance_after),
       STATUS_LABEL[row.status] || row.status,
@@ -181,8 +189,9 @@ async function buildTransactionsXlsx({ rows, startDate, endDate, filters = [] })
     row.getCell(10).numFmt = MONEY_FMT;
     row.getCell(11).numFmt = MONEY_FMT;
     row.getCell(12).numFmt = MONEY_FMT;
+    row.getCell(13).numFmt = MONEY_FMT;
     row.getCell(6).alignment = { horizontal: "left" };
-    row.getCell(14).alignment = { wrapText: true, vertical: "top" };
+    row.getCell(15).alignment = { wrapText: true, vertical: "top" };
   });
 
   if (items.length > 0) {
@@ -305,9 +314,18 @@ async function buildRevenueStatsXlsx({
   const columns = [
     { header: "Ngày giao dịch", width: 18 },
     { header: "Số lượng đơn", width: 16 },
+    { header: "Doanh thu trước phí (VND)", width: 24 },
+    { header: "Phí chiết khấu (VND)", width: 22 },
     { header: "Doanh thu thực nhận (VND)", width: 24 },
     { header: "Giá trị TB / đơn (VND)", width: 24 },
   ];
+
+  const totalRevenue = num(summary.total_revenue);
+  const totalFee = num(summary.total_merchant_fee);
+  const totalGross =
+    summary.gross_revenue !== undefined && summary.gross_revenue !== null
+      ? num(summary.gross_revenue)
+      : totalRevenue + totalFee;
 
   const rangeText =
     startDate && endDate
@@ -320,7 +338,7 @@ async function buildRevenueStatsXlsx({
 
   styleReportHeader(sheet, {
     title: "BÁO CÁO THỐNG KÊ DOANH THU",
-    subtitle: `${rangeText} • Tổng doanh thu: ${num(summary.total_revenue).toLocaleString("vi-VN")} VND • Số đơn: ${num(summary.total_orders).toLocaleString("vi-VN")} • Xuất lúc ${formatVnNow()}`,
+    subtitle: `${rangeText} • Thực nhận: ${totalRevenue.toLocaleString("vi-VN")} VND • Phí CK: ${totalFee.toLocaleString("vi-VN")} VND • Số đơn: ${num(summary.total_orders).toLocaleString("vi-VN")} • Xuất lúc ${formatVnNow()}`,
     columns,
   });
 
@@ -328,26 +346,38 @@ async function buildRevenueStatsXlsx({
   dailyStats.forEach((item, idx) => {
     const orders = num(item.order_count);
     const revenue = num(item.revenue);
+    const fee = num(item.merchant_fee);
+    const gross =
+      item.gross_revenue !== undefined && item.gross_revenue !== null
+        ? num(item.gross_revenue)
+        : revenue + fee;
     const avg = orders > 0 ? Math.round(revenue / orders) : 0;
 
     const row = sheet.getRow(headerRowIdx + 1 + idx);
-    row.values = [formatDay(item.date), orders, revenue, avg];
+    row.values = [formatDay(item.date), orders, gross, fee, revenue, avg];
     styleReportDataRow(row, idx);
     row.getCell(1).alignment = { vertical: "middle", horizontal: "center" };
     row.getCell(2).numFmt = MONEY_FMT;
     row.getCell(2).alignment = { vertical: "middle", horizontal: "center" };
     row.getCell(3).numFmt = MONEY_FMT;
     row.getCell(3).alignment = { vertical: "middle", horizontal: "right" };
-    row.getCell(3).font = { bold: true, color: { argb: "FF15803D" } };
     row.getCell(4).numFmt = MONEY_FMT;
     row.getCell(4).alignment = { vertical: "middle", horizontal: "right" };
+    row.getCell(4).font = { color: { argb: "FFEA580C" } };
+    row.getCell(5).numFmt = MONEY_FMT;
+    row.getCell(5).alignment = { vertical: "middle", horizontal: "right" };
+    row.getCell(5).font = { bold: true, color: { argb: "FF15803D" } };
+    row.getCell(6).numFmt = MONEY_FMT;
+    row.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
   });
 
   const totalRow = sheet.getRow(headerRowIdx + 1 + dailyStats.length);
   totalRow.values = [
     "TỔNG CỘNG",
     num(summary.total_orders),
-    num(summary.total_revenue),
+    totalGross,
+    totalFee,
+    totalRevenue,
     num(summary.avg_order_value),
   ];
   styleReportTotalRow(totalRow);
@@ -358,6 +388,10 @@ async function buildRevenueStatsXlsx({
   totalRow.getCell(3).alignment = { vertical: "middle", horizontal: "right" };
   totalRow.getCell(4).numFmt = MONEY_FMT;
   totalRow.getCell(4).alignment = { vertical: "middle", horizontal: "right" };
+  totalRow.getCell(5).numFmt = MONEY_FMT;
+  totalRow.getCell(5).alignment = { vertical: "middle", horizontal: "right" };
+  totalRow.getCell(6).numFmt = MONEY_FMT;
+  totalRow.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

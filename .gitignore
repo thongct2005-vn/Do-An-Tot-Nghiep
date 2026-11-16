@@ -23,6 +23,7 @@ tests/*
 !tests/merchant_expiry_lock_order.test.js
 !tests/admin_fee_reports.test.js
 !tests/admin_fee_report_logins.test.js
+!tests/mongo_login_admin_audit.test.js
 !tests/admin_fee_export_limit.test.js
 !tests/fixtures/
 tests/fixtures/*

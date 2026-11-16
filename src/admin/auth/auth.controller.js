@@ -6,6 +6,7 @@ const adminAuthController = {
     try {
       const { email, password } = req.body;
       const result = await adminAuthService.login({ email, password });
+      res.locals.auditAdminId = result.admin_info.user_id;
       return successResponse(res, 200, "Đăng nhập Admin thành công", result);
     } catch (e) {
       next(e);

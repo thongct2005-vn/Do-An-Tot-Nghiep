@@ -290,7 +290,9 @@ const authService = {
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await authRepository.updateRefeshToken({ refreshToken, userId: user.id });
 
-    await recordSuccessfulUserLogin({ userId: user.id });
+    void recordSuccessfulUserLogin({ userId: user.id }).catch(() => {
+      console.warn("MongoDB audit event unavailable: user login write failed");
+    });
 
     emitToUser(user.id, "force_logout", {
       reason: "Tài khoản của bạn vừa được đăng nhập ở một thiết bị khác",

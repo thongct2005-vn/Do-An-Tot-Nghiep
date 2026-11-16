@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { warnMongoAudit } = require("../../utils/mongoAuditWarning");
 
 const userLoginEventSchema = new mongoose.Schema(
   {
@@ -22,6 +23,7 @@ const userLoginEventSchema = new mongoose.Schema(
   {
     collection: "user_login_events",
     versionKey: false,
+    bufferCommands: false,
   },
 );
 
@@ -42,6 +44,7 @@ async function recordSuccessfulUserLogin({ userId, loggedInAt = new Date() }) {
 
   try {
     if (mongoose.connection.readyState !== 1) {
+      warnMongoAudit("user login skipped while disconnected");
       return null;
     }
     return await UserLoginEvent.create({
@@ -50,10 +53,7 @@ async function recordSuccessfulUserLogin({ userId, loggedInAt = new Date() }) {
       logged_in_at: loggedInAt,
     });
   } catch (err) {
-    console.error(
-      "recordSuccessfulUserLogin warning (MongoDB):",
-      err?.message || err,
-    );
+    warnMongoAudit("user login write failed");
     return null;
   }
 }

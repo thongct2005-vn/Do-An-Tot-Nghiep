@@ -607,17 +607,24 @@ const merchantTransactionService = {
 
     const type = row.transaction_type;
     const isBankType = type === "TOPUP" || type === "WITHDRAW";
+    const amountNum = Number(row.amount);
+    const merchantFeeNum = Number(row.merchant_fee || 0);
+    const fallbackNetAmount =
+      row.direction === "IN" ? Math.max(0, amountNum - merchantFeeNum) : amountNum;
 
     const detail = {
       id: row.id,
       transaction_type: type,
       status: row.status,
       direction: row.direction,
-      amount: Number(row.amount),
+      amount: amountNum,
       fee: Number(row.fee),
-      merchant_fee: Number(row.merchant_fee || 0),
+      merchant_fee: merchantFeeNum,
       fee_rate_snapshot: row.fee_rate_snapshot || null,
-      net_amount: Number(row.net_amount ?? row.amount),
+      net_amount:
+        row.net_amount !== null && row.net_amount !== undefined
+          ? Number(row.net_amount)
+          : fallbackNetAmount,
       description: row.description,
       created_at: row.created_at,
       completed_at: row.completed_at,
@@ -811,6 +818,8 @@ const merchantTransactionService = {
               startDate: peak.startDate,
               endDate: peak.endDate,
               revenue: peak.revenue,
+              gross_revenue: peak.gross_revenue,
+              merchant_fee: peak.merchant_fee,
               order_count: peak.order_count,
             }
           : null,
@@ -822,6 +831,8 @@ const merchantTransactionService = {
               startDate: low.startDate,
               endDate: low.endDate,
               revenue: low.revenue,
+              gross_revenue: low.gross_revenue,
+              merchant_fee: low.merchant_fee,
               order_count: low.order_count,
               tie_count: lowTieCount,
             }
@@ -856,6 +867,8 @@ const merchantTransactionService = {
     const buffer = await buildRevenueStatsXlsx({
       summary: {
         total_revenue: stats.total_revenue,
+        gross_revenue: stats.gross_revenue,
+        total_merchant_fee: stats.total_merchant_fee,
         total_orders: stats.total_orders,
         avg_order_value: stats.avg_order_value,
       },

@@ -30,7 +30,7 @@ const adminUserRepository = {
    */
   async getLoginStatsRows({ startInstant, nextDayInstant, groupBy }) {
     if (mongoose.connection.readyState !== 1) {
-      return [];
+      throw httpError(503, "Dữ liệu đăng nhập tạm thời không khả dụng");
     }
 
     let dateFormat = "%Y-%m-%d";
@@ -41,7 +41,9 @@ const adminUserRepository = {
     }
     // Với groupBy === "week", gom nhóm theo ngày "%Y-%m-%d" tại MongoDB rồi gộp theo tuần ở tầng Service.
 
-    const rows = await UserLoginEvent.aggregate([
+    let rows;
+    try {
+      rows = await UserLoginEvent.aggregate([
       {
         $match: {
           status: "SUCCESS",
@@ -67,7 +69,13 @@ const adminUserRepository = {
       {
         $sort: { _id: 1 },
       },
-    ]);
+      ]);
+    } catch (err) {
+      if (mongoose.connection.readyState !== 1 || /Mongo(Network|ServerSelection|Timeout)|MongooseServerSelection/.test(err?.name || "")) {
+        throw httpError(503, "Dữ liệu đăng nhập tạm thời không khả dụng");
+      }
+      throw err;
+    }
 
     return rows;
   },

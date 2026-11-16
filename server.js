@@ -9,6 +9,7 @@ const errorHandler = require("./src/middlewares/errorHandler");
 const router = require("./src/routes/index");
 const { initSocket } = require("./src/utils/socket");
 const { startBackgroundJobs, stopBackgroundJobs } = require("./src/jobs");
+const connectMongo = require("./src/config/mongo");
 const {
   pageRouter: payPageRouter,
 } = require("./src/modules/paymentPage/paymentPage.routes");
@@ -99,18 +100,31 @@ app.get("/api/v2/merchant/sandbox/download-apk", (req, res) => {
 
 app.use(errorHandler);
 
-server.listen(PORT, () => {
-  console.log(`Server running ${PORT}`);
-  // Chạy worker gửi lại webhook (retry) và job chuyển đơn hết hạn sang FAILED
-  startBackgroundJobs();
-  console.log("Background jobs started (webhook worker, payment expiry)");
-});
+let shuttingDown = false;
+async function startServer() {
+  await connectMongo();
+  if (shuttingDown) return;
+  server.listen(PORT, () => {
+    console.log(`Server running ${PORT}`);
+    startBackgroundJobs();
+    console.log("Background jobs started (webhook worker, payment expiry)");
+  });
+}
+void startServer();
 
 // Tắt gọn gàng: dừng job trước rồi đóng server
-function shutdown() {
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   stopBackgroundJobs();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  const forceExit = setTimeout(() => process.exit(0), 5000);
+  forceExit.unref?.();
+  await Promise.allSettled([
+    new Promise((resolve) => server.close(resolve)),
+    connectMongo.stopMongo(),
+  ]);
+  clearTimeout(forceExit);
+  process.exit(0);
 }
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const sanitizeRequest = require("../middlewares/sanitize.middleware");
+const adminAudit = require("../middlewares/adminAudit.middleware");
 
+router.use("/admin", adminAudit);
 // Lọc ký tự đặc biệt cho mọi request (body + query)
 router.use(sanitizeRequest);
 

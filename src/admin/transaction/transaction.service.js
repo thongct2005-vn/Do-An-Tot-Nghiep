@@ -320,6 +320,21 @@ function calculateIntegrityAndAnomalies(t) {
   };
 }
 
+/**
+ * Suy dẫn số tiền thực nhận về ví đích (hoặc ngân hàng nhận khi WITHDRAW)
+ * khi bản ghi lịch sử chưa lưu sẵn cột net_amount trong DB.
+ */
+function resolveAdminNetAmount({ transactionType, amount, merchantFee, rawNetAmount }) {
+  if (rawNetAmount !== null && rawNetAmount !== undefined) {
+    return Number(rawNetAmount);
+  }
+  const type = String(transactionType || "").toUpperCase();
+  if (type === "PAYMENT" || type === "TRANSFER") {
+    return amount - merchantFee;
+  }
+  return amount;
+}
+
 const adminTransactionService = {
   async getTransactions({
     page = 1,
@@ -382,14 +397,25 @@ const adminTransactionService = {
 
     const totalPages = Math.ceil(total / limitNum) || 1;
 
-    const items = rows.map((t) => ({
-      id: String(t.id),
-      transaction_type: t.transaction_type,
-      amount: Number(t.amount || 0),
-      fee: Number(t.fee || 0),
-      merchant_fee: Number(t.merchant_fee || 0),
-      status: t.status,
-      description: t.description || "",
+    const items = rows.map((t) => {
+      const amount = Number(t.amount || 0);
+      const fee = Number(t.fee || 0);
+      const merchantFee = Number(t.merchant_fee || 0);
+      return {
+        id: String(t.id),
+        transaction_type: t.transaction_type,
+        amount,
+        fee,
+        merchant_fee: merchantFee,
+        fee_rate_snapshot: t.fee_rate_snapshot || null,
+        net_amount: resolveAdminNetAmount({
+          transactionType: t.transaction_type,
+          amount,
+          merchantFee,
+          rawNetAmount: t.net_amount,
+        }),
+        status: t.status,
+        description: t.description || "",
       source_user: t.source_user_id
         ? {
             id: String(t.source_user_id),
@@ -411,7 +437,8 @@ const adminTransactionService = {
         audit_verified: t.initiator_role === "ADMIN",
       },
       created_at: t.created_at,
-    }));
+      };
+    });
 
     return {
       period: periodInfo,
@@ -565,7 +592,12 @@ const adminTransactionService = {
       fee,
       merchant_fee: merchantFee,
       fee_rate_snapshot: t.fee_rate_snapshot || null,
-      net_amount: Number(t.net_amount ?? (amount - merchantFee)),
+      net_amount: resolveAdminNetAmount({
+        transactionType: t.transaction_type,
+        amount,
+        merchantFee,
+        rawNetAmount: t.net_amount,
+      }),
       description: t.description || "",
       idempotency_key: t.idempotency_key,
       created_at: t.created_at,
@@ -597,7 +629,7 @@ const adminTransactionService = {
             email: t.destination_user_email || "",
             balance_before: destBefore,
             balance_after: destAfter,
-            difference: hasDestSnapshot ? amount : null,
+            difference: hasDestSnapshot ? amount - merchantFee : null,
           },
         };
       }

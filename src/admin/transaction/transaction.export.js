@@ -78,6 +78,7 @@ const COLUMNS = [
   { header: "Số tiền (VND)", width: 18 },
   { header: "Phí dịch vụ (VND)", width: 18 },
   { header: "Phí merchant (VND)", width: 18 },
+  { header: "Thực nhận ví đích (VND)", width: 22 },
   { header: "Biến động ví nguồn", width: 28 },
   { header: "Biến động ví đích", width: 28 },
   { header: "Trạng thái", width: 16 },
@@ -144,8 +145,8 @@ async function buildTransactionsAdminXlsx({
     const amt = Number(r.amount) || 0;
     const f = Number(r.fee) || 0;
     const mf = Number(r.merchant_fee) || 0;
-    totalFee += f + mf;
     if (r.status === "SUCCESS") {
+      totalFee += f + mf;
       if (r.transaction_type === "TOPUP") totalTopup += amt;
       else if (r.transaction_type === "WITHDRAW") totalWithdraw += amt;
       else if (r.transaction_type === "TRANSFER") totalTransfer += amt;
@@ -270,6 +271,16 @@ async function buildTransactionsAdminXlsx({
       destBalanceDelta = `${Number(r.dest_balance_before).toLocaleString("vi-VN")} -> ${Number(r.dest_balance_after).toLocaleString("vi-VN")}`;
     }
 
+    const rowAmount = Number(r.amount) || 0;
+    const rowFee = Number(r.fee) || 0;
+    const rowMerchantFee = Number(r.merchant_fee) || 0;
+    const rowNetDest =
+      r.net_amount !== null && r.net_amount !== undefined
+        ? Number(r.net_amount) || 0
+        : r.transaction_type === "PAYMENT" || r.transaction_type === "TRANSFER"
+          ? Math.max(0, rowAmount - rowMerchantFee)
+          : rowAmount;
+
     const cells = [
       idx + 1, // 1. STT
       sanitizeExcelString(r.id), // 2. Mã giao dịch
@@ -281,13 +292,14 @@ async function buildTransactionsAdminXlsx({
       sanitizeExcelString(destText), // 8. Người nhận / Ví đích
       sanitizeExcelString(bankText), // 9. Ngân hàng liên kết
       sanitizeExcelString(orderRefText), // 10. Mã đơn hàng / Đối soát
-      Number(r.amount) || 0, // 11. Số tiền
-      Number(r.fee) || 0, // 12. Phí dịch vụ
-      Number(r.merchant_fee) || 0, // 13. Phí merchant
-      sanitizeExcelString(sourceBalanceDelta), // 14. Biến động ví nguồn
-      sanitizeExcelString(destBalanceDelta), // 15. Biến động ví đích
-      STATUS_LABEL[r.status] || r.status, // 16. Trạng thái
-      sanitizeExcelString(r.description || ""), // 17. Nội dung
+      rowAmount, // 11. Số tiền
+      rowFee, // 12. Phí dịch vụ
+      rowMerchantFee, // 13. Phí merchant
+      rowNetDest, // 14. Thực nhận ví đích
+      sanitizeExcelString(sourceBalanceDelta), // 15. Biến động ví nguồn
+      sanitizeExcelString(destBalanceDelta), // 16. Biến động ví đích
+      STATUS_LABEL[r.status] || r.status, // 17. Trạng thái
+      sanitizeExcelString(r.description || ""), // 18. Nội dung
     ];
 
     cells.forEach((val, i) => {
@@ -302,9 +314,10 @@ async function buildTransactionsAdminXlsx({
     excelRow.getCell(11).numFmt = MONEY_FMT;
     excelRow.getCell(12).numFmt = MONEY_FMT;
     excelRow.getCell(13).numFmt = MONEY_FMT;
+    excelRow.getCell(14).numFmt = MONEY_FMT;
 
     // Màu trạng thái
-    const statusCell = excelRow.getCell(16);
+    const statusCell = excelRow.getCell(17);
     statusCell.alignment = { horizontal: "center" };
     if (r.status === "SUCCESS") {
       statusCell.font = { color: { argb: "FF0E7036" }, bold: true };

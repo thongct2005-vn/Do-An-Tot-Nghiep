@@ -4,7 +4,7 @@ const userRepository = require("../../../../modules/user/user.repository");
 const { httpError } = require("../../../../utils/httpError");
 const { isValidPhone } = require("../../../../utils/validators");
 const { parseAmountInRange } = require("../../../../utils/amount");
-const { getTransactionPolicy } = require("../../../../utils/limitsDb");
+const { getTransactionPolicy } = require("../../../../utils/limits/limitsDb");
 const pool = require("../../../../config/database");
 const { successResponse } = require("../../../../utils/apiResponse");
 

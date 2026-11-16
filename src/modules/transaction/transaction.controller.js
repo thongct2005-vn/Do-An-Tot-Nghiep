@@ -146,19 +146,32 @@ const transactionController = {
     try {
       const idempotencyKey = req.idempotencyKey;
       const { user_id: sourceUserId } = req.user;
-      const { reference_code: referenceCode } = req.body;
+      const {
+        reference_code: referenceCode,
+        funding_source: fundingSource = "MAIN_WALLET",
+      } = req.body;
 
       const result = await transactionService.processQRPayment({
         sourceUserId,
         idempotencyKey,
         referenceCode,
+        fundingSource,
       });
 
-      emitToUser(sourceUserId, "wallet_balance_updated", {
-        balance: result.sourceBalanceAfter,
-        transactionId: result.transactionId,
-        type: "SEND",
-      });
+      if (result.fundingSource === "POSTPAID") {
+        emitToUser(sourceUserId, "postpaid_wallet_updated", {
+          usedAmount: result.postpaidUsedAfter,
+          availableLimit: result.postpaidAvailableAfter,
+          transactionId: result.transactionId,
+          type: "POSTPAID_PAYMENT",
+        });
+      } else {
+        emitToUser(sourceUserId, "wallet_balance_updated", {
+          balance: result.sourceBalanceAfter,
+          transactionId: result.transactionId,
+          type: "SEND",
+        });
+      }
 
       emitToUser(result.destinationId, "wallet_balance_updated", {
         balance: result.destBalanceAfter,
@@ -169,9 +182,15 @@ const transactionController = {
 
       sendPushNotification(sourceUserId, {
         title: "Thanh toán QR thành công",
-        body: `Bạn vừa thanh toán -${Number(result.amount).toLocaleString("vi-VN")}đ cho ${result.destinationUserName}`,
+        body:
+          result.fundingSource === "POSTPAID"
+            ? `Bạn vừa thanh toán -${Number(result.amount).toLocaleString("vi-VN")}đ cho ${result.destinationUserName} bằng Ví trả sau`
+            : `Bạn vừa thanh toán -${Number(result.amount).toLocaleString("vi-VN")}đ cho ${result.destinationUserName}`,
         data: {
-          type: "SEND_MONEY",
+          type:
+            result.fundingSource === "POSTPAID"
+              ? "POSTPAID_PAYMENT"
+              : "SEND_MONEY",
           transactionId: result.transactionId,
           balance: result.sourceBalanceAfter,
         },
@@ -205,6 +224,9 @@ const transactionController = {
         cursor_id: cursorId,
         limit,
         keyword,
+        transaction_type: transactionType,
+        type,
+        direction,
         start_date: startDate,
         end_date: endDate,
       } = req.query;
@@ -213,6 +235,8 @@ const transactionController = {
         cursorId,
         limit,
         keyword,
+        type: transactionType || type,
+        direction,
         startDate,
         endDate,
       });

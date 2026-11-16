@@ -1,7 +1,7 @@
 const pool = require('../../../config/database');
 const { httpError } = require('../../../utils/httpError');
-const { encryptSecretKey } = require('../../../utils/hashSecretKey');
-const { generateUniqueMerchantApiKey, generateUniqueMerchantSecretKey } = require('../../../utils/generateApikeySecretkey');
+const { encryptSecretKey } = require('../../../utils/keys/secretKey');
+const { generateUniqueMerchantApiKey, generateUniqueMerchantSecretKey } = require('../../../utils/keys/apiKeyGenerator');
 
 function state(row) {
   if (Boolean(row.api_key) !== Boolean(row.secret_key)) throw httpError(409, 'Cấu hình khóa không đầy đủ, cần kiểm tra dữ liệu Merchant');

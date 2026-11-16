@@ -1,7 +1,7 @@
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
-} = require("../../../../utils/generateApikeySecretkey");
+} = require("../../../../utils/keys/apiKeyGenerator");
 const { httpError } = require("../../../../utils/httpError");
 
 function createDashboardService({ dashboardRepository, validateCallbackUrl }) {

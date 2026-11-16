@@ -1,7 +1,7 @@
 const pool = require("../../../../config/database");
 const { claimEmail } = require("../../../../utils/emailClaim");
 const tokenUtil = require("../../../../utils/jwt");
-const { encryptSecretKey } = require("../../../../utils/hashSecretKey");
+const { encryptSecretKey } = require("../../../../utils/keys/secretKey");
 const merchantFeeService = require("../fee/fee.service");
 
 const merchantAuthRepository = {

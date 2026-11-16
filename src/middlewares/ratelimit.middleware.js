@@ -160,12 +160,12 @@ const authLimiters = {
   // Gửi / gửi lại mã OTP: 2 lớp (chống bom OTP vào 1 người + chống 1 IP đốt quota Email/SMS)
   sendOtpLimiter: [
     createLimiter({
-      windowMs: 5 * MINUTE,
+      windowMs: 1 * MINUTE,
       limit: 5,
       keyGenerator: byActorOrTarget,
     }),
     createLimiter({
-      windowMs: 5 * MINUTE,
+      windowMs: 1 * MINUTE,
       limit: 15,
       keyGenerator: byIp,
     }),

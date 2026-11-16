@@ -4,9 +4,9 @@ const axios = require("axios");
 const http = require("http");
 const https = require("https");
 // Hàm tạo chữ ký HMAC-SHA256 xác thực webhook
-const { computeSignature } = require("./hashSecretKey");
+const { computeSignature } = require("./keys/secretKey");
 // Hàm kiểm tra URL hợp lệ và hàm tra DNS tùy biến chống SSRF / DNS rebinding
-const { assertSafeCallbackUrl, safeLookup } = require("./urlGuard");
+const { assertSafeCallbackUrl, safeLookup } = require("./url/urlGuard");
 
 // Thời gian chờ tối đa (ms) cho mỗi lần gửi webhook; mặc định 8000ms (8 giây) nếu không cấu hình
 const WEBHOOK_TIMEOUT_MS = Number(process.env.WEBHOOK_TIMEOUT_MS) || 8000;

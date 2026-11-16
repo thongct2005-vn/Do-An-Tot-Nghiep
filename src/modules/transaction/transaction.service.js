@@ -5,15 +5,15 @@ const pool = require("../../config/database");
 const {
   getEffectiveTransactionLimit,
   getPositiveIntConfig,
-} = require("../../utils/limitsDb");
+} = require("../../utils/limits/limitsDb");
 const {
   getTransactionLimitsSummary,
   resolveRole,
-} = require("../../utils/dailyLimit");
+} = require("../../utils/limits/dailyLimit");
 const {
   resolveExportRange,
   resolveOneYearRange,
-} = require("../../utils/exportRange");
+} = require("../../utils/dateRange");
 const {
   buildTransactionsXlsx,
   buildExportFileName,
@@ -23,6 +23,10 @@ const { maskEmail } = require("../../utils/mask");
 const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
+const postpaidService = require("../postpaid/postpaid.service");
+
+const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
+const TRANSACTION_DIRECTIONS = ["IN", "OUT"];
 
 async function resolveActorRole(userId, explicitRole = null) {
   if (explicitRole) return explicitRole;
@@ -140,7 +144,12 @@ const TransactionService = {
     });
   },
 
-  async processQRPayment({ sourceUserId, idempotencyKey, referenceCode }) {
+  async processQRPayment({
+    sourceUserId,
+    idempotencyKey,
+    referenceCode,
+    fundingSource = "MAIN_WALLET",
+  }) {
     if (!sourceUserId) {
       throw httpError(400, "Thiếu thông tin người gửi");
     }
@@ -149,6 +158,21 @@ const TransactionService = {
 
     if (!referenceCode) {
       throw httpError(400, "Thiếu thông tin của mã QR");
+    }
+
+    const normalizedFunding = String(fundingSource || "MAIN_WALLET")
+      .trim()
+      .toUpperCase();
+    if (!["MAIN_WALLET", "POSTPAID"].includes(normalizedFunding)) {
+      throw httpError(400, "Nguồn tiền thanh toán không hợp lệ");
+    }
+
+    if (normalizedFunding === "POSTPAID") {
+      return await postpaidService.processPostpaidQRPayment({
+        sourceUserId,
+        referenceCode,
+        idempotencyKey,
+      });
     }
 
     return await transactionRepository.processQRPayment({
@@ -162,7 +186,7 @@ const TransactionService = {
 
   async getTransferHistory(
     userId,
-    { cursorId, limit, keyword, startDate, endDate },
+    { cursorId, limit, keyword, type, direction, startDate, endDate },
   ) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
@@ -175,6 +199,32 @@ const TransactionService = {
     );
 
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+    const rawType =
+      type && String(type).trim() ? String(type).trim().toUpperCase() : null;
+    let normalizedDirection =
+      direction && String(direction).trim()
+        ? String(direction).trim().toUpperCase()
+        : null;
+    if (
+      normalizedDirection &&
+      !TRANSACTION_DIRECTIONS.includes(normalizedDirection)
+    ) {
+      throw httpError(400, "Chiều giao dịch không hợp lệ");
+    }
+
+    let normalizedType = rawType;
+    if (rawType === "TRANSFER_OUT" || rawType === "TRANSFER_IN") {
+      const impliedDirection = rawType === "TRANSFER_OUT" ? "OUT" : "IN";
+      if (normalizedDirection && normalizedDirection !== impliedDirection) {
+        throw httpError(400, "Loại giao dịch không khớp với chiều giao dịch");
+      }
+      normalizedType = "TRANSFER";
+      normalizedDirection = impliedDirection;
+    }
+
+    if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
+      throw httpError(400, "Loại giao dịch không hợp lệ");
+    }
 
     const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
       startDate,
@@ -190,6 +240,8 @@ const TransactionService = {
       cursorId,
       limit: maxLimit,
       keyword: normalizedKeyword,
+      type: normalizedType,
+      direction: normalizedDirection,
       startDate: startDay,
       endDate: endDay,
     });
@@ -273,6 +325,13 @@ const TransactionService = {
       sourceUserName: result.sourceUserName,
       destinationUserName: result.destinationUserName,
       sourceBalanceAfter: result.sourceBalanceAfter,
+      fundingSource: result.fundingSource || "MAIN_WALLET",
+      ...(result.postpaidUsedAfter !== undefined
+        ? { postpaidUsedAfter: result.postpaidUsedAfter }
+        : {}),
+      ...(result.postpaidAvailableAfter !== undefined
+        ? { postpaidAvailableAfter: result.postpaidAvailableAfter }
+        : {}),
     };
   },
 

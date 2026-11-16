@@ -5,6 +5,15 @@ const { httpError } = require("../../../../utils/httpError");
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function assertValidLinkedBankParams(userId, linkedBankAccountId) {
+  if (!userId || !linkedBankAccountId) {
+    throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
+  }
+  if (!UUID_PATTERN.test(String(linkedBankAccountId))) {
+    throw httpError(400, "Mã ngân hàng liên kết không hợp lệ");
+  }
+}
+
 const merchantBankService = {
   async getBankLinkStatus(userId) {
     if (!userId) {
@@ -62,12 +71,7 @@ const merchantBankService = {
   },
 
   async enableShowBalance({ userId, linkedBankAccountId }) {
-    if (!userId || !linkedBankAccountId) {
-      throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
-    }
-    if (!UUID_PATTERN.test(linkedBankAccountId)) {
-      throw httpError(400, "Mã ngân hàng liên kết không hợp lệ");
-    }
+    assertValidLinkedBankParams(userId, linkedBankAccountId);
     const updated = await merchantBankRepository.enableShowBalance({
       userId,
       linkedBankAccountId,
@@ -82,13 +86,23 @@ const merchantBankService = {
     };
   },
 
+  async hideBalance({ userId, linkedBankAccountId }) {
+    assertValidLinkedBankParams(userId, linkedBankAccountId);
+    const updated = await merchantBankRepository.hideBalance({
+      userId,
+      linkedBankAccountId,
+    });
+    if (!updated) {
+      throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+    }
+    return {
+      id: updated.id,
+      is_show_balance: Boolean(updated.is_show_balance),
+    };
+  },
+
   async unlinkBankAccount({ userId, linkedBankAccountId }) {
-    if (!userId || !linkedBankAccountId) {
-      throw httpError(400, "Thiếu thông tin tài khoản ngân hàng liên kết");
-    }
-    if (!UUID_PATTERN.test(linkedBankAccountId)) {
-      throw httpError(400, "Mã ngân hàng liên kết không hợp lệ");
-    }
+    assertValidLinkedBankParams(userId, linkedBankAccountId);
     const unlinked = await merchantBankRepository.unlinkBankAccount({
       userId,
       linkedBankAccountId,

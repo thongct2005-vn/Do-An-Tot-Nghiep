@@ -1,5 +1,5 @@
-const pool = require("../config/database");
-const { httpError } = require("./httpError");
+const pool = require("../../config/database");
+const { httpError } = require("../httpError");
 
 // --- Cấu hình & trạng thái cache ---
 
@@ -76,6 +76,9 @@ const SYSTEM_CONFIG_LABELS = {
   RISK_THRESHOLDS: "cấu hình ngưỡng kiểm tra rủi ro",
   DAILY_LIMIT_TIMEZONE: "múi giờ tính hạn mức ngày",
   WALLET_CAPACITY_CONFIG: "cấu hình sức chứa tối đa của ví",
+  POSTPAID_CONFIG: "cấu hình Ví trả sau",
+  POSTPAID_STATUS: "danh mục trạng thái Ví trả sau",
+  POSTPAID_ENTRY_ACTIONS: "danh mục loại biến động Ví trả sau",
 };
 
 const TRANSACTION_TYPE_LABELS = {

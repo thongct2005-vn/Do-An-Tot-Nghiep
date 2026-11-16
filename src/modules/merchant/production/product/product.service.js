@@ -1,7 +1,7 @@
 const productRepository = require("./product.repository");
 const { httpError } = require("../../../../utils/httpError");
-const { getPositiveIntConfig } = require("../../../../utils/limitsDb");
-const { resolveOneYearRange } = require("../../../../utils/exportRange");
+const { getPositiveIntConfig } = require("../../../../utils/limits/limitsDb");
+const { resolveOneYearRange } = require("../../../../utils/dateRange");
 const { buildProductStatsXlsx } = require("../../../../utils/exportExcel");
 
 /**

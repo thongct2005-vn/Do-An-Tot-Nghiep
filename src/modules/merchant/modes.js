@@ -2,7 +2,7 @@
 const {
   validateCallbackUrlForSave,
   validateCallbackUrlSyntax,
-} = require("../../utils/urlGuard");
+} = require("../../utils/url/urlGuard");
 const { httpError } = require("../../utils/httpError");
 
 module.exports = {

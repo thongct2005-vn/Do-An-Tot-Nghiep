@@ -23,6 +23,12 @@ router.patch(
   bankController.enableShowBalance,
 );
 
+router.patch(
+  "/hide-balance",
+  authMiddleware.verifyAccessToken,
+  bankController.hideBalance,
+);
+
 router.post(
   "/unlink",
   authMiddleware.verifyAccessToken,

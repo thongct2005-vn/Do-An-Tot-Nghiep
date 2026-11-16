@@ -13,11 +13,11 @@ const tokenUtil = require("../../../../utils/jwt");
 const totpUtil = require("../../../../utils/totp");
 const { emitToUser } = require("../../../../utils/socket");
 const { httpError } = require("../../../../utils/httpError");
-const { validateCallbackUrlForSave } = require("../../../../utils/urlGuard");
+const { validateCallbackUrlForSave } = require("../../../../utils/url/urlGuard");
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
-} = require("../../../../utils/generateApikeySecretkey");
+} = require("../../../../utils/keys/apiKeyGenerator");
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 30;
 const TOTP_MAX_ATTEMPTS = 5;

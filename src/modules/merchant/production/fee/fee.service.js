@@ -1,7 +1,7 @@
 const pool = require("../../../../config/database");
 const { httpError } = require("../../../../utils/httpError");
 const { formatVnd } = require("../../../../utils/amount");
-const { getSystemConfig } = require("../../../../utils/limitsDb");
+const { getSystemConfig } = require("../../../../utils/limits/limitsDb");
 const merchantFeeRepository = require("./fee.repository");
 const {
   VN_OFFSET_MS,
@@ -593,6 +593,8 @@ const merchantFeeService = {
    * Ghi nhận hạn mức đã sử dụng trong tháng hiện tại (rút tiền hoặc doanh số QR) + ví phí hệ thống.
    */
   addMonthlyUsageTx: merchantFeeRepository.addMonthlyUsageTx.bind(merchantFeeRepository),
+  verifySystemFeeWallet:
+    merchantFeeRepository.verifySystemFeeWallet.bind(merchantFeeRepository),
   creditSystemFeeWalletAndLedgerTx:
     merchantFeeRepository.creditSystemFeeWalletAndLedgerTx.bind(merchantFeeRepository),
 

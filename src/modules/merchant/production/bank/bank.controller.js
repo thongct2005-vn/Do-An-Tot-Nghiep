@@ -42,7 +42,7 @@ const merchantBankController = {
   async enableShowBalance(req, res, next) {
     try {
       const { user_id: userId } = req.user;
-      const { linked_bank_account_id: linkedBankAccountId } = req.body;
+      const { linked_bank_account_id: linkedBankAccountId } = req.body || {};
       const result = await merchantBankService.enableShowBalance({
         userId,
         linkedBankAccountId,
@@ -53,6 +53,19 @@ const merchantBankController = {
         "Đã bật hiển thị số dư ngân hàng",
         result,
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+  async hideBalance(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const { linked_bank_account_id: linkedBankAccountId } = req.body || {};
+      const result = await merchantBankService.hideBalance({
+        userId,
+        linkedBankAccountId,
+      });
+      return successResponse(res, 200, "Đã ẩn số dư ngân hàng", result);
     } catch (e) {
       next(e);
     }

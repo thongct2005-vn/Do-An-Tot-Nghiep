@@ -1,5 +1,5 @@
 const pool = require("../../config/database");
-const { decryptSecretKey } = require("../../utils/hashSecretKey");
+const { decryptSecretKey } = require("../../utils/keys/secretKey");
 
 const userRepository = {
   async findUserByPhone(phone) {

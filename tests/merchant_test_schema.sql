@@ -6,9 +6,11 @@ CREATE TABLE users (
   password_hash text, pin_hash text, refresh_token text, status varchar DEFAULT 'ACTIVE',
   created_at timestamp DEFAULT NOW(), updated_at timestamp DEFAULT NOW(), failed_login_attempts integer,
   locked_until timestamp, balance bigint DEFAULT 0, api_key text, secret_key text,
-  call_back_url text, totp_enabled boolean DEFAULT false,
+  call_back_url text, totp_secret text, totp_enabled boolean DEFAULT false,
+  totp_last_step bigint, totp_failed_attempts integer DEFAULT 0, totp_locked_until timestamptz,
   credentials_revoked boolean NOT NULL DEFAULT false,
-  credentials_revision bigint NOT NULL DEFAULT 0
+  credentials_revision bigint NOT NULL DEFAULT 0,
+  must_change_password boolean NOT NULL DEFAULT false
 );
 CREATE TABLE user_kyc (
   id varchar PRIMARY KEY, user_id uuid REFERENCES users(id), status varchar,
@@ -26,7 +28,7 @@ CREATE TABLE admin_user_change_history (
   action varchar(60), reason text, old_values jsonb, new_values jsonb, created_at timestamptz,
   CONSTRAINT chk_admin_change_action CHECK (action IN (
     'USER_PROFILE_UPDATED', 'USER_BLOCKED', 'USER_UNBLOCKED', 'USER_LOGIN_UNLOCKED',
-    'MERCHANT_BLOCKED', 'MERCHANT_UNBLOCKED',
+    'USER_CREATED', 'MERCHANT_CREATED', 'MERCHANT_BLOCKED', 'MERCHANT_UNBLOCKED',
     'MERCHANT_CREDENTIALS_ISSUED', 'MERCHANT_CREDENTIALS_ROTATED',
     'MERCHANT_CREDENTIALS_REVOKED', 'MERCHANT_CREDENTIALS_REISSUED',
     'MERCHANT_FEE_CONFIG_UPDATED', 'SYSTEM_FEE_CONFIG_UPDATED',

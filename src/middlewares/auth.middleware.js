@@ -14,6 +14,39 @@ function buildMerchantSignedPayload(req) {
   ].join("\n");
 }
 
+function createFirstLoginChangeTokenVerifier(expectedPurpose) {
+  return (req, res, next) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const bearerToken =
+        typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+          ? authHeader.slice(7).trim()
+          : "";
+      const token =
+        req.headers["x-change-password-token"] ||
+        req.headers["x-otp-token"] ||
+        bearerToken;
+      if (!token) {
+        throw httpError(401, "Thiếu token đổi mật khẩu lần đầu");
+      }
+      let payload;
+      try {
+        payload = tokenUtil.verifyOtpToken(token, expectedPurpose);
+      } catch (_) {
+        throw httpError(
+          401,
+          "Phiên đổi mật khẩu lần đầu không hợp lệ hoặc đã hết hạn",
+        );
+      }
+      req.firstLoginUser = payload;
+      req.otpUser = payload;
+      next();
+    } catch (e) {
+      next(e);
+    }
+  };
+}
+
 const authMiddleware = {
   verifyAccessToken(req, res, next) {
     try {
@@ -131,6 +164,13 @@ const authMiddleware = {
   ),
   verifyMerchantChangeEmailConfirmOtpToken: verifyScopedOtpToken(
     "merchant_change_email_confirm_otp",
+  ),
+  verifyMerchantFirstLoginChangeToken: createFirstLoginChangeTokenVerifier(
+    "merchant_first_login_change",
+  ),
+
+  verifyUserFirstLoginChangeToken: createFirstLoginChangeTokenVerifier(
+    "user_first_login_change",
   ),
 
   verifyMerchantForgotResetTokens(req, res, next) {
@@ -351,6 +391,9 @@ const authMiddleware = {
       const merchant = await dashboardRepository.getMerchantAccountStatus(req.user.user_id);
       if (!merchant || merchant.role !== "MERCHANT" || merchant.status !== "ACTIVE") {
         throw httpError(403, "Tài khoản merchant đang bị khoá hoặc không khả dụng");
+      }
+      if (merchant.must_change_password === true) {
+        throw httpError(403, "Vui lòng đổi mật khẩu tạm thời và đăng nhập lại trước khi sử dụng");
       }
       next();
     } catch (error) {

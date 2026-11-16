@@ -22,6 +22,10 @@ const TOTP_MAX_ATTEMPTS = 5;
 const TOTP_LOCK_MINUTES = 5;
 const TOTP_ISSUER = process.env.TOTP_ISSUER;
 const { maskEmail } = require("../../utils/mask");
+const {
+  buildFirstLoginChallenge,
+  changeFirstLoginPassword,
+} = require("../../utils/firstLoginPassword");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -277,6 +281,12 @@ const authService = {
       await otpService.verifyOtp({ email: user.email, otp });
     }
 
+    if (user.must_change_password === true) {
+      return buildFirstLoginChallenge(user, {
+        purpose: "user_first_login_change",
+      });
+    }
+
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await authRepository.updateRefeshToken({ refreshToken, userId: user.id });
 
@@ -303,6 +313,13 @@ const authService = {
   // sau khi đăng nhập (enableTotp), nên chỉ biết mật khẩu thì chưa chiếm được bước 2.
   async setupTotp({ phone, password }) {
     const user = await checkCredentials(phone, password);
+
+    if (user.must_change_password === true) {
+      throw httpError(
+        403,
+        "Vui lòng đổi mật khẩu tạm thời trước khi thiết lập Google Authenticator",
+      );
+    }
 
     if (user.totp_enabled) {
       throw httpError(409, "Tài khoản đã bật Google Authenticator");
@@ -331,6 +348,13 @@ const authService = {
   // Cần đúng mật khẩu; trả về đúng khoá cũ, không tạo khoá mới.
   async recoverTotp({ phone, password }) {
     const user = await checkCredentials(phone, password);
+
+    if (user.must_change_password === true) {
+      throw httpError(
+        403,
+        "Vui lòng đổi mật khẩu tạm thời trước khi khôi phục Google Authenticator",
+      );
+    }
 
     if (!user.totp_enabled) {
       throw httpError(400, "Tài khoản chưa bật Google Authenticator");
@@ -392,6 +416,12 @@ const authService = {
     }
     if (user.status !== "ACTIVE") {
       throw httpError(403, "Tài khoản bị khóa");
+    }
+    if (user.must_change_password === true) {
+      throw httpError(
+        403,
+        "Vui lòng đổi mật khẩu tạm thời và đăng nhập lại trước khi tiếp tục",
+      );
     }
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await authRepository.updateRefeshToken({
@@ -489,6 +519,21 @@ const authService = {
         email: newUser.email,
       },
     };
+  },
+
+  async firstLoginChangePassword({
+    userId,
+    version,
+    password,
+    confirmPassword,
+  }) {
+    return changeFirstLoginPassword({
+      userId,
+      version,
+      password,
+      confirmPassword,
+      allowedRole: "USER",
+    });
   },
 };
 

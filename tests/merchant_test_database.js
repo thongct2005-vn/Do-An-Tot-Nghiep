@@ -49,6 +49,7 @@ async function createTestDatabase() {
       const identity = await setup.query('SELECT current_database() AS db');
       if (identity.rows[0].db !== name) throw new Error('Unexpected test database');
       await setup.query(fs.readFileSync(path.join(__dirname, 'merchant_test_schema.sql'), 'utf8'));
+      await setup.query(fs.readFileSync(path.join(__dirname, '../migrations/20261119_payment_request_merchant_fee_snapshot.sql'), 'utf8'));
     } finally {
       await setup.end();
     }

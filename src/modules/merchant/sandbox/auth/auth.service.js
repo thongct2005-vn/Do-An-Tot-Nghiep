@@ -14,6 +14,10 @@ const {
   generateUniqueMerchantSecretKey,
 } = require("../../../../utils/generateApikeySecretkey");
 const { validateCallbackUrlForSave } = require("../../../../utils/urlGuard");
+const {
+  buildFirstLoginChallenge,
+  changeFirstLoginPassword,
+} = require("../../shared/firstLoginPassword");
 
 
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -55,6 +59,13 @@ async function checkCredentials(phone, password) {
     user.locked_until = null;
   }
 
+  if (!user.password_hash) {
+    throw httpError(
+      403,
+      "Tài khoản chưa thiết lập mật khẩu. Vui lòng sử dụng chức năng Quên mật khẩu để kích hoạt tài khoản",
+    );
+  }
+
   const isCorrectPassword = await bcrypt.compare(password, user.password_hash);
   if (!isCorrectPassword) {
     const row = await merchantAuthRepository.registerFailedLogin({
@@ -79,6 +90,10 @@ async function checkCredentials(phone, password) {
 const merchantAuthService = {
   async login({ phone, password }) {
     const user = await checkCredentials(phone, password);
+
+    if (user.must_change_password === true) {
+      return buildFirstLoginChallenge(user);
+    }
 
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await merchantAuthRepository.updateRefeshToken({
@@ -119,6 +134,12 @@ const merchantAuthService = {
         "Tài khoản của bạn đã được đăng nhập trên thiết bị khác. Vui lòng đăng nhập lại",
       );
     }
+    if (user.must_change_password === true) {
+      throw httpError(
+        403,
+        "Vui lòng đổi mật khẩu tạm thời và đăng nhập lại trước khi tiếp tục",
+      );
+    }
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await merchantAuthRepository.updateRefeshToken({
       refreshToken,
@@ -131,6 +152,20 @@ const merchantAuthService = {
         refresh_token: refreshToken,
       },
     };
+  },
+
+  async firstLoginChangePassword({
+    userId,
+    version,
+    password,
+    confirmPassword,
+  }) {
+    return changeFirstLoginPassword({
+      userId,
+      version,
+      password,
+      confirmPassword,
+    });
   },
 
   async register({

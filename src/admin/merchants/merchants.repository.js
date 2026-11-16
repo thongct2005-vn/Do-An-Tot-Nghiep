@@ -1,5 +1,6 @@
 const pool = require("../../config/database");
 const crypto = require("node:crypto");
+const { uuidv7 } = require("uuidv7");
 const { httpError } = require("../../utils/httpError");
 const { claimEmail } = require("../../utils/emailClaim");
 const { PROFILE_FIELDS, comparableProfileValue } = require("./merchants.profile");
@@ -58,6 +59,141 @@ const API_STATUS_EXPR = `
 `;
 
 const adminMerchantsRepository = {
+  async createMerchant({ adminId, values, reason, passwordHash }) {
+    if (!passwordHash) {
+      throw httpError(500, "Thiếu mật khẩu tạm thời đã mã hóa khi tạo Merchant");
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      const normalizedEmail = await claimEmail(client, values.email);
+
+      const phoneConflict = await client.query(
+        "SELECT 1 FROM users WHERE phone = $1 LIMIT 1",
+        [values.phone],
+      );
+      if (phoneConflict.rowCount > 0) {
+        throw httpError(409, "Số điện thoại đã được đăng ký bởi tài khoản khác");
+      }
+
+      const taxConflict = await client.query(
+        "SELECT 1 FROM user_kyc WHERE id = $1 LIMIT 1",
+        [values.tax_code],
+      );
+      if (taxConflict.rowCount > 0) {
+        throw httpError(409, "Mã số thuế đã được đăng ký bởi đối tác khác");
+      }
+
+      const merchantId = uuidv7();
+      const phoneHash = crypto
+        .createHash("sha256")
+        .update(values.phone)
+        .digest("hex");
+
+      const insertedUser = await client.query(
+        `INSERT INTO users (
+          id, role, status, full_name, phone, phone_hash, email, call_back_url,
+          password_hash, must_change_password, balance, api_key, secret_key, credentials_revoked, credentials_revision,
+          created_at, updated_at
+        )
+        VALUES (
+          $1, 'MERCHANT', 'ACTIVE', $2, $3, $4, $5, $6,
+          $7, true, 0, NULL, NULL, false, 0,
+          NOW(), NOW()
+        )
+        RETURNING id, role, status, full_name, phone, email, call_back_url,
+                  must_change_password, balance, credentials_revoked, credentials_revision, created_at, updated_at`,
+        [
+          merchantId,
+          values.full_name,
+          values.phone,
+          phoneHash,
+          normalizedEmail,
+          values.call_back_url ?? null,
+          passwordHash,
+        ],
+      );
+
+      const insertedKyc = await client.query(
+        `INSERT INTO user_kyc (id, user_id, address, status, created_at, updated_at)
+         VALUES ($1, $2, $3, 'APPROVED', NOW(), NOW())
+         RETURNING id AS tax_code, address, status AS kyc_status`,
+        [values.tax_code, merchantId, values.address ?? null],
+      );
+
+      const auditNewValues = {
+        full_name: values.full_name,
+        phone: values.phone,
+        email: normalizedEmail,
+        tax_code: values.tax_code,
+        address: values.address ?? null,
+        call_back_url: values.call_back_url ?? null,
+        status: "ACTIVE",
+        approval_status: "APPROVED",
+        api_status: "PENDING_KEY",
+        credentials_status: "UNCONFIGURED",
+        credentials_revoked: false,
+        credentials_revision: 0,
+        must_change_password: true,
+        password_initialized: false,
+      };
+
+      const audit = await client.query(
+        `INSERT INTO admin_user_change_history
+          (admin_id, user_id, action, reason, old_values, new_values, created_at)
+         VALUES ($1, $2, 'MERCHANT_CREATED', $3, NULL, $4::jsonb, NOW())
+         RETURNING id, action, reason, created_at`,
+        [adminId, merchantId, reason, JSON.stringify(auditNewValues)],
+      );
+
+      await client.query("COMMIT");
+      const userRow = insertedUser.rows[0];
+      const kycRow = insertedKyc.rows[0];
+
+      return {
+        merchant: {
+          id: userRow.id,
+          role: userRow.role,
+          full_name: userRow.full_name,
+          store_name: userRow.full_name,
+          phone: userRow.phone,
+          email: userRow.email,
+          tax_code: kycRow.tax_code,
+          address: kycRow.address ?? null,
+          call_back_url: userRow.call_back_url ?? null,
+          status: userRow.status,
+          operational_status: "ACTIVE",
+          approval_status: "APPROVED",
+          must_change_password: Boolean(userRow.must_change_password ?? true),
+          password_initialized: false,
+          api_status: "PENDING_KEY",
+          credentials_status: "UNCONFIGURED",
+          credentials_revoked: Boolean(userRow.credentials_revoked),
+          credentials_revision: Number(userRow.credentials_revision ?? 0),
+          created_at: userRow.created_at,
+          updated_at: userRow.updated_at,
+        },
+        audit: audit.rows[0],
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error.code === "23505") {
+        if (error.table === "user_kyc" || /user_kyc/i.test(error.constraint || "")) {
+          throw httpError(409, "Mã số thuế đã được đăng ký bởi đối tác khác");
+        }
+        if (error.table === "users" && /phone/i.test(error.constraint || "")) {
+          throw httpError(409, "Số điện thoại đã được đăng ký bởi tài khoản khác");
+        }
+        if (error.table === "users" && /email/i.test(error.constraint || "")) {
+          throw httpError(409, "Địa chỉ email đã được đăng ký bởi tài khoản khác");
+        }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
   async updateMerchantStatus({ merchantId, adminId, status, expectedStatus, reason }) {
     const client = await pool.connect();
     try {

@@ -3,6 +3,7 @@ const { httpError } = require("../../utils/httpError");
 const { parseMerchantQuery } = require("./merchants.query");
 const { parseProfilePatch } = require("./merchants.profile");
 const { parseStatusPatch } = require("./merchants.status");
+const { parseCreateMerchantPayload } = require("./merchants.create");
 const socket = require("../../utils/socket");
 
 const UUID_REGEX =
@@ -36,7 +37,51 @@ function maskApiKey(apiKey) {
   return `${apiKey.slice(0, 10)}...${apiKey.slice(-4)}`;
 }
 
+const bcrypt = require("bcrypt");
+const mailerModule = require("../../utils/mailer");
+
 const adminMerchantsService = {
+  async createMerchant({ adminId, body, mailer }) {
+    if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
+    const payload = await parseCreateMerchantPayload(body);
+    const tempPassword = mailerModule.generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const result = await adminMerchantsRepository.createMerchant({
+      adminId,
+      ...payload,
+      passwordHash,
+    });
+
+    const sendAccountEmail =
+      mailer?.sendMerchantAccountCreatedEmail ||
+      mailerModule.sendMerchantAccountCreatedEmail;
+    let emailSent = true;
+    let emailError;
+    try {
+      await sendAccountEmail({
+        to: result.merchant.email,
+        fullName: result.merchant.full_name,
+        phone: result.merchant.phone,
+        tempPassword,
+      });
+    } catch (err) {
+      emailSent = false;
+      emailError = err?.message || "Không thể gửi email kích hoạt tài khoản Merchant";
+    }
+
+    const merchant = {
+      ...result.merchant,
+      merchant_code: formatMerchantCode(result.merchant.id),
+      email_sent: emailSent,
+      ...(emailError ? { email_error: emailError } : {}),
+    };
+    return {
+      ...merchant,
+      merchant,
+      audit: result.audit,
+    };
+  },
+
   async updateMerchantStatus({ adminId, merchantId, body }) {
     if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
     if (typeof merchantId !== "string" || !UUID_REGEX.test(merchantId.trim())) {

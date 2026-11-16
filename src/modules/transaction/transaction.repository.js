@@ -106,6 +106,7 @@ const TransactionRepository = {
       idempotencyKey,
       transactionType = "TRANSFER",
       status = "SUCCESS",
+      lockedPaymentRequest = null,
     },
   ) {
     const amountNum = Number(amount);
@@ -205,7 +206,9 @@ const TransactionRepository = {
     let merchantFeeDetails = null;
     let merchantFeeNum = 0;
     if (isMerchantInboundFeeTx) {
-      merchantFeeDetails = await merchantFeeService.resolveMerchantTxFeeDetailsTx(
+      merchantFeeDetails = lockedPaymentRequest
+        ? require('../fee/paymentFeeSnapshot').readMerchantPaymentFeeSnapshot(lockedPaymentRequest, destUser.id, amountNum)
+        : await merchantFeeService.resolveMerchantTxFeeDetailsTx(
         client,
         {
           merchantUser: destUser,
@@ -697,6 +700,7 @@ const TransactionRepository = {
           paymentRequest.description || `Thanh toán QR ${referenceCode}`,
         transactionType: transactionType,
         idempotencyKey: idempotencyKey,
+        lockedPaymentRequest: paymentRequest,
       });
 
       paymentResult = await paymentRequestRepository.markAsPaid(client, {

@@ -1,3 +1,5 @@
+const crypto = require("node:crypto");
+const { uuidv7 } = require("uuidv7");
 const pool = require("../../config/database");
 const mongoose = require("mongoose");
 const {
@@ -1160,6 +1162,128 @@ const adminUserRepository = {
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async createUserWithHistory({ adminId, values, reason, passwordHash }) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+
+      const normalizedEmail = await claimEmail(client, values.email, null);
+      const phoneLockKey = crypto
+        .createHash("sha256")
+        .update(`users.phone:${values.phone}`)
+        .digest()
+        .readBigInt64BE(0)
+        .toString();
+      await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [
+        phoneLockKey,
+      ]);
+
+      const phoneConflict = await client.query(
+        "SELECT id FROM users WHERE phone = $1 LIMIT 1",
+        [values.phone],
+      );
+      if (phoneConflict.rowCount) {
+        throw httpError(
+          409,
+          "Số điện thoại đã được đăng ký bởi tài khoản khác",
+        );
+      }
+
+      const userId = uuidv7();
+      const phoneHash = crypto
+        .createHash("sha256")
+        .update(values.phone)
+        .digest("hex");
+
+      const insertedUser = await client.query(
+        `INSERT INTO users (
+          id, role, status, full_name, phone, phone_hash, email,
+          password_hash, pin_hash, must_change_password, balance,
+          created_at, updated_at
+        )
+        VALUES (
+          $1, 'USER', 'ACTIVE', $2, $3, $4, $5,
+          $6, NULL, true, 0,
+          NOW(), NOW()
+        )
+        RETURNING id, role, status, full_name, phone, email,
+                  must_change_password, balance, created_at, updated_at`,
+        [
+          userId,
+          values.full_name,
+          values.phone,
+          phoneHash,
+          normalizedEmail,
+          passwordHash,
+        ],
+      );
+
+      const userRow = insertedUser.rows[0];
+      const auditNewValues = {
+        full_name: userRow.full_name,
+        phone: userRow.phone,
+        email: userRow.email,
+        role: userRow.role,
+        status: userRow.status,
+        must_change_password: Boolean(userRow.must_change_password),
+      };
+
+      const audit = await client.query(
+        `INSERT INTO admin_user_change_history
+          (admin_id, user_id, action, reason, old_values, new_values, created_at)
+         VALUES ($1, $2, 'USER_CREATED', $3, NULL, $4::jsonb, NOW())
+         RETURNING id, action, reason, created_at`,
+        [adminId, userId, reason, JSON.stringify(auditNewValues)],
+      );
+
+      await client.query("COMMIT");
+
+      return {
+        user: {
+          id: userRow.id,
+          role: userRow.role,
+          status: userRow.status,
+          full_name: userRow.full_name,
+          phone: userRow.phone,
+          email: userRow.email,
+          balance: Number(userRow.balance || 0),
+          must_change_password: Boolean(userRow.must_change_password),
+          kyc_status: null,
+          default_bank_name: null,
+          default_bank_account: null,
+          created_at: userRow.created_at,
+          updated_at: userRow.updated_at,
+        },
+        audit: audit.rows[0],
+      };
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {}
+      if (error.code === "23505" && error.table === "users") {
+        if (/phone/.test(error.constraint || "")) {
+          throw httpError(
+            409,
+            "Số điện thoại đã được đăng ký bởi tài khoản khác",
+          );
+        }
+        if (/email/.test(error.constraint || "")) {
+          throw httpError(
+            409,
+            "Địa chỉ email đã được liên kết với tài khoản khác",
+          );
+        }
+        throw httpError(
+          409,
+          "Số điện thoại hoặc email đã được đăng ký bởi tài khoản khác",
+        );
+      }
+      throw error;
     } finally {
       client.release();
     }

@@ -11,6 +11,7 @@ const {
   mergeEffectiveFeeConfig,
   pickEffectiveSchedule,
   calculatePerTransactionFeeDetails,
+  calculateMerchantInvoiceFeeDetails,
   calculateWithdrawFeeDetails,
   previewFeeCalculation,
   getVnMonthMeta,
@@ -19,7 +20,7 @@ const {
 const FEE_PLANS = ["PER_TRANSACTION"];
 
 const PLAN_NAMES = {
-  PER_TRANSACTION: "Thu phí theo từng giao dịch (lũy tiến)",
+  PER_TRANSACTION: "Thu phí theo giá trị từng hóa đơn",
   MONTHLY: "Trả phí theo tháng (ngừng áp dụng)",
 };
 
@@ -117,7 +118,7 @@ function formatPlanList(feeConfig, currentPlan, pendingPlan) {
 
   const tierText =
     formattedTiers.length > 1
-      ? `Lũy tiến theo doanh số QR tháng (${formattedTiers
+      ? `Theo giá trị từng hóa đơn, có sàn ranh giới (${formattedTiers
         .map((t) => `${t.rate_percent}%`)
         .join(" → ")})`
       : `${percent}% / giao dịch`;
@@ -299,9 +300,7 @@ const merchantFeeService = {
    * Wrapper tương thích ngược: tính phí 1 giao dịch QR theo config đã truyền vào.
    */
   calculatePerTransactionFee(amount, feeConfig) {
-    return calculatePerTransactionFeeDetails(amount, feeConfig, {
-      monthlyPlanActive: false,
-    }).fee_amount;
+    return calculateMerchantInvoiceFeeDetails(amount, feeConfig).fee_amount;
   },
 
   async getSystemFeeConfig(role = "MERCHANT", db = pool) {
@@ -309,7 +308,10 @@ const merchantFeeService = {
       String(role || "").toUpperCase() === "USER"
         ? "USER_FEE_CONFIG"
         : "MERCHANT_FEE_CONFIG";
-    const raw = await getSystemConfig(key, db);
+    // Fee decisions must observe committed Admin changes across all processes.
+    const raw = key === "MERCHANT_FEE_CONFIG"
+      ? (await db.query('SELECT value FROM system_configs WHERE key=$1', [key])).rows[0]?.value
+      : await getSystemConfig(key, db);
     return normalizeSystemFeeConfig(raw, role);
   },
 
@@ -541,23 +543,15 @@ const merchantFeeService = {
       { role: "MERCHANT", atDate: new Date(nowMs), db: client },
     );
 
-    // Khóa dòng doanh số tháng trước khi đọc qr_gross_amount để tránh race condition giữa 2 GD đồng thời
-    const usage = await merchantFeeRepository.ensureAndLockMonthlyUsageTx(client, {
-      userId: merchantUser.id,
-      monthKey: vnMeta.currentMonthKey,
-    });
-    const alreadyMonthlyGross = Number(usage?.qr_gross_amount ?? 0);
-
-    const details = calculatePerTransactionFeeDetails(amount, effectiveConfig, {
-      monthlyPlanActive: false,
-      monthlyStatus: MONTHLY_STATUS.INACTIVE,
-      alreadyMonthlyGross,
-      role: "MERCHANT",
-      feeType: FEE_TYPES.QR_FEE,
-    });
+    const details = calculateMerchantInvoiceFeeDetails(amount, effectiveConfig);
 
     return {
       ...details,
+      fee_rate_snapshot: {
+        ...details.fee_rate_snapshot,
+        merchant_user_id: merchantUser.id,
+        captured_at: new Date(nowMs).toISOString(),
+      },
       month_key: vnMeta.currentMonthKey,
     };
   },

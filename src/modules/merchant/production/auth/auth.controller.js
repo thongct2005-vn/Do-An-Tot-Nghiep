@@ -82,6 +82,14 @@ const merchantAuthController = {
         requireTaxCodeLast4: Boolean(requireTaxCodeLast4 || req.risk?.challenge),
       });
       clearFailure(phone);
+      if (result.must_change_password) {
+        return successResponse(
+          res,
+          200,
+          "Vui lòng đổi mật khẩu trong lần đăng nhập đầu tiên",
+          result,
+        );
+      }
       setRefreshCookie(res, result.token.refresh_token);
       return successResponse(res, 200, "Đăng nhập thành công", {
         ...result,
@@ -303,6 +311,32 @@ const merchantAuthController = {
         confirmPassword,
       });
       return successResponse(res, 200, "Đặt lại mật khẩu thành công");
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async firstLoginChangePassword(req, res, next) {
+    try {
+      const {
+        new_password: newPassword,
+        password,
+        confirm_password: confirmPassword,
+      } = req.body || {};
+      const { user_id: userId, pv: version } = req.firstLoginUser || {};
+      const result = await merchantAuthService.firstLoginChangePassword({
+        userId,
+        version,
+        password: newPassword ?? password,
+        confirmPassword,
+      });
+      clearRefreshCookie(res);
+      return successResponse(
+        res,
+        200,
+        "Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới",
+        result,
+      );
     } catch (e) {
       next(e);
     }

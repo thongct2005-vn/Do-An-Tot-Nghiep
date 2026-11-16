@@ -49,10 +49,14 @@ const merchantPaymentRequestRepository = {
       const credentials = require('../credentials');
       const merchant = await credentials.lockMerchant(client, destinationUserId);
       await credentials.assertCurrent(merchant, credentialsRevision);
+      const feeDetails = await require('../../production/fee/fee.service').resolveMerchantTxFeeDetailsTx(
+        client, { merchantUser: merchant, amount, transactionType: 'PAYMENT' },
+      );
       const result = await client.query(
         `INSERT INTO payment_requests
-           (id, reference_code, destination_user_id, amount, description, order_id, callback_url, return_url, credentials_revision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (id, reference_code, destination_user_id, amount, description, order_id, callback_url, return_url, credentials_revision,
+            merchant_fee_amount_snapshot, merchant_fee_rule_snapshot)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
          RETURNING id, reference_code, amount, description, status, expires_at, created_at, order_id, return_url`,
         [
           id,
@@ -64,6 +68,8 @@ const merchantPaymentRequestRepository = {
           callbackUrl,
           returnUrl,
           merchant.credentials_revision,
+          feeDetails.fee_amount,
+          JSON.stringify(feeDetails.fee_rate_snapshot),
         ],
       );
       const payment = result?.rows[0] ?? null;

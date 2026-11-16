@@ -7,7 +7,7 @@ const authRepository = {
       `
       SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role,
-             u.totp_enabled, k.id AS cccd_number
+             u.totp_enabled, u.must_change_password, k.id AS cccd_number
       FROM users u
       LEFT JOIN user_kyc k ON k.user_id = u.id AND k.status = 'APPROVED'
       WHERE u.phone = $1
@@ -163,7 +163,7 @@ const authRepository = {
   async findUserByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status
+      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status, u.must_change_password
       FROM users u
       WHERE u.refresh_token = $1
       `,

@@ -12,7 +12,17 @@ const {
   previewFeeCalculation,
 } = require("../../modules/fee/feeCalculator");
 
-const DEFAULT_SAMPLE_AMOUNTS = [10_000, 50_000, 100_000, 1_000_000, 10_000_000];
+const DEFAULT_SAMPLE_AMOUNTS = [100000, 200000, 200001, 250000, 500000, 1000000, 1000001, 1200000, 1500000];
+
+function assertInvoiceTierOrder(config, role) {
+  if (role !== 'MERCHANT' || !Array.isArray(config?.tiers)) return;
+  for (let i = 1; i < config.tiers.length; i++) {
+    const from = item => Number(item?.from_amount ?? item?.from);
+    if (from(config.tiers[i]) <= from(config.tiers[i - 1])) {
+      throw httpError(400, 'Các bậc giá trị hóa đơn phải tăng dần, không trùng mốc');
+    }
+  }
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function assertValidReason(rawReason) {
@@ -248,6 +258,7 @@ const adminMerchantFeeService = {
   }) {
     const normalizedRole = normalizeRoleParam(role);
     const current = await this.getDefaultFeeConfig({ role: normalizedRole });
+    assertInvoiceTierOrder(config, normalizedRole);
     const validated = validateFeeConfigInput(config, {
       isOverride: false,
       now,
@@ -318,6 +329,7 @@ const adminMerchantFeeService = {
         normalizeSystemFeeConfig(currentRes.rows[0].value, normalizedRole),
       );
       const oldNormalized = normalizeSystemFeeConfig(oldPlain, normalizedRole);
+      assertInvoiceTierOrder(config, normalizedRole);
 
       const validated = validateFeeConfigInput(config, {
         isOverride: false,

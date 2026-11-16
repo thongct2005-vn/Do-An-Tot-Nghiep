@@ -425,6 +425,13 @@ function extractWithdrawFeeFields(raw) {
 function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
   const normalizedRole = String(role || "").toUpperCase();
   const src = assertDbConfigObject(raw);
+  if (normalizedRole === 'MERCHANT' && Array.isArray(src.tiers)) {
+    for (let i = 1; i < src.tiers.length; i++) {
+      if (Number(src.tiers[i]?.from_amount ?? src.tiers[i]?.from) <= Number(src.tiers[i - 1]?.from_amount ?? src.tiers[i - 1]?.from)) {
+        throw httpError(500, 'Các bậc phí hóa đơn trong cấu hình phải tăng dần');
+      }
+    }
+  }
   const legacyMonthly =
     src.MONTHLY && typeof src.MONTHLY === "object" ? src.MONTHLY : {};
 
@@ -1038,15 +1045,50 @@ function calculateProgressiveRawFee(amount, alreadyMonthlyGross, cfg) {
 }
 
 /**
- * Hàm tính chi tiết phí cho một giao dịch đơn lẻ (áp dụng cho QR payment hoặc P2P).
- * Xử lý tuần tự:
- * 1. Kiểm tra miễn phí gói tháng (nếu có).
- * 2. Kiểm tra miễn phí theo ngưỡng đơn hàng nhỏ (free_threshold_amount).
- * 3. Tính phí thô theo bậc thang lũy tiến (calculateProgressiveRawFee).
- * 4. Chặn ngưỡng sàn (min_fee) và trần (max_fee nếu có).
- * 5. Đảm bảo bất biến: Phí không bao giờ vượt quá số tiền giao dịch (clampedFee <= validAmount), thực nhận không âm.
- * 6. Đóng gói snapshot biểu phí để lưu DB và trả về kết quả.
+ * Phí chiều nhận Merchant: chọn một tỷ lệ trên toàn hóa đơn, giữ sàn
+ * tại ranh giới bậc trước; không dùng doanh số tháng để chọn bậc.
  */
+function calculateMerchantInvoiceFeeDetails(amount, effectiveConfig) {
+  const validAmount = assertPositiveIntegerAmount(amount);
+  const cfg = extractPerTransactionFeeFields(effectiveConfig);
+  const tiers = getEffectiveTierSchedule(cfg);
+  // Reject unordered stored policies rather than silently changing their meaning.
+  for (let i = 1; i < effectiveConfig.tiers.length; i++) {
+    if (Number(effectiveConfig.tiers[i].from_amount) <= Number(effectiveConfig.tiers[i - 1].from_amount)) {
+      throw httpError(500, "Các bậc phí hóa đơn phải tăng dần");
+    }
+  }
+  const clamp = (fee, atAmount) => Math.min(atAmount, cfg.max_fee ?? atAmount,
+    Math.max(cfg.min_fee, fee));
+  let selected = 0;
+  let boundaryFloor = 0;
+  for (let i = 1; i < tiers.length && validAmount >= tiers[i].from_amount; i++) {
+    const boundary = tiers[i].from_amount - 1;
+    boundaryFloor = boundary < cfg.free_threshold_amount ? 0
+      : clamp(Math.max(boundaryFloor, roundBpsBigInt(boundary, tiers[i - 1].rate_bps)), boundary);
+    selected = i;
+  }
+  const raw = roundBpsBigInt(validAmount, tiers[selected].rate_bps);
+  const exempt = cfg.free_threshold_amount > 0 && validAmount < cfg.free_threshold_amount;
+  const base = Math.max(raw, boundaryFloor);
+  const fee = exempt ? 0 : clamp(base, validAmount);
+  return {
+    amount: validAmount, fee_amount: fee, net_amount: validAmount - fee,
+    raw_fee: raw, boundary_floor: boundaryFloor,
+    exempt_reason: exempt ? "BELOW_FREE_THRESHOLD" : fee === 0 ? "ZERO_FEE_CONFIG" : null,
+    clamped_to_min: !exempt && base < cfg.min_fee,
+    clamped_to_max: !exempt && cfg.max_fee !== null && Math.max(base, cfg.min_fee) > cfg.max_fee,
+    clamped_to_amount: !exempt && Math.min(cfg.max_fee ?? Infinity, Math.max(base, cfg.min_fee)) > validAmount,
+    fee_rate_snapshot: {
+      pricing_model: "MERCHANT_INVOICE_BOUNDARY_V1", fee_type: FEE_TYPES.QR_FEE,
+      amount: validAmount, fee_amount: fee, ...cfg, tiers,
+      selected_tier: selected, selected_rate_bps: tiers[selected].rate_bps,
+      raw_fee: raw, boundary_floor: boundaryFloor, rounding: "HALF_UP_VND",
+    },
+  };
+}
+
+// Legacy/progressive calculator remains for USER and other outbound fee rules.
 function calculatePerTransactionFeeDetails(
   amount,
   effectiveConfig,
@@ -1333,7 +1375,9 @@ function previewFeeCalculation({
   const validAmount = assertPositiveIntegerAmount(amount);
 
   if (txType === "PAYMENT" || txType === "QR_PAYMENT") {
-    const details = calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
+    const details = normalizedRole === "MERCHANT"
+      ? calculateMerchantInvoiceFeeDetails(validAmount, effectiveConfig)
+      : calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
       monthlyPlanActive,
       monthlyStatus,
       alreadyMonthlyGross,
@@ -1395,15 +1439,9 @@ function previewFeeCalculation({
 
     let inboundMerchantDetails = null;
     if (destIsMerchant) {
-      inboundMerchantDetails = calculatePerTransactionFeeDetails(
+      inboundMerchantDetails = calculateMerchantInvoiceFeeDetails(
         validAmount,
         recipientEffectiveConfig,
-        {
-          monthlyPlanActive: false,
-          alreadyMonthlyGross: recipientMonthlyGross,
-          role: "MERCHANT",
-          feeType: FEE_TYPES.QR_FEE,
-        },
       );
     }
 
@@ -1531,6 +1569,7 @@ module.exports = {
   roundBpsBigInt,
   getEffectiveTierSchedule,
   calculateProgressiveRawFee,
+  calculateMerchantInvoiceFeeDetails,
   calculatePerTransactionFeeDetails,
   calculateMerchantTransferFeeDetails,
   calculateWithdrawFeeDetails,

@@ -9,7 +9,7 @@ const merchantAuthRepository = {
   async findMerchantByPhone(phone) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key,
              u.totp_enabled, k.id AS tax_code
       FROM users u
@@ -94,7 +94,7 @@ const merchantAuthRepository = {
   async findMerchantByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status
+      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status, u.must_change_password
       FROM users u
       WHERE u.refresh_token = $1
         AND u.status = 'ACTIVE'

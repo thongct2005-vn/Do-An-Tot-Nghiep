@@ -13,7 +13,7 @@ function metadata(row) {
     api_key_masked: row.api_key ? `${row.api_key.slice(0, 3)}••••${row.api_key.slice(-4)}` : null };
 }
 async function lockMerchant(db, id) {
-  const row = (await db.query("SELECT id,role,status,api_key,secret_key,credentials_revoked,credentials_revision FROM users WHERE id=$1 AND role='MERCHANT' FOR UPDATE", [id])).rows[0];
+  const row = (await db.query("SELECT id,role,status,must_change_password,api_key,secret_key,credentials_revoked,credentials_revision FROM users WHERE id=$1 AND role='MERCHANT' FOR UPDATE", [id])).rows[0];
   if (!row) throw httpError(404, 'Không tìm thấy Merchant');
   return row;
 }
@@ -38,7 +38,14 @@ async function mutate({ merchantId, operation, expectedRevision, adminId, reason
     const row = await lockMerchant(client, merchantId);
     const before = metadata(row);
     if (String(row.credentials_revision) !== String(expectedRevision)) throw httpError(409, 'Thông tin khóa đã thay đổi. Vui lòng tải lại.');
-    if (selfService && (row.status !== 'ACTIVE' || before.state !== 'ACTIVE')) throw httpError(403, 'Không thể tự cấp lại khóa đã thu hồi hoặc tài khoản bị khóa');
+    if (selfService) {
+      if (row.status !== 'ACTIVE' || row.credentials_revoked === true) {
+        throw httpError(403, 'Không thể tự cấp lại khóa đã thu hồi hoặc tài khoản bị khóa');
+      }
+      if (row.must_change_password === true) {
+        throw httpError(403, 'Vui lòng đổi mật khẩu tạm thời và đăng nhập lại trước khi thao tác khóa');
+      }
+    }
     const required = { issue:'UNCONFIGURED', rotate:'ACTIVE', revoke:'ACTIVE', reissue:'REVOKED', reset_api:'ACTIVE', reset_secret:'ACTIVE' }[operation];
     if (!required || before.state !== required) throw httpError(409, 'Thao tác không phù hợp trạng thái khóa hiện tại');
     if (operation !== 'revoke') await assertNoWebhook(client, merchantId);
@@ -60,7 +67,17 @@ async function mutate({ merchantId, operation, expectedRevision, adminId, reason
         [adminId,merchantId,`MERCHANT_CREDENTIALS_${action}`,reason,JSON.stringify(before),JSON.stringify({...after,cancelled_payments:cancelled})]);
     }
     await client.query('COMMIT');
-    if (selfService) return { rows: [operation === 'reset_api' ? {api_key:updated.api_key} : {secret_key:revealed}] };
+    if (selfService) {
+      if (operation === 'issue') {
+        return {
+          ...after,
+          api_key: updated.api_key,
+          secret_key: revealed,
+          rows: [{ api_key: updated.api_key, secret_key: revealed }],
+        };
+      }
+      return { rows: [operation === 'reset_api' ? {api_key:updated.api_key} : {secret_key:revealed}] };
+    }
     return {...after,cancelled_payments:cancelled,...(revealed ? {secret_key:revealed} : {})};
   } catch(error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }

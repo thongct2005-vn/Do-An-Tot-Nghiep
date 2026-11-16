@@ -2,6 +2,8 @@ const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const adminUserRepository = require("./user.repository");
 const { httpError } = require("../../utils/httpError");
+const { parseCreateUserPayload } = require("./user.create");
+const mailerModule = require("../../utils/mailer");
 const { emitToUser } = require("../../utils/socket");
 const { isValidPhone, isValidEmail } = require("../../utils/validators");
 const { maskPhone } = require("../../utils/mask");
@@ -1136,6 +1138,56 @@ const adminUserService = {
       operationType: "TOPUP",
       requestPath: ADMIN_TOPUP_REQUEST_PATH,
     });
+  },
+
+  async createUser({ adminId, body, mailer } = {}) {
+    if (!adminId) {
+      throw httpError(401, "Thiếu định danh quản trị viên");
+    }
+
+    const { values, reason } = parseCreateUserPayload(body);
+    const generateTempPassword =
+      mailer?.generateUserTemporaryPassword ||
+      mailerModule.generateUserTemporaryPassword;
+    const tempPassword = generateTempPassword();
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+    const result = await adminUserRepository.createUserWithHistory({
+      adminId,
+      values,
+      reason,
+      passwordHash,
+    });
+
+    const sendAccountEmail =
+      mailer?.sendUserAccountCreatedEmail ||
+      mailerModule.sendUserAccountCreatedEmail;
+    let emailSent = true;
+    let emailError;
+    try {
+      await sendAccountEmail({
+        to: result.user.email,
+        fullName: result.user.full_name,
+        phone: result.user.phone,
+        tempPassword,
+      });
+    } catch (err) {
+      emailSent = false;
+      emailError =
+        err?.message || "Không thể gửi email kích hoạt tài khoản người dùng";
+    }
+
+    const user = {
+      ...result.user,
+      email_sent: emailSent,
+      ...(emailError ? { email_error: emailError } : {}),
+    };
+
+    return {
+      ...user,
+      user,
+      audit: result.audit,
+    };
   },
 
   async executeAdminWithdraw(params) {

@@ -170,6 +170,7 @@ const userRepository = {
     const result = await pool.query(
       `UPDATE users
        SET password_hash = $1, refresh_token = NULL,
+           must_change_password = false,
            failed_login_attempts = 0, locked_until = NULL,
            totp_enabled = false, totp_secret = NULL, totp_last_step = NULL,
            totp_failed_attempts = 0, totp_locked_until = NULL
@@ -228,6 +229,7 @@ const userRepository = {
     const result = await pool.query(
       `UPDATE users
        SET password_hash = $1,
+           must_change_password = false,
            failed_login_attempts = 0,
            locked_until = NULL
        WHERE id = $2 AND password_hash IS NOT DISTINCT FROM $3

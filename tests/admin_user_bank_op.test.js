@@ -11,6 +11,7 @@ const adminUserService = require("../src/admin/user/user.service");
 const adminUserController = require("../src/admin/user/user.controller");
 const socketUtil = require("../src/utils/socket");
 const firebaseNotification = require("../src/utils/firebaseNotification");
+const limitsDb = require("../src/utils/limitsDb");
 
 describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Suite", () => {
   const originalPoolQuery = pool.query.bind(pool);
@@ -35,6 +36,7 @@ describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Sui
   }
 
   function resetDbState() {
+    limitsDb.invalidateLimitsCache();
     hooks = {
       failHistoryInsert: false,
     };
@@ -267,16 +269,27 @@ describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Sui
     }
 
     // 11. Select daily limit used
-    if (norm.includes("COALESCE(SUM(amount), 0) AS daily_used")) {
+    if (
+      norm.includes("COALESCE(SUM(amount), 0) AS daily_used") ||
+      norm.includes("AS daily_used FROM transactions")
+    ) {
       const userId = params[0];
+      let allowedTypes = ["TRANSFER", "WITHDRAW", "PAYMENT"];
+      if (norm.includes("transaction_type IN ('WITHDRAW')")) {
+        allowedTypes = ["WITHDRAW"];
+      } else if (norm.includes("transaction_type IN ('TOPUP')")) {
+        allowedTypes = ["TOPUP"];
+      } else if (norm.includes("transaction_type IN ('TRANSFER'")) {
+        allowedTypes = ["TRANSFER", "PAYMENT"];
+      }
       const used = targetState.transactions
         .filter(
           (t) =>
             t.source_user_id === userId &&
             t.status === "SUCCESS" &&
-            ["TRANSFER", "WITHDRAW", "PAYMENT"].includes(t.transaction_type)
+            allowedTypes.includes(t.transaction_type)
         )
-        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+        .reduce((sum, t) => sum + Number(t.amount || 0) + Number(t.fee || 0), 0);
       return {
         rows: [{ daily_used: used }],
         rowCount: 1,
@@ -362,6 +375,56 @@ describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Sui
         rows: [{ id: histId, action, reason, created_at: record.created_at }],
         rowCount: 1,
       };
+    }
+
+    // 16. Transaction limit policies & system configs (limitsDb)
+    if (norm.includes("FROM transaction_limit_policies")) {
+      return {
+        rows: [
+          { role: "USER", transaction_type: "TOPUP", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "USER", transaction_type: "WITHDRAW", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "USER", transaction_type: "TRANSFER", min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "USER", transaction_type: "QR_PAYMENT", min_amount: 1000, max_amount: 50000000, daily_limit: null },
+          { role: "MERCHANT", transaction_type: "TOPUP", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "MERCHANT", transaction_type: "WITHDRAW", min_amount: 10000, max_amount: 200000000, daily_limit: 500000000 },
+          { role: "MERCHANT", transaction_type: "TRANSFER", min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "MERCHANT", transaction_type: "QR_PAYMENT", min_amount: 1000, max_amount: 50000000, daily_limit: null },
+        ],
+        rowCount: 8,
+      };
+    }
+
+    if (norm.includes("FROM user_transaction_limits")) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (norm.includes("FROM system_configs")) {
+      const configs = [
+        { key: "DAILY_LIMIT_TIMEZONE", value: "Asia/Ho_Chi_Minh" },
+        {
+          key: "USER_FEE_CONFIG",
+          value: {
+            rate_bps: 0,
+            min_fee: 0,
+            max_fee: null,
+            free_threshold_amount: 0,
+            transfer_fee_bps: 0,
+            transfer_min_fee: 0,
+            transfer_max_fee: null,
+            withdraw_fee_bps: 0,
+            withdraw_free_quota_per_month: 0,
+            tiers: [],
+          },
+        },
+        {
+          key: "WALLET_CAPACITY_CONFIG",
+          value: {
+            USER: { min_capacity: 1000000, default_capacity: 100000000, max_capacity: 1000000000 },
+            MERCHANT: { min_capacity: 1000000, default_capacity: 100000000, max_capacity: 1000000000 },
+          },
+        },
+      ];
+      return { rows: configs, rowCount: configs.length };
     }
 
     throw new Error(`Unhandled SQL in test mock: ${norm}`);

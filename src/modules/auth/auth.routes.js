@@ -9,6 +9,7 @@ const {
   logoutLimiter,
   otpLimiter,
   sendOtpLimiter,
+  resetCredentialLimiter,
 } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
 
@@ -30,6 +31,12 @@ router.post(
   otpRisk,
   otpLimiter,
   authController.verifyLoginOtp,
+);
+router.patch(
+  "/first-login/change-password",
+  authMiddleware.verifyUserFirstLoginChangeToken,
+  resetCredentialLimiter,
+  authController.firstLoginChangePassword,
 );
 router.post(
   "/logout",

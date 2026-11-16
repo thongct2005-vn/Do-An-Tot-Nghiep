@@ -5,7 +5,10 @@ const {
 
 const dashboardRepository = {
   async getMerchantAccountStatus(userId) {
-    const result = await pool.query("SELECT id, role, status FROM users WHERE id=$1", [userId]);
+    const result = await pool.query(
+      "SELECT id, role, status, must_change_password FROM users WHERE id=$1",
+      [userId],
+    );
     return result.rows[0] ?? null;
   },
 
@@ -20,8 +23,8 @@ const dashboardRepository = {
     );
     const row = result.rows[0];
     if (row) {
-      if (row.credentials_revoked) { row.api_key = null; row.secret_key = null; }
-      else row.secret_key = decryptSecretKey(row.secret_key);
+      if (row.credentials_revoked) { row.credentials_status = "REVOKED"; row.api_key = null; row.secret_key = null; }
+      else { row.credentials_status = row.api_key ? "ACTIVE" : "UNCONFIGURED"; row.secret_key = decryptSecretKey(row.secret_key); }
     }
     return row;
   },
@@ -52,6 +55,10 @@ const dashboardRepository = {
   async resetApiKey({ userId, apiKey }) {
     const row = (await pool.query('SELECT credentials_revision FROM users WHERE id=$1',[userId])).rows[0];
     return require('../credentials').mutate({merchantId:userId,operation:'reset_api',expectedRevision:row?.credentials_revision,selfService:true,apiKey});
+  },
+  async issueCredentials({ userId, apiKey, secretKey }) {
+    const row = (await pool.query('SELECT credentials_revision FROM users WHERE id=$1',[userId])).rows[0];
+    return require('../credentials').mutate({merchantId:userId,operation:'issue',expectedRevision:row?.credentials_revision,selfService:true,apiKey,secretKey});
   },
   async resetSecretKey({ userId, secretKey }) {
     const row = (await pool.query('SELECT credentials_revision FROM users WHERE id=$1',[userId])).rows[0];

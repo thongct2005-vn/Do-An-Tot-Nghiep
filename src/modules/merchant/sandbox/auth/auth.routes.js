@@ -6,6 +6,7 @@ const {
   loginLimiter,
   registerLimiter,
   logoutLimiter,
+  resetCredentialLimiter,
 } = require("../../../../middlewares/ratelimit.middleware");
 
 router.post("/login", loginLimiter, merchantAuthController.login);
@@ -20,5 +21,11 @@ router.post(
   "/refresh-token",
   authMiddleware.verifySandboxRefreshTokenCookie,
   merchantAuthController.refreshToken,
+);
+router.patch(
+  "/first-login/change-password",
+  authMiddleware.verifyMerchantFirstLoginChangeToken,
+  resetCredentialLimiter,
+  merchantAuthController.firstLoginChangePassword,
 );
 module.exports = router;

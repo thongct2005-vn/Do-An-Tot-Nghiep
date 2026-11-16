@@ -417,6 +417,23 @@ const adminUserController = {
       next(e);
     }
   },
+
+  async createUser(req, res, next) {
+    try {
+      const result = await adminUserService.createUser({
+        adminId: req.user?.user_id,
+        body: Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body,
+      });
+      return successResponse(
+        res,
+        201,
+        "Tạo tài khoản người dùng mới thành công",
+        result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
 };
 
 module.exports = adminUserController;

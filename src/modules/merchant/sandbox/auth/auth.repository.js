@@ -7,7 +7,7 @@ const merchantAuthRepository = {
   async findMerchantByPhone(phone) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.phone = $1
@@ -20,7 +20,7 @@ const merchantAuthRepository = {
   async findMerchantByEmail(email) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.email = $1
@@ -33,7 +33,7 @@ const merchantAuthRepository = {
   async findMerchantApiKey(apiKey) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
       FROM users u
       WHERE u.api_key = $1
@@ -82,7 +82,7 @@ const merchantAuthRepository = {
   async findMerchantByRefreshToken(refreshToken) {
     const result = await pool.query(
       `
-      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status
+      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status, u.must_change_password
       FROM users u
       WHERE u.refresh_token = $1
         AND u.status = 'ACTIVE'

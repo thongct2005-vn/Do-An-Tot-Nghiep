@@ -3,6 +3,18 @@ const adminMerchantsService = require("./merchants.service");
 const adminMerchantFeeService = require("./merchantFee.service");
 
 const adminMerchantsController = {
+  async createMerchant(req, res, next) {
+    try {
+      const result = await adminMerchantsService.createMerchant({
+        adminId: req.user?.user_id,
+        body: Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body,
+      });
+      return successResponse(res, 201, "Tạo đối tác merchant mới thành công", result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async updateMerchantStatus(req, res, next) {
     try {
       const result = await adminMerchantsService.updateMerchantStatus({

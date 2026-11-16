@@ -77,11 +77,44 @@ const authController = {
         requireCccdLast4: Boolean(requireCccdLast4),
       });
       clearFailure(phone);
+      if (result.must_change_password) {
+        return successResponse(
+          res,
+          200,
+          "Vui lòng đổi mật khẩu trong lần đăng nhập đầu tiên",
+          result,
+        );
+      }
       return successResponse(res, 200, "Đăng nhập thành công", result);
     } catch (e) {
       if (e.statusCode && e.statusCode < 500) {
         recordFailure(req.otpUser?.phone);
       }
+      next(e);
+    }
+  },
+
+  async firstLoginChangePassword(req, res, next) {
+    try {
+      const {
+        new_password: newPassword,
+        password,
+        confirm_password: confirmPassword,
+      } = req.body || {};
+      const { user_id: userId, pv: version } = req.firstLoginUser || {};
+      const result = await authService.firstLoginChangePassword({
+        userId,
+        version,
+        password: newPassword ?? password,
+        confirmPassword,
+      });
+      return successResponse(
+        res,
+        200,
+        "Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới",
+        result,
+      );
+    } catch (e) {
       next(e);
     }
   },

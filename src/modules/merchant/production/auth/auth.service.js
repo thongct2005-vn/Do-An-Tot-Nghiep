@@ -25,6 +25,10 @@ const TOTP_LOCK_MINUTES = 5;
 const TOTP_ISSUER = process.env.TOTP_MERCHANT_ISSUER;
 
 const { maskEmail } = require("../../../../utils/mask");
+const {
+  buildFirstLoginChallenge,
+  changeFirstLoginPassword,
+} = require("../../shared/firstLoginPassword");
 
 async function checkCredentials(phone, password) {
   if (!phone || !password) {
@@ -60,6 +64,13 @@ async function checkCredentials(phone, password) {
     await merchantAuthRepository.resetFailedLogin(phone);
     user.failed_login_attempts = 0;
     user.locked_until = null;
+  }
+
+  if (!user.password_hash) {
+    throw httpError(
+      403,
+      "Tài khoản chưa thiết lập mật khẩu. Vui lòng sử dụng chức năng Quên mật khẩu để kích hoạt tài khoản",
+    );
   }
 
   const isCorrectPassword = await bcrypt.compare(password, user.password_hash);
@@ -279,6 +290,10 @@ const merchantAuthService = {
       await otpService.verifyOtp({ email: user.email, otp });
     }
 
+    if (user.must_change_password === true) {
+      return buildFirstLoginChallenge(user);
+    }
+
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await merchantAuthRepository.updateRefeshToken({
       refreshToken,
@@ -379,6 +394,12 @@ const merchantAuthService = {
         "Tài khoản của bạn đã được đăng nhập trên thiết bị khác. Vui lòng đăng nhập lại",
       );
     }
+    if (user.must_change_password === true) {
+      throw httpError(
+        403,
+        "Vui lòng đổi mật khẩu tạm thời và đăng nhập lại trước khi tiếp tục",
+      );
+    }
     const { accessToken, refreshToken } = tokenUtil.generateAuthTokens(user);
     await merchantAuthRepository.updateRefeshToken({
       refreshToken,
@@ -391,6 +412,20 @@ const merchantAuthService = {
         refresh_token: refreshToken,
       },
     };
+  },
+
+  async firstLoginChangePassword({
+    userId,
+    version,
+    password,
+    confirmPassword,
+  }) {
+    return changeFirstLoginPassword({
+      userId,
+      version,
+      password,
+      confirmPassword,
+    });
   },
 
   async register({ phone, email }) {

@@ -35,6 +35,21 @@ function createDashboardService({ dashboardRepository, validateCallbackUrl }) {
       return await dashboardRepository.resetApiKey({ userId, apiKey });
     },
 
+    async issueCredentials(userId) {
+      if (!userId) {
+        throw httpError(400, "Thiếu thông tin người dùng");
+      }
+      const [apiKey, secretKey] = await Promise.all([
+        generateUniqueMerchantApiKey(),
+        generateUniqueMerchantSecretKey(),
+      ]);
+      return await dashboardRepository.issueCredentials({
+        userId,
+        apiKey,
+        secretKey,
+      });
+    },
+
     async resetSecretKey(userId) {
       if (!userId) {
         throw httpError(400, "Thiếu thông tin người dùng");

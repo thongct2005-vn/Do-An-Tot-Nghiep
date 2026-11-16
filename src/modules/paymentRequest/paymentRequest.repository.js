@@ -44,10 +44,15 @@ const paymentRequestRepository = {
       await client.query('BEGIN');
       const user=(await client.query('SELECT role,status,credentials_revoked,credentials_revision FROM users WHERE id=$1 FOR UPDATE',[destinationUserId])).rows[0];
       if(user?.role==='MERCHANT' && (user.credentials_revoked || user.status!=='ACTIVE')) throw require('../../utils/httpError').httpError(403,'Credentials Merchant không khả dụng');
+      const feeDetails = user?.role === 'MERCHANT'
+        ? await require('../merchant/production/fee/fee.service').resolveMerchantTxFeeDetailsTx(
+          client, { merchantUser: { ...user, id: destinationUserId }, amount, transactionType: 'PAYMENT' },
+        ) : null;
       const result = await client.query(`INSERT INTO payment_requests
-        (id,reference_code,destination_user_id,amount,description,credentials_revision)
-        VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,reference_code,amount,description,status,expires_at,created_at`,
-        [id,referenceCode,destinationUserId,amount,description,user?.role==='MERCHANT' ? user.credentials_revision : null]);
+        (id,reference_code,destination_user_id,amount,description,credentials_revision,merchant_fee_amount_snapshot,merchant_fee_rule_snapshot)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING id,reference_code,amount,description,status,expires_at,created_at`,
+        [id,referenceCode,destinationUserId,amount,description,user?.role==='MERCHANT' ? user.credentials_revision : null,
+          feeDetails?.fee_amount ?? null, feeDetails ? JSON.stringify(feeDetails.fee_rate_snapshot) : null]);
       await client.query('COMMIT'); return result.rows[0] ?? null;
     } catch(error) {await client.query('ROLLBACK'); throw error;}
     finally {client.release();}

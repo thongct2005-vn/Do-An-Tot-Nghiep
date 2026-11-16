@@ -26,6 +26,14 @@ function createDashboardRoutes(dashboardController) {
   );
 
   router.post(
+    "/credentials/issue",
+    authMiddleware.verifyAccessToken,
+    authMiddleware.requireRole("MERCHANT"),
+    authMiddleware.requireActiveMerchant,
+    dashboardController.issueCredentials,
+  );
+
+  router.post(
     "/reset-secretkey",
     authMiddleware.verifyAccessToken,
     authMiddleware.requireRole("MERCHANT"),

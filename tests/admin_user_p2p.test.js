@@ -13,6 +13,7 @@ const adminUserController = require("../src/admin/user/user.controller");
 const authMiddleware = require("../src/middlewares/auth.middleware");
 const socketUtil = require("../src/utils/socket");
 const firebaseNotification = require("../src/utils/firebaseNotification");
+const limitsDb = require("../src/utils/limitsDb");
 
 describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Scenarios)", () => {
   const originalPoolQuery = pool.query.bind(pool);
@@ -34,6 +35,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
   }
 
   function resetDbState() {
+    limitsDb.invalidateLimitsCache();
     hooks = {
       beforeSelectUserForUpdate: null,
       failHistoryInsert: false,
@@ -108,10 +110,12 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       };
     }
 
-    // 2. Get user detail (for getUserChangeHistory check)
-    if (norm.includes("FROM users u WHERE u.id = $1 AND u.role = 'USER'")) {
+    // 2. Get user detail (for getUserChangeHistory & getUserDetail check)
+    if (norm.includes("FROM users u WHERE u.id = $1 AND u.role")) {
       const u = targetState.users[params[0]];
-      if (!u || u.role !== "USER") return { rows: [], rowCount: 0 };
+      if (!u || !["USER", "MERCHANT"].includes(u.role)) {
+        return { rows: [], rowCount: 0 };
+      }
       return { rows: [{ ...u }], rowCount: 1 };
     }
     if (norm.includes("FROM user_kyc WHERE user_id = $1")) {
@@ -253,14 +257,22 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       return { rows: u ? [{ ...u }] : [], rowCount: u ? 1 : 0 };
     }
 
-    // 11. Daily transfer limit query inside executeTransfer
+    // 11. Daily transfer limit query inside executeTransfer / getDailyUsage
     if (norm.includes("AS daily_used FROM transactions WHERE source_user_id = $1")) {
       const sourceUserId = params[0];
+      let allowedTypes = ["TRANSFER", "WITHDRAW", "PAYMENT"];
+      if (norm.includes("transaction_type IN ('WITHDRAW')")) {
+        allowedTypes = ["WITHDRAW"];
+      } else if (norm.includes("transaction_type IN ('TOPUP')")) {
+        allowedTypes = ["TOPUP"];
+      } else if (norm.includes("transaction_type IN ('TRANSFER'")) {
+        allowedTypes = ["TRANSFER", "PAYMENT"];
+      }
       const used = targetState.transactions
         .filter(
           (t) =>
             String(t.source_user_id) === String(sourceUserId) &&
-            ["TRANSFER", "WITHDRAW", "PAYMENT"].includes(t.transaction_type) &&
+            allowedTypes.includes(t.transaction_type) &&
             t.status === "SUCCESS"
         )
         .reduce((sum, t) => sum + Number(t.amount) + Number(t.fee || 0), 0);
@@ -281,20 +293,21 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       if (hooks.delayInsideTransactionMs > 0) {
         await new Promise((r) => setTimeout(r, hooks.delayInsideTransactionMs));
       }
-      const [
-        transactionType,
-        sourceUserId,
-        sourceBalanceBefore,
-        sourceBalanceAfter,
-        destinationUserId,
-        destBalanceBefore,
-        destBalanceAfter,
-        amount,
-        fee,
-        description,
-        idempotencyKey,
-        status,
-      ] = params;
+      const isNewFormat = params.length >= 15;
+      const transactionType = params[0];
+      const sourceUserId = params[1];
+      const sourceBalanceBefore = params[2];
+      const sourceBalanceAfter = params[3];
+      const destinationUserId = params[4];
+      const destBalanceBefore = params[5];
+      const destBalanceAfter = params[6];
+      const amount = params[7];
+      const fee = params[8];
+      const merchantFee = isNewFormat ? params[9] : 0;
+      const netAmount = isNewFormat ? params[11] : Number(amount);
+      const description = isNewFormat ? params[12] : params[9];
+      const idempotencyKey = isNewFormat ? params[13] : params[10];
+      const status = isNewFormat ? params[14] : params[11];
 
       const duplicate = targetState.transactions.find(
         (t) => t.idempotency_key === idempotencyKey
@@ -317,6 +330,8 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
         dest_balance_after: Number(destBalanceAfter),
         amount: Number(amount),
         fee: Number(fee),
+        merchant_fee: Number(merchantFee),
+        net_amount: Number(netAmount),
         description,
         idempotency_key: idempotencyKey,
         status,
@@ -390,6 +405,86 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
         };
       });
       return { rows, rowCount: rows.length };
+    }
+
+    // 17. Transaction limit policies & system configs (limitsDb / fee.service)
+    if (norm.includes("FROM transaction_limit_policies")) {
+      return {
+        rows: [
+          { role: "USER", transaction_type: "TOPUP", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "USER", transaction_type: "WITHDRAW", min_amount: 10000, max_amount: 30000000, daily_limit: 30000000 },
+          { role: "USER", transaction_type: "TRANSFER", min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "USER", transaction_type: "QR_PAYMENT", min_amount: 1000, max_amount: 50000000, daily_limit: null },
+          { role: "MERCHANT", transaction_type: "TOPUP", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "MERCHANT", transaction_type: "WITHDRAW", min_amount: 10000, max_amount: 200000000, daily_limit: 500000000 },
+          { role: "MERCHANT", transaction_type: "TRANSFER", min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
+          { role: "MERCHANT", transaction_type: "QR_PAYMENT", min_amount: 1000, max_amount: 50000000, daily_limit: null },
+        ],
+        rowCount: 8,
+      };
+    }
+
+    if (norm.includes("FROM user_transaction_limits")) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (norm.includes("FROM system_configs")) {
+      const configs = [
+        { key: "DAILY_LIMIT_TIMEZONE", value: "Asia/Ho_Chi_Minh" },
+        {
+          key: "USER_FEE_CONFIG",
+          value: {
+            rate_bps: 0,
+            min_fee: 0,
+            max_fee: null,
+            free_threshold_amount: 0,
+            transfer_fee_bps: 0,
+            transfer_min_fee: 0,
+            transfer_max_fee: null,
+            withdraw_fee_bps: 0,
+            withdraw_free_quota_per_month: 0,
+            tiers: [],
+          },
+        },
+        {
+          key: "MERCHANT_FEE_CONFIG",
+          value: {
+            rate_bps: 100,
+            min_fee: 200,
+            max_fee: null,
+            free_threshold_amount: 0,
+            transfer_fee_bps: 0,
+            transfer_min_fee: 0,
+            transfer_max_fee: null,
+            withdraw_fee_bps: 50,
+            withdraw_free_quota_per_month: 50000000,
+            monthly_plan_enabled: false,
+            monthly_plan_fee: 0,
+            monthly_grace_days: 7,
+            tiers: [
+              { from_amount: 0, rate_bps: 100 },
+              { from_amount: 50000000, rate_bps: 80 },
+              { from_amount: 200000000, rate_bps: 60 },
+            ],
+          },
+        },
+        {
+          key: "WALLET_CAPACITY_CONFIG",
+          value: {
+            USER: { min_capacity: 1000000, default_capacity: 100000000, max_capacity: 1000000000 },
+            MERCHANT: { min_capacity: 1000000, default_capacity: 100000000, max_capacity: 1000000000 },
+          },
+        },
+      ];
+      if (norm.includes("WHERE key=$1") || norm.includes("WHERE key = $1")) {
+        const hit = configs.find((c) => c.key === params[0]);
+        return { rows: hit ? [{ value: hit.value }] : [], rowCount: hit ? 1 : 0 };
+      }
+      return { rows: configs, rowCount: configs.length };
+    }
+
+    if (norm.startsWith("INSERT INTO audit_outbox")) {
+      return { rows: [], rowCount: 1 };
     }
 
     throw new Error(`Unhandled SQL in test mock: ${norm}`);
@@ -575,7 +670,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       },
       (err) => {
         assert.strictEqual(err.statusCode, 403);
-        assert.match(err.message, /người gửi đang bị khóa/);
+        assert.match(err.message, /bị khoá hoặc không khả dụng/);
         return true;
       }
     );
@@ -585,9 +680,9 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
   });
 
   // =========================================================================
-  // Kịch bản 4: USER B đang bị khóa (BLOCKED) -> 403 Forbidden
+  // Kịch bản 4: USER B đang bị khóa (BLOCKED) -> 422 Unprocessable Entity
   // =========================================================================
-  it("Case 4: Tài khoản đích USER B đang bị khóa (BLOCKED) -> từ chối 403 Forbidden", async () => {
+  it("Case 4: Tài khoản đích USER B đang bị khóa (BLOCKED) -> từ chối 422 Unprocessable Entity", async () => {
     dbState.users[USER_B_ID].status = "BLOCKED";
 
     await assert.rejects(
@@ -604,8 +699,8 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
         });
       },
       (err) => {
-        assert.strictEqual(err.statusCode, 403);
-        assert.match(err.message, /người nhận đang bị khóa/);
+        assert.strictEqual(err.statusCode, 422);
+        assert.match(err.message, /người nhận không khả dụng/);
         return true;
       }
     );
@@ -933,7 +1028,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
   // =========================================================================
   // Kịch bản 14: USER A hoặc USER B vừa bị khóa ngay trước thời điểm FOR UPDATE
   // =========================================================================
-  it("Case 14: USER B bị một Admin khác khóa đồng thời ngay trước khi SELECT ... FOR UPDATE giành được khóa -> phát hiện và ROLLBACK (403)", async () => {
+  it("Case 14: USER B bị một Admin khác khóa đồng thời ngay trước khi SELECT ... FOR UPDATE giành được khóa -> phát hiện và ROLLBACK (422)", async () => {
     hooks.beforeSelectUserForUpdate = async (lockedUserId, state) => {
       if (lockedUserId === USER_B_ID) {
         // Giả lập một tiến trình khác vừa COMMIT khóa tài khoản USER B ngay trước khi giữ khóa dòng
@@ -955,8 +1050,8 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
         });
       },
       (err) => {
-        assert.strictEqual(err.statusCode, 403);
-        assert.match(err.message, /người nhận đang bị khóa/);
+        assert.strictEqual(err.statusCode, 422);
+        assert.match(err.message, /người nhận không khả dụng/);
         return true;
       }
     );
@@ -998,7 +1093,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       },
       (err) => {
         assert.strictEqual(err.statusCode, 422);
-        assert.match(err.message, /Vượt quá hạn mức giao dịch trong ngày/);
+        assert.match(err.message, /Vượt quá hạn mức chuyển tiền trong ngày/);
         return true;
       }
     );

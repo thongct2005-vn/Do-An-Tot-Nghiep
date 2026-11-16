@@ -113,6 +113,12 @@ router.patch(
   resetCredentialLimiter,
   merchantAuthController.forgotResetPassword,
 );
+router.patch(
+  "/first-login/change-password",
+  authMiddleware.verifyMerchantFirstLoginChangeToken,
+  resetCredentialLimiter,
+  merchantAuthController.firstLoginChangePassword,
+);
 router.post(
   "/change-password/request",
   authMiddleware.verifyAccessToken,

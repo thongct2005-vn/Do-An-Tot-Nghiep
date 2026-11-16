@@ -13,7 +13,7 @@ router.get('/',async(req,res,next)=>{
     successResponse(res,200,'Thông tin credentials',credentials.metadata(row));
   }catch(e){next(e);}
 });
-for (const operation of ['issue','rotate','revoke','reissue']) router.post(`/${operation}`,async(req,res,next)=>{
+for (const operation of ['rotate','revoke','reissue']) router.post(`/${operation}`,async(req,res,next)=>{
   try {
     const body = Object.hasOwn(req,'rawBodyForRisk') ? req.rawBodyForRisk : req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k=>!['reason','expected_revision'].includes(k))) throw httpError(400,'Dữ liệu không hợp lệ');

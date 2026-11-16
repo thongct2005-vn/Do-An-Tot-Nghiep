@@ -47,24 +47,34 @@ const webhookRepository = {
    * Chuyển các đơn merchant đã quá hạn từ PENDING sang FAILED và xếp webhook "failed".
    * Một câu lệnh duy nhất nên không thể xảy ra chuyện "đã FAILED mà không có webhook".
    * Có thể giới hạn theo một đơn (khi merchant tra cứu trạng thái).
-   * Nếu khách đang thanh toán đúng lúc hết hạn: tiến trình thanh toán giữ khoá dòng,
-   * câu UPDATE này chờ rồi thấy status đã là PAID nên bỏ qua.
+   * Khóa Merchant trước request, cùng thứ tự với thanh toán/credentials.
+   * Bỏ qua Merchant hoặc request đang được xử lý để worker thử lại sau.
    */
   async expireDuePayments(db, { orderId = null, merchantId = null, limit = 500 } = {}) {
     // Mỗi webhook cần một id uuidv7 sinh từ app; câu lệnh có thể xếp tối đa `limit` webhook
     // nên sinh sẵn `limit` id rồi ghép theo số thứ tự dòng.
     const webhookIds = Array.from({ length: limit }, () => uuidv7());
     const result = await db.query(
-      `WITH due AS(
-        SELECT id FROM payment_requests
-         WHERE status = 'PENDING'
-           AND order_id IS NOT NULL
-           AND expires_at <= NOW()
-           AND($1:: text IS NULL OR order_id = $1)
-           AND($2:: uuid IS NULL OR destination_user_id = $2)
-         ORDER BY expires_at
+      `WITH locked_merchants AS MATERIALIZED (
+        SELECT u.id FROM users u
+         WHERE u.role = 'MERCHANT' AND ($2::uuid IS NULL OR u.id = $2)
+           AND EXISTS (SELECT 1 FROM payment_requests pr
+             WHERE pr.destination_user_id=u.id AND pr.status='PENDING'
+               AND pr.order_id IS NOT NULL AND pr.expires_at <= NOW()
+               AND ($1::text IS NULL OR pr.order_id=$1))
+         ORDER BY u.id
+         FOR UPDATE OF u SKIP LOCKED
+      ), due AS(
+        SELECT pr.id FROM payment_requests pr
+         JOIN locked_merchants m ON m.id=pr.destination_user_id
+         WHERE pr.status = 'PENDING'
+           AND pr.order_id IS NOT NULL
+           AND pr.expires_at <= NOW()
+           AND($1:: text IS NULL OR pr.order_id = $1)
+           AND($2:: uuid IS NULL OR pr.destination_user_id = $2)
+         ORDER BY pr.expires_at
          LIMIT $3
-         FOR UPDATE SKIP LOCKED
+         FOR UPDATE OF pr SKIP LOCKED
       ),
       expired AS(
         UPDATE payment_requests pr

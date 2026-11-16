@@ -11,6 +11,7 @@ router.use(requireCurrentAdminSession);
 router.get("/stats", adminUserController.getStats);
 router.get("/login-stats", adminUserController.getLoginStats);
 router.get("/", adminUserController.getUsers);
+router.post("/", adminUserController.createUser);
 router.get("/:id", adminUserController.getUserDetail);
 router.patch("/:id/status", adminUserController.updateUserStatus);
 router.patch("/:id/profile", adminUserController.updateUserProfile);

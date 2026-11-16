@@ -60,6 +60,7 @@ router.use("/admin/auth", adminAuthRoutes);
 router.use("/admin/user", adminUserRoutes);
 router.use("/admin/transactions", adminTransactionRoutes);
 router.use("/admin/merchants", adminMerchantsRoutes);
+router.use("/admin/reports", require('../admin/reports/reports.routes'));
 
 
 //MERCHANT PRODUCTION ROUTES

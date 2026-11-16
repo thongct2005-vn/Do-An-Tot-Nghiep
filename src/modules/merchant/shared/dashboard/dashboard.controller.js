@@ -37,6 +37,16 @@ function createDashboardController(dashboardService) {
         next(e);
       }
     },
+    async issueCredentials(req, res, next) {
+      try {
+        res.set("Cache-Control", "no-store");
+        const { user_id: userId } = req.user;
+        const result = await dashboardService.issueCredentials(userId);
+        return successResponse(res, 200, "Tạo bộ khóa tích hợp thành công", result);
+      } catch (e) {
+        next(e);
+      }
+    },
      async resetSecretKey(req, res, next){
       try {
          const { user_id: userId } = req.user;

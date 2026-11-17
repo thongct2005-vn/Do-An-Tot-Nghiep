@@ -57,17 +57,49 @@ function buildHybridBranches({
   return { branches, params };
 }
 
+async function resolveConsistencyCutoff(options = {}) {
+  if (options && options.rollupUntil !== undefined) {
+    return options.rollupUntil;
+  }
+  if (options && options.ensureConsistent === false) {
+    return null;
+  }
+  return ensureRollupConsistent(pool);
+}
+
+async function queryHybridWithFallback(startInstant, nextDayInstant, rollupUntil, buildFn, queryBuilder) {
+  const exec = async (cutoff) => {
+    const { branches, params } = buildFn(cutoff);
+    if (branches.length === 0) return null;
+    const { rows } = await pool.query(queryBuilder(branches), params);
+    return rows;
+  };
+  try {
+    return await exec(rollupUntil);
+  } catch (err) {
+    if (err && err.code === "42P01" && rollupUntil) {
+      return await exec(null);
+    }
+    throw err;
+  }
+}
+
 const adminDashboardRepository = {
   /**
    * Tổng hợp 5 chỉ số KPI dòng tiền trong khoảng nửa mở [startInstant, nextDayInstant).
    */
-  async getKpiSummary(startInstant, nextDayInstant) {
-    const rollupUntil = await ensureRollupConsistent(pool);
-    const { branches, params } = buildHybridBranches({
+  async getKpiSummary(startInstant, nextDayInstant, options = {}) {
+    const rollupUntil = await resolveConsistencyCutoff(options);
+    const rows = await queryHybridWithFallback(
       startInstant,
       nextDayInstant,
       rollupUntil,
-      rollupBranchSql: (sIdx, eIdx) => `
+      (cutoff) =>
+        buildHybridBranches({
+          startInstant,
+          nextDayInstant,
+          rollupUntil: cutoff,
+          rollupBranchSql: (sIdx, eIdx) => `
         SELECT
           COALESCE(SUM(tx_count), 0) AS total_transactions,
           COALESCE(SUM(CASE WHEN UPPER(transaction_type) = 'TOPUP' AND UPPER(status) IN ('SUCCESS', 'COMPLETED') THEN total_amount ELSE 0 END), 0) AS total_topup,
@@ -77,7 +109,7 @@ const adminDashboardRepository = {
         FROM public.dashboard_tx_hourly
         WHERE bucket_hour >= ${sIdx} AND bucket_hour < ${eIdx}
       `,
-      tailBranchSql: (sIdx, eIdx) => `
+          tailBranchSql: (sIdx, eIdx) => `
         SELECT
           COUNT(*) AS total_transactions,
           COALESCE(SUM(CASE WHEN UPPER(transaction_type::text) = 'TOPUP' AND UPPER(status::text) IN ('SUCCESS', 'COMPLETED') THEN amount ELSE 0 END), 0) AS total_topup,
@@ -87,19 +119,8 @@ const adminDashboardRepository = {
         FROM public.transactions
         WHERE created_at >= ${sIdx} AND created_at < ${eIdx}
       `,
-    });
-
-    if (branches.length === 0) {
-      return {
-        total_transactions: 0,
-        total_topup: 0,
-        total_withdraw: 0,
-        total_qr_payment: 0,
-        total_transfer: 0,
-      };
-    }
-
-    const query = `
+        }),
+      (branches) => `
       SELECT
         COALESCE(SUM(total_transactions), 0)::int AS total_transactions,
         COALESCE(SUM(total_topup), 0) AS total_topup,
@@ -109,8 +130,19 @@ const adminDashboardRepository = {
       FROM (
         ${branches.join("\n        UNION ALL\n")}
       ) combined
-    `;
-    const { rows } = await pool.query(query, params);
+    `,
+    );
+
+    if (!rows) {
+      return {
+        total_transactions: 0,
+        total_topup: 0,
+        total_withdraw: 0,
+        total_qr_payment: 0,
+        total_transfer: 0,
+      };
+    }
+
     return (
       rows[0] || {
         total_transactions: 0,
@@ -125,13 +157,18 @@ const adminDashboardRepository = {
   /**
    * Tổng hợp tỷ lệ trạng thái giao dịch theo từng loại (TOPUP, WITHDRAW, TRANSFER, PAYMENT).
    */
-  async getStatusDistributionByType(startInstant, nextDayInstant) {
-    const rollupUntil = await ensureRollupConsistent(pool);
-    const { branches, params } = buildHybridBranches({
+  async getStatusDistributionByType(startInstant, nextDayInstant, options = {}) {
+    const rollupUntil = await resolveConsistencyCutoff(options);
+    const rows = await queryHybridWithFallback(
       startInstant,
       nextDayInstant,
       rollupUntil,
-      rollupBranchSql: (sIdx, eIdx) => `
+      (cutoff) =>
+        buildHybridBranches({
+          startInstant,
+          nextDayInstant,
+          rollupUntil: cutoff,
+          rollupBranchSql: (sIdx, eIdx) => `
         SELECT
           UPPER(transaction_type) AS transaction_type,
           COALESCE(SUM(tx_count), 0) AS total_count,
@@ -142,7 +179,7 @@ const adminDashboardRepository = {
         WHERE bucket_hour >= ${sIdx} AND bucket_hour < ${eIdx}
         GROUP BY UPPER(transaction_type)
       `,
-      tailBranchSql: (sIdx, eIdx) => `
+          tailBranchSql: (sIdx, eIdx) => `
         SELECT
           UPPER(transaction_type::text) AS transaction_type,
           COUNT(*) AS total_count,
@@ -153,13 +190,8 @@ const adminDashboardRepository = {
         WHERE created_at >= ${sIdx} AND created_at < ${eIdx}
         GROUP BY UPPER(transaction_type::text)
       `,
-    });
-
-    if (branches.length === 0) {
-      return [];
-    }
-
-    const query = `
+        }),
+      (branches) => `
       SELECT
         transaction_type,
         COALESCE(SUM(total_count), 0)::int AS total_count,
@@ -170,23 +202,29 @@ const adminDashboardRepository = {
         ${branches.join("\n        UNION ALL\n")}
       ) combined
       GROUP BY transaction_type
-    `;
-    const { rows } = await pool.query(query, params);
-    return rows;
+    `,
+    );
+
+    return rows || [];
   },
 
   /**
    * Tổng hợp dòng tiền (Nạp, Rút, Thanh toán QR) theo bucket thời gian.
    */
-  async getCashflowRowsByBucket(startInstant, nextDayInstant, groupBy) {
-    const rollupUntil = await ensureRollupConsistent(pool);
+  async getCashflowRowsByBucket(startInstant, nextDayInstant, groupBy, options = {}) {
+    const rollupUntil = await resolveConsistencyCutoff(options);
     const { unit, format } = getTruncConfig(groupBy);
 
-    const { branches, params } = buildHybridBranches({
+    const rows = await queryHybridWithFallback(
       startInstant,
       nextDayInstant,
       rollupUntil,
-      rollupBranchSql: (sIdx, eIdx) => `
+      (cutoff) =>
+        buildHybridBranches({
+          startInstant,
+          nextDayInstant,
+          rollupUntil: cutoff,
+          rollupBranchSql: (sIdx, eIdx) => `
         SELECT
           DATE_TRUNC('${unit}', bucket_hour AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
           COALESCE(SUM(CASE WHEN UPPER(transaction_type) = 'TOPUP' AND UPPER(status) IN ('SUCCESS', 'COMPLETED') THEN total_amount ELSE 0 END), 0) AS topup,
@@ -196,7 +234,7 @@ const adminDashboardRepository = {
         WHERE bucket_hour >= ${sIdx} AND bucket_hour < ${eIdx}
         GROUP BY 1
       `,
-      tailBranchSql: (sIdx, eIdx) => `
+          tailBranchSql: (sIdx, eIdx) => `
         SELECT
           DATE_TRUNC('${unit}', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
           COALESCE(SUM(CASE WHEN UPPER(transaction_type::text) = 'TOPUP' AND UPPER(status::text) IN ('SUCCESS', 'COMPLETED') THEN amount ELSE 0 END), 0) AS topup,
@@ -206,13 +244,8 @@ const adminDashboardRepository = {
         WHERE created_at >= ${sIdx} AND created_at < ${eIdx}
         GROUP BY 1
       `,
-    });
-
-    if (branches.length === 0) {
-      return [];
-    }
-
-    const query = `
+        }),
+      (branches) => `
       SELECT
         TO_CHAR(bucket_ts, '${format}') AS bucket_key,
         COALESCE(SUM(topup), 0) AS topup,
@@ -223,23 +256,29 @@ const adminDashboardRepository = {
       ) combined
       GROUP BY bucket_ts
       ORDER BY bucket_ts ASC
-    `;
-    const { rows } = await pool.query(query, params);
-    return rows;
+    `,
+    );
+
+    return rows || [];
   },
 
   /**
    * Tổng hợp số lượng giao dịch phát sinh theo bucket thời gian (không cộng dồn).
    */
-  async getTransactionVolumeRowsByBucket(startInstant, nextDayInstant, groupBy) {
-    const rollupUntil = await ensureRollupConsistent(pool);
+  async getTransactionVolumeRowsByBucket(startInstant, nextDayInstant, groupBy, options = {}) {
+    const rollupUntil = await resolveConsistencyCutoff(options);
     const { unit, format } = getTruncConfig(groupBy);
 
-    const { branches, params } = buildHybridBranches({
+    const rows = await queryHybridWithFallback(
       startInstant,
       nextDayInstant,
       rollupUntil,
-      rollupBranchSql: (sIdx, eIdx) => `
+      (cutoff) =>
+        buildHybridBranches({
+          startInstant,
+          nextDayInstant,
+          rollupUntil: cutoff,
+          rollupBranchSql: (sIdx, eIdx) => `
         SELECT
           DATE_TRUNC('${unit}', bucket_hour AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
           COALESCE(SUM(tx_count), 0) AS count,
@@ -250,7 +289,7 @@ const adminDashboardRepository = {
         WHERE bucket_hour >= ${sIdx} AND bucket_hour < ${eIdx}
         GROUP BY 1
       `,
-      tailBranchSql: (sIdx, eIdx) => `
+          tailBranchSql: (sIdx, eIdx) => `
         SELECT
           DATE_TRUNC('${unit}', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
           COUNT(*) AS count,
@@ -261,13 +300,8 @@ const adminDashboardRepository = {
         WHERE created_at >= ${sIdx} AND created_at < ${eIdx}
         GROUP BY 1
       `,
-    });
-
-    if (branches.length === 0) {
-      return [];
-    }
-
-    const query = `
+        }),
+      (branches) => `
       SELECT
         TO_CHAR(bucket_ts, '${format}') AS bucket_key,
         COALESCE(SUM(count), 0)::int AS count,
@@ -279,9 +313,10 @@ const adminDashboardRepository = {
       ) combined
       GROUP BY bucket_ts
       ORDER BY bucket_ts ASC
-    `;
-    const { rows } = await pool.query(query, params);
-    return rows;
+    `,
+    );
+
+    return rows || [];
   },
 };
 

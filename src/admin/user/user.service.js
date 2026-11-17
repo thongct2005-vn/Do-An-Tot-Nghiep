@@ -58,17 +58,53 @@ const adminUserService = {
   async getLoginStats({ start_date, end_date, now } = {}) {
     const range = resolveAdminDateRange(start_date, end_date, { now });
     const baseBuckets = generateTimeBuckets(range);
-    const rows = await adminUserRepository.getLoginStatsRows({
+    const result = await adminUserRepository.getLoginStatsRows({
       startInstant: range.startInstant,
       nextDayInstant: range.nextDayInstant,
       groupBy: range.groupBy,
+      now,
     });
 
+    // Nhánh tối ưu: MongoDB đã tính sẵn buckets & summary unique_users trong DB (không trả mảng $addToSet)
+    if (result && !Array.isArray(result) && Array.isArray(result.buckets)) {
+      const bucketMap = new Map();
+      for (const row of result.buckets) {
+        const key = String(row._id || "");
+        bucketMap.set(key, {
+          total_logins: Number(row.total_logins || 0),
+          unique_users: Number(row.unique_users || 0),
+        });
+      }
+
+      const buckets = baseBuckets.map((b) => {
+        const matched = bucketMap.get(b.key);
+        return {
+          bucket_key: b.key,
+          label: b.label,
+          start_date: b.start_date,
+          end_date: b.end_date,
+          total_logins: matched ? matched.total_logins : 0,
+          unique_users: matched ? matched.unique_users : 0,
+        };
+      });
+
+      return {
+        period: range.period,
+        summary: {
+          total_logins: Number(result.summary?.total_logins || 0),
+          unique_users: Number(result.summary?.unique_users || 0),
+        },
+        buckets,
+      };
+    }
+
+    // Fallback tương thích cho test mock trả về mảng { _id, total_logins, user_ids }
+    const rows = Array.isArray(result) ? result : [];
     const bucketStatsMap = new Map();
     const overallUniqueUserSet = new Set();
     let overallTotalLogins = 0;
 
-    for (const row of rows || []) {
+    for (const row of rows) {
       const rawKey = String(row._id || "");
       const bucketKey =
         range.groupBy === "week" ? getMondayOfDateStr(rawKey) : rawKey;

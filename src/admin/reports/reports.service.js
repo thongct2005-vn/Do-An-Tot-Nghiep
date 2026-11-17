@@ -1,9 +1,18 @@
 const pool = require('../../config/database');
 const { httpError } = require('../../utils/httpError');
 const { resolveAdminDateRange } = require('../../utils/dateRange');
+const { ensureRollupConsistent: ensureDashboardRollupConsistent } = require('../dashboard/dashboardRollup');
+const {
+  isMissingRelationError,
+  ensureReportRollupConsistent,
+  queryFeeRevenueSummary,
+  queryMerchantsPage,
+  queryReportFull,
+  queryGrowthVolume,
+} = require('./reportRollup');
 
 function filters(input = {}) {
-  for (const key of ['start_date', 'end_date', 'merchant_id', 'transaction_type', 'group_by', 'role']) {
+  for (const key of ['start_date', 'end_date', 'merchant_id', 'transaction_type', 'group_by', 'role', 'scope']) {
     if (input[key] !== undefined && typeof input[key] !== 'string') throw httpError(400, `${key} không hợp lệ`);
   }
   const range = resolveAdminDateRange(input.start_date, input.end_date);
@@ -15,15 +24,17 @@ function filters(input = {}) {
   if (!['ALL', 'PAYMENT', 'TRANSFER'].includes(type)) throw httpError(400, 'transaction_type không hợp lệ');
   const role = input.role || 'ALL';
   if (!['ALL', 'USER', 'MERCHANT'].includes(role)) throw httpError(400, 'role không hợp lệ');
+  const scope = input.scope || 'full';
+  if (!['full', 'kpi', 'merchants'].includes(scope)) throw httpError(400, 'scope không hợp lệ');
   const page = Number(input.page ?? 1), limit = Number(input.limit ?? 20);
   if (!Number.isSafeInteger(page) || page < 1 || page > 1000000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw httpError(400, 'Phân trang không hợp lệ');
-  return { ...range, group, merchant, type: type === 'ALL' ? null : type, role, page, limit,
+  return { ...range, group, merchant, type: type === 'ALL' ? null : type, role, scope, page, limit,
     period: { ...range.period, group_by: group },
   };
 }
 
 // Separate ledger and transaction events avoid multiplying transactions by fee rows.
-// All reporting views below share a single SQL statement and database snapshot.
+// Kept exported for baseline/EXPLAIN verification compatibility; runtime path delegates to reportRollup.
 const REPORT_SQL = `
 WITH events AS MATERIALIZED (
   SELECT u.id merchant_id, t.transaction_type::text type,
@@ -85,46 +96,102 @@ SELECT jsonb_build_object(
   'gateway',(SELECT to_jsonb(g) FROM gateway g)
 ) data`;
 
+async function with42P01Fallback(rollupUntil, rollupRunner, fallbackRunner) {
+  if (!rollupUntil) {
+    return fallbackRunner();
+  }
+  try {
+    return await rollupRunner(rollupUntil);
+  } catch (err) {
+    if (isMissingRelationError(err)) {
+      return fallbackRunner();
+    }
+    throw err;
+  }
+}
+
 async function report(input, { db = pool, allMerchants = false } = {}) {
   const f = filters(input);
-  const data = (await db.query(REPORT_SQL, [f.startInstant, f.nextDayInstant, f.merchant, f.type, f.group,
-    allMerchants ? null : f.limit, allMerchants ? 0 : (f.page - 1) * f.limit])).rows[0].data;
+  const baseFilters = { merchant_id: f.merchant, transaction_type: f.type || 'ALL' };
+  const effectiveScope = allMerchants ? 'full' : f.scope;
+  const rollupUntil = await ensureReportRollupConsistent(db);
+
+  if (effectiveScope === 'kpi') {
+    const revenue = await with42P01Fallback(
+      rollupUntil,
+      (cutoff) => queryFeeRevenueSummary(db, f, cutoff),
+      () => queryFeeRevenueSummary(db, f, null),
+    );
+    return {
+      overview: { revenue },
+      period: f.period,
+      filters: baseFilters,
+    };
+  }
+
+  if (effectiveScope === 'merchants') {
+    const paged = await with42P01Fallback(
+      rollupUntil,
+      (cutoff) => queryMerchantsPage(db, f, cutoff, { allMerchants: false }),
+      () => queryMerchantsPage(db, f, null, { allMerchants: false }),
+    );
+    return {
+      merchants: paged.merchants,
+      total_merchants: paged.total_merchants,
+      period: f.period,
+      filters: baseFilters,
+      pagination: { page: f.page, limit: f.limit, total: paged.total_merchants },
+    };
+  }
+
+  const data = await with42P01Fallback(
+    rollupUntil,
+    (cutoff) => queryReportFull(db, f, cutoff, { allMerchants }),
+    () => queryReportFull(db, f, null, { allMerchants }),
+  );
   const g = data.gateway;
   g.resolved = g.success + g.expired + g.failed + g.cancelled;
   g.success_rate = g.resolved ? g.success / g.resolved * 100 : null;
-  return { ...data, period: f.period, filters: { merchant_id: f.merchant, transaction_type: f.type || 'ALL' },
+  return { ...data, period: f.period, filters: baseFilters,
     pagination: { page: allMerchants ? 1 : f.page, limit: allMerchants ? data.total_merchants : f.limit, total: data.total_merchants } };
 }
 
 async function growth(input, { db = pool } = {}) {
   const f = filters(input);
   const previous = new Date(f.startInstant.getTime() - (f.nextDayInstant - f.startInstant));
-  const result = await db.query(`WITH accounts AS (
-    SELECT role,count(*) FILTER(WHERE created_at >= ($1::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')) current,
-      count(*) FILTER(WHERE created_at >= ($3::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        AND created_at < ($1::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')) previous,count(*) total
-    FROM users WHERE role IN ('USER','MERCHANT') AND ($4='ALL' OR role=$4)
-      AND created_at < ($2::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh') GROUP BY role
-  ), volume AS (
-    SELECT count(*) FILTER(WHERE t.created_at >= $1) current_count,
-      count(*) FILTER(WHERE t.created_at < $1) previous_count,
-      coalesce(sum(t.amount) FILTER(WHERE t.created_at >= $1),0) current_gross,
-      coalesce(sum(t.amount) FILTER(WHERE t.created_at < $1),0) previous_gross
-    FROM transactions t WHERE t.status IN ('SUCCESS','COMPLETED') AND t.created_at >= $3 AND t.created_at < $2
-      AND ($5::text IS NULL OR t.transaction_type::text=$5)
-      AND ($6::uuid IS NULL OR t.destination_user_id=$6)
-  ) SELECT coalesce((SELECT jsonb_agg(to_jsonb(a)) FROM accounts a),'[]'::jsonb) accounts,
-    (SELECT to_jsonb(v) FROM volume v) transactions`,
-  [f.startInstant, f.nextDayInstant, previous, f.role, f.type, f.merchant]);
-  const data = result.rows[0];
+  const dashRollupUntil = f.merchant ? null : await ensureDashboardRollupConsistent(db);
+
+  const [accountsResult, volume] = await Promise.all([
+    db.query(
+      `SELECT role,
+         count(*) FILTER(WHERE created_at >= ($1::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh'))::int AS current,
+         count(*) FILTER(WHERE created_at >= ($3::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')
+           AND created_at < ($1::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh'))::int AS previous,
+         count(*)::int AS total
+       FROM users
+       WHERE role IN ('USER','MERCHANT') AND ($4='ALL' OR role=$4)
+         AND created_at < ($2::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')
+       GROUP BY role`,
+      [f.startInstant, f.nextDayInstant, previous, f.role],
+    ),
+    with42P01Fallback(
+      dashRollupUntil,
+      (cutoff) => queryGrowthVolume(db, f, previous, cutoff),
+      () => queryGrowthVolume(db, f, previous, null),
+    ),
+  ]);
+
   const percent = (current, prev) => prev === 0 ? null : (current - prev) / prev * 100;
-  data.accounts = (f.role === 'ALL' ? ['USER', 'MERCHANT'] : [f.role]).map(role => {
-    const r = data.accounts.find(a => a.role === role) || { role, current: 0, previous: 0, total: 0 };
+  const accounts = (f.role === 'ALL' ? ['USER', 'MERCHANT'] : [f.role]).map(role => {
+    const r = accountsResult.rows.find(a => a.role === role) || { role, current: 0, previous: 0, total: 0 };
     return { ...r, growth_percent: percent(r.current, r.previous) };
   });
-  data.transactions.count_growth_percent = percent(data.transactions.current_count, data.transactions.previous_count);
-  data.transactions.gross_growth_percent = percent(data.transactions.current_gross, data.transactions.previous_gross);
-  return { ...data, period: f.period, previous_period: { start: previous.toISOString(), end_exclusive: f.startIso } };
+  const transactions = {
+    ...volume,
+    count_growth_percent: percent(volume.current_count, volume.previous_count),
+    gross_growth_percent: percent(volume.current_gross, volume.previous_gross),
+  };
+  return { accounts, transactions, period: f.period, previous_period: { start: previous.toISOString(), end_exclusive: f.startIso } };
 }
 
 async function exportReport(input) {

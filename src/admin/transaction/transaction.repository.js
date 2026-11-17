@@ -1,5 +1,9 @@
 const pool = require("../../config/database");
 const { uuidv7 } = require("uuidv7");
+const {
+  ensureRollupConsistent,
+  computeHybridWindow,
+} = require("../dashboard/dashboardRollup");
 
 function buildFilterConditions({
   type,
@@ -120,6 +124,54 @@ function buildFilterConditions({
   return { whereClause, params };
 }
 
+function hasNonEmpty(value) {
+  return Boolean(value && String(value).trim() !== "");
+}
+
+function buildDirectCountQuery(filters) {
+  const { initiatedBy, keyword } = filters;
+  const needUsers = hasNonEmpty(keyword);
+  const needAudit = Boolean(initiatedBy && initiatedBy !== "ALL");
+  const { whereClause, params } = buildFilterConditions(filters);
+
+  const joins = [];
+  if (needUsers) {
+    joins.push("LEFT JOIN users su ON t.source_user_id = su.id");
+    joins.push("LEFT JOIN users du ON t.destination_user_id = du.id");
+  }
+  if (needAudit) {
+    joins.push(`LEFT JOIN (
+        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
+          ach.id,
+          ach.new_values->>'transaction_id' AS transaction_id
+        FROM admin_user_change_history ach
+        WHERE ach.new_values->>'transaction_id' IS NOT NULL
+          AND ach.action IN ('ADMIN_OP_P2P', 'ADMIN_OP_TOPUP', 'ADMIN_OP_WITHDRAW')
+        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
+      ) ach ON ach.transaction_id = t.id::TEXT`);
+  }
+
+  return {
+    query: `
+      SELECT COUNT(*)::INT AS total
+      FROM transactions t
+      ${joins.join("\n      ")}
+      WHERE ${whereClause}
+    `,
+    params,
+  };
+}
+
+function canUseRollupCount({ initiatedBy, anomaly, keyword, startDate, endDate }) {
+  return (
+    !hasNonEmpty(keyword) &&
+    (!initiatedBy || initiatedBy === "ALL") &&
+    (!anomaly || anomaly === "ALL") &&
+    Boolean(startDate) &&
+    Boolean(endDate)
+  );
+}
+
 const adminTransactionRepository = {
   async countTransactions({
     type,
@@ -130,7 +182,7 @@ const adminTransactionRepository = {
     startDate,
     endDate,
   }) {
-    const { whereClause, params } = buildFilterConditions({
+    const filters = {
       type,
       status,
       initiatedBy,
@@ -138,25 +190,70 @@ const adminTransactionRepository = {
       keyword,
       startDate,
       endDate,
-    });
+    };
 
-    const query = `
-      SELECT COUNT(*)::INT AS total
-      FROM transactions t
-      LEFT JOIN users su ON t.source_user_id = su.id
-      LEFT JOIN users du ON t.destination_user_id = du.id
-      LEFT JOIN (
-        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
-          ach.id,
-          ach.new_values->>'transaction_id' AS transaction_id
-        FROM admin_user_change_history ach
-        WHERE ach.new_values->>'transaction_id' IS NOT NULL
-          AND ach.action IN ('ADMIN_OP_P2P', 'ADMIN_OP_TOPUP', 'ADMIN_OP_WITHDRAW')
-        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
-      ) ach ON ach.transaction_id = t.id::TEXT
-      WHERE ${whereClause}
-    `;
+    if (canUseRollupCount(filters)) {
+      const rollupUntil = await ensureRollupConsistent(pool);
+      if (rollupUntil) {
+        const { useRollup, useTail, splitInstant } = computeHybridWindow(
+          startDate,
+          endDate,
+          rollupUntil,
+        );
+        const branches = [];
+        const params = [];
 
+        if (useRollup) {
+          const sIdx = `$${params.push(startDate)}`;
+          const eIdx = `$${params.push(splitInstant)}`;
+          const conds = [`bucket_hour >= ${sIdx}`, `bucket_hour < ${eIdx}`];
+          if (type && type !== "ALL") {
+            conds.push(`transaction_type = $${params.push(type)}`);
+          }
+          if (status && status !== "ALL") {
+            conds.push(`status = $${params.push(status)}`);
+          }
+          branches.push(`
+            SELECT COALESCE(SUM(tx_count), 0)::bigint AS cnt
+            FROM public.dashboard_tx_hourly
+            WHERE ${conds.join(" AND ")}
+          `);
+        }
+
+        if (useTail) {
+          const sIdx = `$${params.push(splitInstant)}`;
+          const eIdx = `$${params.push(endDate)}`;
+          const conds = [`t.created_at >= ${sIdx}`, `t.created_at < ${eIdx}`];
+          if (type && type !== "ALL") {
+            conds.push(`t.transaction_type = $${params.push(type)}`);
+          }
+          if (status && status !== "ALL") {
+            conds.push(`t.status = $${params.push(status)}`);
+          }
+          branches.push(`
+            SELECT COUNT(*)::bigint AS cnt
+            FROM public.transactions t
+            WHERE ${conds.join(" AND ")}
+          `);
+        }
+
+        if (branches.length === 0) return 0;
+
+        try {
+          const result = await pool.query(
+            `SELECT COALESCE(SUM(cnt), 0)::INT AS total FROM (${branches.join(" UNION ALL ")}) c`,
+            params,
+          );
+          return result.rows[0]?.total || 0;
+        } catch (err) {
+          if (!err || err.code !== "42P01") {
+            throw err;
+          }
+        }
+      }
+    }
+
+    const { query, params } = buildDirectCountQuery(filters);
     const result = await pool.query(query, params);
     return result.rows[0]?.total || 0;
   },
@@ -172,6 +269,8 @@ const adminTransactionRepository = {
     limit = 20,
     offset = 0,
   }) {
+    const needUsersInFilter = hasNonEmpty(keyword);
+    const needAuditInFilter = Boolean(initiatedBy && initiatedBy !== "ALL");
     const { whereClause, params } = buildFilterConditions({
       type,
       status,
@@ -188,48 +287,85 @@ const adminTransactionRepository = {
     queryParams.push(offset);
     const offsetIdx = queryParams.length;
 
+    const filterJoins = [];
+    if (needUsersInFilter) {
+      filterJoins.push("LEFT JOIN users su ON t.source_user_id = su.id");
+      filterJoins.push("LEFT JOIN users du ON t.destination_user_id = du.id");
+    }
+    if (needAuditInFilter) {
+      filterJoins.push(`LEFT JOIN (
+        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
+          ach.id,
+          ach.new_values->>'transaction_id' AS transaction_id
+        FROM admin_user_change_history ach
+        WHERE ach.new_values->>'transaction_id' IS NOT NULL
+          AND ach.action IN ('ADMIN_OP_P2P', 'ADMIN_OP_TOPUP', 'ADMIN_OP_WITHDRAW')
+        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
+      ) ach ON ach.transaction_id = t.id::TEXT`);
+    }
+
     const query = `
-      SELECT 
-        t.id,
-        t.transaction_type,
-        t.amount,
-        t.fee,
-        t.merchant_fee,
-        t.fee_rate_snapshot,
-        t.net_amount,
-        t.status,
-        t.description,
-        t.created_at,
-        t.source_user_id,
-        su.full_name AS source_user_name,
-        su.phone AS source_user_phone,
-        t.destination_user_id,
-        du.full_name AS destination_user_name,
-        du.phone AS destination_user_phone,
-        CASE 
-          WHEN ach.id IS NOT NULL THEN 'ADMIN' 
-          WHEN t.source_user_id IS NOT NULL THEN 'USER'
-          ELSE 'SYSTEM' 
-        END AS initiator_role,
-        au.id AS admin_id,
-        au.full_name AS admin_name
-      FROM transactions t
-      LEFT JOIN users su ON t.source_user_id = su.id
-      LEFT JOIN users du ON t.destination_user_id = du.id
-      LEFT JOIN (
+      WITH paged_tx AS (
+        SELECT
+          t.id,
+          t.transaction_type,
+          t.amount,
+          t.fee,
+          t.merchant_fee,
+          t.fee_rate_snapshot,
+          t.net_amount,
+          t.status,
+          t.description,
+          t.created_at,
+          t.source_user_id,
+          t.destination_user_id
+        FROM transactions t
+        ${filterJoins.join("\n        ")}
+        WHERE ${whereClause}
+        ORDER BY t.created_at DESC, t.id DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      ),
+      paged_audit AS (
         SELECT DISTINCT ON (ach.new_values->>'transaction_id')
           ach.id,
           ach.new_values->>'transaction_id' AS transaction_id,
           ach.admin_id
         FROM admin_user_change_history ach
-        WHERE ach.new_values->>'transaction_id' IS NOT NULL
+        WHERE (ach.new_values->>'transaction_id') IN (SELECT p.id::TEXT FROM paged_tx p)
+          AND (ach.new_values->>'transaction_id') IS NOT NULL
           AND ach.action IN ('ADMIN_OP_P2P', 'ADMIN_OP_TOPUP', 'ADMIN_OP_WITHDRAW')
         ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
-      ) ach ON ach.transaction_id = t.id::TEXT
-      LEFT JOIN users au ON ach.admin_id = au.id
-      WHERE ${whereClause}
-      ORDER BY t.created_at DESC, t.id DESC
-      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      )
+      SELECT
+        p.id,
+        p.transaction_type,
+        p.amount,
+        p.fee,
+        p.merchant_fee,
+        p.fee_rate_snapshot,
+        p.net_amount,
+        p.status,
+        p.description,
+        p.created_at,
+        p.source_user_id,
+        su.full_name AS source_user_name,
+        su.phone AS source_user_phone,
+        p.destination_user_id,
+        du.full_name AS destination_user_name,
+        du.phone AS destination_user_phone,
+        CASE
+          WHEN pa.id IS NOT NULL THEN 'ADMIN'
+          WHEN p.source_user_id IS NOT NULL THEN 'USER'
+          ELSE 'SYSTEM'
+        END AS initiator_role,
+        au.id AS admin_id,
+        au.full_name AS admin_name
+      FROM paged_tx p
+      LEFT JOIN users su ON p.source_user_id = su.id
+      LEFT JOIN users du ON p.destination_user_id = du.id
+      LEFT JOIN paged_audit pa ON pa.transaction_id = p.id::TEXT
+      LEFT JOIN users au ON pa.admin_id = au.id
+      ORDER BY p.created_at DESC, p.id DESC
     `;
 
     const result = await pool.query(query, queryParams);

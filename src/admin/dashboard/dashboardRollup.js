@@ -3,6 +3,7 @@ const pool = require("../../config/database");
 const DASHBOARD_ROLLUP_LOCK_KEY = 2026111601;
 
 let inFlightReconcile = null;
+let inFlightEnsure = null;
 
 /**
  * Đọc trạng thái mốc rollup_until và kiểm tra nhanh xem có dirty hour cần đối soát hay không.
@@ -145,12 +146,27 @@ async function reconcileDirtyHours(db = pool) {
  * Đảm bảo mọi giờ dirty đã được đối soát trước khi đọc Hybrid, trả về rollupUntil hiện tại.
  */
 async function ensureRollupConsistent(db = pool) {
-  const state = await getRollupState(db);
-  if (!state.hasDirty) {
-    return state.rollupUntil;
+  if (db === pool && inFlightEnsure) {
+    return inFlightEnsure;
   }
-  const result = await reconcileDirtyHours(db);
-  return result.rollupUntil;
+
+  const run = async () => {
+    const state = await getRollupState(db);
+    if (!state.hasDirty) {
+      return state.rollupUntil;
+    }
+    const result = await reconcileDirtyHours(db);
+    return result.rollupUntil;
+  };
+
+  if (db !== pool) {
+    return run();
+  }
+
+  inFlightEnsure = run().finally(() => {
+    inFlightEnsure = null;
+  });
+  return inFlightEnsure;
 }
 
 /**
@@ -158,7 +174,14 @@ async function ensureRollupConsistent(db = pool) {
  * Mỗi bước cuộn tối đa 7 ngày để giữ lock ngắn và an toàn nếu chạy lặp lại.
  */
 async function advanceRollupCutoff(db = pool) {
-  await reconcileDirtyHours(db);
+  try {
+    await reconcileDirtyHours(db);
+  } catch (err) {
+    if (err && err.code === "42P01") {
+      return { rollupUntil: null, rolledUpRows: 0, skippedMissingSchema: true };
+    }
+    throw err;
+  }
 
   const client = await db.connect();
   try {
@@ -270,6 +293,9 @@ async function advanceRollupCutoff(db = pool) {
     };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    if (err && err.code === "42P01") {
+      return { rollupUntil: null, rolledUpRows: 0, skippedMissingSchema: true };
+    }
     throw err;
   } finally {
     client.release();

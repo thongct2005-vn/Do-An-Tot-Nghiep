@@ -83,10 +83,29 @@ test('fee reporting SQL, authenticated API, growth and Excel', async t => {
         const token = jwt.generateAuthTokens({ id:user,role:'USER' }).accessToken;
         assert.equal((await fetch(`${url}/${endpoint}`, { headers:{Authorization:`Bearer ${token}`} })).status,403);
       }
-      for (const filter of ['start_date=bad','group_by=hour','merchant_id=bad','transaction_type=WITHDRAW','page=0','limit=101']) {
+      for (const filter of ['start_date=bad','group_by=hour','merchant_id=bad','transaction_type=WITHDRAW','scope=invalid','page=0','limit=101']) {
         assert.equal((await fetch(`${url}/overview?${filter}`, {headers})).status,400,filter);
       }
       assert.equal((await fetch(`${url}/overview?${new URLSearchParams(range)}`, {headers})).status,200);
+
+      const kpiResp = await fetch(`${url}/overview?${new URLSearchParams({ ...range, merchant_id: m1, scope: 'kpi' })}`, {headers});
+      assert.equal(kpiResp.status, 200);
+      const kpiBody = (await kpiResp.json()).data;
+      assert.deepEqual(kpiBody.overview, { revenue: 9000 });
+      assert.equal(kpiBody.merchants, undefined);
+      assert.equal(kpiBody.timeseries, undefined);
+      assert.equal(kpiBody.gateway, undefined);
+
+      const merchResp = await fetch(`${url}/overview?${new URLSearchParams({ ...range, scope: 'merchants', limit: '1', page: '2' })}`, {headers});
+      assert.equal(merchResp.status, 200);
+      const merchBody = (await merchResp.json()).data;
+      assert.equal(merchBody.merchants.length, 1);
+      assert.equal(merchBody.pagination.page, 2);
+      assert.equal(merchBody.pagination.limit, 1);
+      assert.ok(merchBody.pagination.total >= 2);
+      assert.equal(merchBody.overview, undefined);
+      assert.equal(merchBody.timeseries, undefined);
+      assert.equal(merchBody.gateway, undefined);
     });
     await t.test('more than 100 merchants aggregate in DB; pagination does not truncate Excel', async () => {
       await pool.query("INSERT INTO users(id,role,full_name,created_at) SELECT gen_random_uuid(),'MERCHANT','Large '||n,'2026-10-31' FROM generate_series(1,105) n");

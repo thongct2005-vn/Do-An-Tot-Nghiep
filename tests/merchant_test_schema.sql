@@ -66,12 +66,6 @@ CREATE TABLE system_configs (
   key varchar PRIMARY KEY, value jsonb NOT NULL, description text,
   updated_at timestamptz NOT NULL DEFAULT NOW(), updated_by uuid REFERENCES users(id)
 );
-CREATE TABLE transaction_limit_policies (
-  id serial PRIMARY KEY, role varchar NOT NULL, transaction_type varchar NOT NULL,
-  min_amount bigint NOT NULL, max_amount bigint NOT NULL, daily_limit bigint,
-  updated_at timestamptz NOT NULL DEFAULT NOW(), updated_by uuid REFERENCES users(id),
-  UNIQUE (role, transaction_type)
-);
 CREATE TABLE user_transaction_limits (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   transaction_type varchar NOT NULL, max_amount bigint, daily_limit bigint,
@@ -190,15 +184,5 @@ INSERT INTO system_configs (key, value, description) VALUES
   ('POSTPAID_REMINDER_CONFIG', '{"enabled":true,"reminder_day":1,"reminder_hour":8,"templates":{"PAST_DUE":{"title":"Ví trả sau đang quá hạn thanh toán","body":"Ví trả sau của bạn còn dư nợ {{used_amount}} ({{overdue_detail}}). Vui lòng thanh toán để mở lại chi tiêu."},"BILLED":{"title":"Nhắc thanh toán dư nợ Ví trả sau","body":"Bạn còn dư nợ {{statement_debt}}{{cycle_part}} cần thanh toán{{due_part}}{{unbilled_part}}."},"UNBILLED":{"title":"Thông báo dư nợ Ví trả sau","body":"Ví trả sau của bạn hiện còn dư nợ {{used_amount}} chưa thanh toán. Bạn có thể thanh toán bất kỳ lúc nào trên ứng dụng."}}}'::jsonb, 'Default postpaid monthly debt reminder config'),
   ('POSTPAID_STATUS', '{"INACTIVE":"Chưa kích hoạt","ACTIVE":"Đang hoạt động","PAST_DUE":"Quá hạn thanh toán","FROZEN":"Đang tạm khóa"}'::jsonb, 'Postpaid wallet statuses'),
   ('POSTPAID_ENTRY_ACTIONS', '{"PURCHASE":"Thanh toán QR bằng Ví trả sau","REPAY_PRINCIPAL":"Trả nợ gốc Ví trả sau","REPAY_SERVICE_FEE":"Thanh toán phí dịch vụ Ví trả sau","REPAY_LATE_FEE":"Thanh toán phí trễ hạn","SERVICE_FEE":"Phí dịch vụ Ví trả sau hàng tháng","LATE_FEE":"Phí trễ hạn kỳ sao kê","REFUND":"Hoàn tiền giao dịch Ví trả sau","STATEMENT_CLOSE":"Chốt sao kê kỳ","LIMIT_ADJUST":"Điều chỉnh hạn mức"}'::jsonb, 'Postpaid entry action types'),
+  ('TRANSACTION_LIMIT_CONFIG', '{"MERCHANT":{"QR_PAYMENT":{"min_amount":1000,"max_amount":50000000,"daily_limit":null},"SANDBOX_TOPUP":{"min_amount":1000,"max_amount":50000000,"daily_limit":null},"TOPUP":{"min_amount":10000,"max_amount":50000000,"daily_limit":50000000},"TRANSFER":{"min_amount":1000,"max_amount":50000000,"daily_limit":50000000},"WITHDRAW":{"min_amount":10000,"max_amount":200000000,"daily_limit":500000000}},"USER":{"QR_PAYMENT":{"min_amount":1000,"max_amount":50000000,"daily_limit":null},"SANDBOX_TOPUP":{"min_amount":1000,"max_amount":50000000,"daily_limit":null},"TOPUP":{"min_amount":10000,"max_amount":50000000,"daily_limit":50000000},"TRANSFER":{"min_amount":1000,"max_amount":50000000,"daily_limit":50000000},"WITHDRAW":{"min_amount":10000,"max_amount":30000000,"daily_limit":30000000}}}'::jsonb, 'Default system transaction limit config'),
   ('WALLET_CAPACITY_CONFIG', '{"USER":{"min_capacity":10000000,"default_capacity":100000000,"max_capacity":200000000},"MERCHANT":{"min_capacity":50000000,"default_capacity":2000000000,"max_capacity":5000000000}}'::jsonb, 'Default wallet capacity config');
-INSERT INTO transaction_limit_policies (role, transaction_type, min_amount, max_amount, daily_limit) VALUES
-  ('MERCHANT', 'TOPUP', 10000, 50000000, 50000000),
-  ('MERCHANT', 'WITHDRAW', 10000, 200000000, 500000000),
-  ('MERCHANT', 'TRANSFER', 1000, 50000000, 50000000),
-  ('MERCHANT', 'QR_PAYMENT', 1000, 50000000, NULL),
-  ('MERCHANT', 'SANDBOX_TOPUP', 1000, 50000000, NULL),
-  ('USER', 'TOPUP', 10000, 50000000, 50000000),
-  ('USER', 'WITHDRAW', 10000, 30000000, 30000000),
-  ('USER', 'TRANSFER', 1000, 50000000, 50000000),
-  ('USER', 'QR_PAYMENT', 1000, 50000000, NULL),
-  ('USER', 'SANDBOX_TOPUP', 1000, 50000000, NULL);

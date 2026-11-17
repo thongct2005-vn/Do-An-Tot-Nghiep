@@ -6,46 +6,16 @@ const { httpError } = require("../httpError");
 // Thời gian giữ cache trong RAM (30 giây) để tránh query DB lặp lại mỗi giao dịch
 const CACHE_TTL_MS = 30_000;
 
-let policiesCache = { data: null, expiresAt: 0 };
 let configsCache = { data: null, expiresAt: 0 };
 
 /**
- * Xóa cache hạn mức & cấu hình (gọi sau khi admin cập nhật DB để áp dụng ngay).
+ * Xóa cache cấu hình & hạn mức (gọi sau khi admin cập nhật DB để áp dụng ngay).
  */
 function invalidateLimitsCache() {
-  policiesCache = { data: null, expiresAt: 0 };
   configsCache = { data: null, expiresAt: 0 };
 }
 
 // --- Đọc & cache dữ liệu từ DB ---
-
-/**
- * Nạp toàn bộ bảng `transaction_limit_policies` từ DB (cache 30s).
- * Không dùng fallback; lỗi DB sẽ ném ra trực tiếp.
- */
-async function loadPolicies(db = pool) {
-  const now = Date.now();
-  if (policiesCache.data && now < policiesCache.expiresAt) {
-    return policiesCache.data;
-  }
-
-  const res = await db.query(
-    `SELECT role, transaction_type, min_amount, max_amount, daily_limit
-       FROM transaction_limit_policies`,
-  );
-  const map = new Map();
-  for (const row of res.rows) {
-    map.set(`${row.role}:${row.transaction_type}`, {
-      min: Number(row.min_amount),
-      max: Number(row.max_amount),
-      dailyLimit: row.daily_limit == null ? null : Number(row.daily_limit),
-    });
-  }
-  if (map.size > 0) {
-    policiesCache = { data: map, expiresAt: now + CACHE_TTL_MS };
-  }
-  return map;
-}
 
 /**
  * Nạp toàn bộ bảng `system_configs` từ DB (cache 30s).
@@ -76,6 +46,7 @@ const SYSTEM_CONFIG_LABELS = {
   RISK_THRESHOLDS: "cấu hình ngưỡng kiểm tra rủi ro",
   DAILY_LIMIT_TIMEZONE: "múi giờ tính hạn mức ngày",
   WALLET_CAPACITY_CONFIG: "cấu hình sức chứa tối đa của ví",
+  TRANSACTION_LIMIT_CONFIG: "cấu hình hạn mức giao dịch hệ thống",
   POSTPAID_CONFIG: "cấu hình Ví trả sau",
   POSTPAID_REMINDER_CONFIG: "cấu hình nhắc nợ Ví trả sau",
   POSTPAID_STATUS: "danh mục trạng thái Ví trả sau",
@@ -88,6 +59,7 @@ const TRANSACTION_TYPE_LABELS = {
   WITHDRAW: "rút tiền",
   PAYMENT: "thanh toán",
   QR_PAYMENT: "thanh toán QR",
+  SANDBOX_TOPUP: "nạp tiền thử nghiệm",
 };
 
 const RISK_FLOW_LABELS = {
@@ -135,8 +107,8 @@ async function getPositiveIntConfig(key, db = pool) {
 }
 
 /**
- * Lấy chính sách hạn mức của hệ thống cho cặp `(role, transactionType)` từ DB.
- * Ném lỗi 500 nếu DB chưa cấu hình cặp này.
+ * Lấy chính sách hạn mức của hệ thống cho cặp `(role, transactionType)` từ `system_configs["TRANSACTION_LIMIT_CONFIG"]`.
+ * Ném lỗi 500 nếu DB chưa cấu hình hoặc dữ liệu không hợp lệ.
  */
 async function getTransactionPolicy(role, transactionType, db = pool) {
   const r = role === "MERCHANT" ? "MERCHANT" : "USER";
@@ -144,17 +116,46 @@ async function getTransactionPolicy(role, transactionType, db = pool) {
   if (!t) {
     throw httpError(500, "Thiếu loại giao dịch để tra cứu hạn mức");
   }
-  const policies = await loadPolicies(db);
-  const policy = policies.get(`${r}:${t}`);
-  if (!policy || !Number.isFinite(policy.min) || !Number.isFinite(policy.max)) {
-    const roleLabel = r === "MERCHANT" ? "đối tác" : "người dùng";
-    const txLabel = TRANSACTION_TYPE_LABELS[t] || "tương ứng";
+
+  const cfg = await getSystemConfig("TRANSACTION_LIMIT_CONFIG", db);
+  const rolePolicies =
+    cfg && typeof cfg === "object" && !Array.isArray(cfg) ? cfg[r] : null;
+  const rawPolicy =
+    rolePolicies && typeof rolePolicies === "object" && !Array.isArray(rolePolicies)
+      ? rolePolicies[t]
+      : null;
+
+  const roleLabel = r === "MERCHANT" ? "đối tác" : "người dùng";
+  const txLabel = TRANSACTION_TYPE_LABELS[t] || "tương ứng";
+
+  if (!rawPolicy || typeof rawPolicy !== "object" || Array.isArray(rawPolicy)) {
     throw httpError(
       500,
       `Hệ thống chưa thiết lập hạn mức giao dịch ${txLabel} cho ${roleLabel}`,
     );
   }
-  return policy;
+
+  const min = Number(rawPolicy.min_amount);
+  const max = Number(rawPolicy.max_amount);
+  const dailyLimit =
+    rawPolicy.daily_limit === null || rawPolicy.daily_limit === undefined
+      ? null
+      : Number(rawPolicy.daily_limit);
+
+  if (
+    !Number.isSafeInteger(min) ||
+    !Number.isSafeInteger(max) ||
+    min <= 0 ||
+    max < min ||
+    (dailyLimit !== null && (!Number.isSafeInteger(dailyLimit) || dailyLimit <= 0))
+  ) {
+    throw httpError(
+      500,
+      `Cấu hình hạn mức giao dịch ${txLabel} cho ${roleLabel} không hợp lệ`,
+    );
+  }
+
+  return { min, max, dailyLimit };
 }
 
 /**

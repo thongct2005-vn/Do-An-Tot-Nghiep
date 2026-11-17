@@ -143,7 +143,7 @@ async function getDailyUsage(db, userId, role) {
 
 /**
  * Lấy hạn mức hiệu lực mỗi lần (min/max) và hạn mức ngày (limit/used/remaining)
- * từ `transaction_limit_policies` kết hợp `user_transaction_limits`.
+ * từ `system_configs["TRANSACTION_LIMIT_CONFIG"]` kết hợp `user_transaction_limits`.
  */
 async function getTransactionLimitsSummary(db, { userId = null, role = "USER" } = {}) {
   const normalizedRole = role === "MERCHANT" ? "MERCHANT" : "USER";

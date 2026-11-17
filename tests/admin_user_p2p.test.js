@@ -407,23 +407,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       return { rows, rowCount: rows.length };
     }
 
-    // 17. Transaction limit policies & system configs (limitsDb / fee.service)
-    if (norm.includes("FROM transaction_limit_policies")) {
-      return {
-        rows: [
-          { role: "USER", transaction_type: "TOPUP", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
-          { role: "USER", transaction_type: "WITHDRAW", min_amount: 10000, max_amount: 30000000, daily_limit: 30000000 },
-          { role: "USER", transaction_type: "TRANSFER", min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
-          { role: "USER", transaction_type: "QR_PAYMENT", min_amount: 1000, max_amount: 50000000, daily_limit: null },
-          { role: "MERCHANT", transaction_type: "TOPUP", min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
-          { role: "MERCHANT", transaction_type: "WITHDRAW", min_amount: 10000, max_amount: 200000000, daily_limit: 500000000 },
-          { role: "MERCHANT", transaction_type: "TRANSFER", min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
-          { role: "MERCHANT", transaction_type: "QR_PAYMENT", min_amount: 1000, max_amount: 50000000, daily_limit: null },
-        ],
-        rowCount: 8,
-      };
-    }
-
+    // 17. System configs & custom user transaction limits (limitsDb / fee.service)
     if (norm.includes("FROM user_transaction_limits")) {
       return { rows: [], rowCount: 0 };
     }
@@ -473,6 +457,23 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
           value: {
             USER: { min_capacity: 1000000, default_capacity: 100000000, max_capacity: 1000000000 },
             MERCHANT: { min_capacity: 1000000, default_capacity: 100000000, max_capacity: 1000000000 },
+          },
+        },
+        {
+          key: "TRANSACTION_LIMIT_CONFIG",
+          value: {
+            USER: {
+              TOPUP: { min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+              WITHDRAW: { min_amount: 10000, max_amount: 30000000, daily_limit: 30000000 },
+              TRANSFER: { min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
+              QR_PAYMENT: { min_amount: 1000, max_amount: 50000000, daily_limit: null },
+            },
+            MERCHANT: {
+              TOPUP: { min_amount: 10000, max_amount: 50000000, daily_limit: 50000000 },
+              WITHDRAW: { min_amount: 10000, max_amount: 200000000, daily_limit: 500000000 },
+              TRANSFER: { min_amount: 1000, max_amount: 50000000, daily_limit: 50000000 },
+              QR_PAYMENT: { min_amount: 1000, max_amount: 50000000, daily_limit: null },
+            },
           },
         },
       ];

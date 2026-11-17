@@ -877,7 +877,7 @@ const adminUserRepository = {
     const result = await pool.query(
       `
       SELECT idempotency_key, actor_id, actor_type, request_path, status,
-             response_body, request_hash, response_status_code, create_at
+             response_body, request_hash, response_status_code, created_at
       FROM idempotency_keys
       WHERE idempotency_key = $1
       `,
@@ -918,7 +918,7 @@ const adminUserRepository = {
       `
       UPDATE idempotency_keys
       SET status = 'PENDING',
-          create_at = NOW(),
+          created_at = NOW(),
           response_body = NULL,
           response_status_code = NULL
       WHERE idempotency_key = $1
@@ -927,7 +927,7 @@ const adminUserRepository = {
         AND request_hash = $4
         AND (
           status = 'FAILED'
-          OR (status = 'PENDING' AND create_at < NOW() - ($5::int * INTERVAL '1 second'))
+          OR (status = 'PENDING' AND created_at < NOW() - ($5::int * INTERVAL '1 second'))
         )
       RETURNING idempotency_key
       `,

@@ -85,11 +85,11 @@ const TransactionRepository = {
   async reclaimIdempotencyKey({ idempotencyKey, staleSeconds = 60 }) {
     const result = await pool.query(
       `UPDATE idempotency_keys
-          SET status = 'PENDING', create_at = NOW(),
+          SET status = 'PENDING', created_at = NOW(),
               response_body = NULL, response_status_code = NULL
         WHERE idempotency_key = $1
           AND (status = 'FAILED'
-               OR (status = 'PENDING' AND create_at < NOW() - ($2::int * INTERVAL '1 second')))
+               OR (status = 'PENDING' AND created_at < NOW() - ($2::int * INTERVAL '1 second')))
         RETURNING idempotency_key`,
       [idempotencyKey, staleSeconds],
     );

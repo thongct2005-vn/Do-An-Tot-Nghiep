@@ -51,7 +51,7 @@ CREATE TABLE audit_outbox (
 CREATE TABLE idempotency_keys (
   idempotency_key varchar PRIMARY KEY, actor_id uuid, actor_type varchar, request_path text, request_hash text,
   status varchar DEFAULT 'PENDING', response_body jsonb, response_status_code integer,
-  create_at timestamptz DEFAULT NOW(),
+  created_at timestamptz DEFAULT NOW(),
   expires_at timestamptz DEFAULT NOW() + interval '7 days'
 );
 CREATE TABLE webhook_deliveries (

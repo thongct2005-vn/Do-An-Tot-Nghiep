@@ -322,15 +322,12 @@ function calculateIntegrityAndAnomalies(t) {
 
 /**
  * Suy dẫn số tiền thực nhận về ví đích (hoặc ngân hàng nhận khi WITHDRAW)
- * khi bản ghi lịch sử chưa lưu sẵn cột net_amount trong DB.
+ * trực tiếp từ amount và merchant_fee (cột net_amount đã bỏ khỏi DB).
  */
-function resolveAdminNetAmount({ transactionType, amount, merchantFee, rawNetAmount }) {
-  if (rawNetAmount !== null && rawNetAmount !== undefined) {
-    return Number(rawNetAmount);
-  }
+function resolveAdminNetAmount({ transactionType, amount, merchantFee }) {
   const type = String(transactionType || "").toUpperCase();
   if (type === "PAYMENT" || type === "TRANSFER") {
-    return amount - merchantFee;
+    return Math.max(0, amount - merchantFee);
   }
   return amount;
 }
@@ -412,7 +409,6 @@ const adminTransactionService = {
           transactionType: t.transaction_type,
           amount,
           merchantFee,
-          rawNetAmount: t.net_amount,
         }),
         status: t.status,
         description: t.description || "",
@@ -596,7 +592,6 @@ const adminTransactionService = {
         transactionType: t.transaction_type,
         amount,
         merchantFee,
-        rawNetAmount: t.net_amount,
       }),
       description: t.description || "",
       idempotency_key: t.idempotency_key,

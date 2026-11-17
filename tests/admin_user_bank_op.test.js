@@ -289,7 +289,10 @@ describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Sui
             t.status === "SUCCESS" &&
             allowedTypes.includes(t.transaction_type)
         )
-        .reduce((sum, t) => sum + Number(t.amount || 0) + Number(t.fee || 0), 0);
+        .reduce(
+          (sum, t) => sum + Number(t.amount || 0) + Number(t.user_fee ?? t.fee ?? 0),
+          0,
+        );
       return {
         rows: [{ daily_used: used }],
         rowCount: 1,
@@ -327,7 +330,7 @@ describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Sui
         source_balance_before: Number(sourceBefore),
         source_balance_after: Number(sourceAfter),
         amount: Number(amount),
-        fee: Number(fee || 0),
+        user_fee: Number(fee || 0),
         idempotency_key: idempotencyKey,
         status: "SUCCESS",
         description: desc,

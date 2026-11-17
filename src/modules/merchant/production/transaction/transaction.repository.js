@@ -211,13 +211,10 @@ const merchantTransactionRepository = {
         END AS destination_display_phone,
 
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END AS merchant_fee,
         t.fee_rate_snapshot,
-        COALESCE(
-          t.net_amount,
-          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
-        ) AS net_amount,
+        CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -376,13 +373,10 @@ const merchantTransactionRepository = {
           ELSE du.phone
         END AS destination_display_phone,
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END AS merchant_fee,
         t.fee_rate_snapshot,
-        COALESCE(
-          t.net_amount,
-          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
-        ) AS net_amount,
+        CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -447,13 +441,10 @@ const merchantTransactionRepository = {
         t.transaction_type,
         t.status,
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END AS merchant_fee,
         t.fee_rate_snapshot,
-        COALESCE(
-          t.net_amount,
-          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
-        ) AS net_amount,
+        CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END AS net_amount,
         t.description,
         t.created_at,
         t.completed_at,
@@ -531,9 +522,9 @@ const merchantTransactionRepository = {
       `
      SELECT
     COALESCE(SUM(CASE
-      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
-      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
-      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + fee
+      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + user_fee
+      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + user_fee
+      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + user_fee
       ELSE 0
     END), 0) AS total_expense,
     COALESCE(SUM(CASE

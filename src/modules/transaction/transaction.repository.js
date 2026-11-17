@@ -316,10 +316,10 @@ const TransactionRepository = {
       `INSERT INTO transactions (
         transaction_type, source_user_id, source_balance_before, source_balance_after,
         destination_user_id, dest_balance_before, dest_balance_after,
-        amount, fee, merchant_fee, fee_rate_snapshot, net_amount,
+        amount, user_fee, merchant_fee, fee_rate_snapshot,
         description, idempotency_key, status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
       RETURNING id, status, created_at`,
       [
         transactionType,
@@ -333,7 +333,6 @@ const TransactionRepository = {
         effectiveFeeNum,
         merchantFeeNum,
         serializeFeeRateSnapshot(txFeeRateSnapshot),
-        netAmount,
         description,
         idempotencyKey,
         status,
@@ -552,10 +551,10 @@ const TransactionRepository = {
       const insertResult = await client.query(
         `INSERT INTO transactions (
           transaction_type, source_user_id, source_balance_before, source_balance_after,
-          amount, fee, merchant_fee, fee_rate_snapshot, net_amount,
+          amount, user_fee, merchant_fee, fee_rate_snapshot,
           idempotency_key, status, linked_bank_account_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 0, $7::jsonb, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, 0, $7::jsonb, $8, $9, $10)
         RETURNING id, status, created_at`,
         [
           transactionType,
@@ -565,7 +564,6 @@ const TransactionRepository = {
           amount,
           computedFeeNum,
           serializeFeeRateSnapshot(feeSnapshot),
-          amountNum,
           idempotencyKey,
           status,
           linkedBankAccountId,
@@ -890,13 +888,10 @@ const TransactionRepository = {
         END AS destination_display_phone,
 
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END::bigint AS merchant_fee,
         t.fee_rate_snapshot,
-        COALESCE(
-          t.net_amount,
-          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
-        )::bigint AS net_amount,
+        CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END::bigint AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -1104,13 +1099,10 @@ const TransactionRepository = {
           ELSE du.phone
         END AS destination_display_phone,
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         CASE WHEN t.destination_user_id = $1 THEN t.merchant_fee ELSE 0 END::bigint AS merchant_fee,
         t.fee_rate_snapshot,
-        COALESCE(
-          t.net_amount,
-          CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END
-        )::bigint AS net_amount,
+        CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END::bigint AS net_amount,
         t.description,
         t.status,
         t.created_at,
@@ -1177,9 +1169,9 @@ const TransactionRepository = {
       `
      SELECT
     COALESCE(SUM(CASE
-      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + fee
-      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + fee
-      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + fee
+      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + user_fee
+      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + user_fee
+      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + user_fee
       ELSE 0
     END), 0) AS total_expense,
     COALESCE(SUM(CASE

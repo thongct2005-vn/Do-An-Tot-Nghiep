@@ -609,7 +609,7 @@ const merchantTransactionService = {
     const isBankType = type === "TOPUP" || type === "WITHDRAW";
     const amountNum = Number(row.amount);
     const merchantFeeNum = Number(row.merchant_fee || 0);
-    const fallbackNetAmount =
+    const computedNetAmount =
       row.direction === "IN" ? Math.max(0, amountNum - merchantFeeNum) : amountNum;
 
     const detail = {
@@ -625,7 +625,7 @@ const merchantTransactionService = {
       net_amount:
         row.net_amount !== null && row.net_amount !== undefined
           ? Number(row.net_amount)
-          : fallbackNetAmount,
+          : computedNetAmount,
       description: row.description,
       created_at: row.created_at,
       completed_at: row.completed_at,

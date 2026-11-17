@@ -64,14 +64,14 @@ async function getDailyUsedByBuckets(db, userId) {
   const timezone = await getRequiredDailyLimitTimezone(db);
   const result = await db.query(
     `SELECT
-       COALESCE(SUM(amount + fee) FILTER (
+       COALESCE(SUM(amount + user_fee) FILTER (
          WHERE transaction_type IN ('TRANSFER', 'PAYMENT')
            AND (transaction_type <> 'PAYMENT' OR destination_user_id IS NOT NULL)
        ), 0)::BIGINT AS transfer_used,
-       COALESCE(SUM(amount + fee) FILTER (
+       COALESCE(SUM(amount + user_fee) FILTER (
          WHERE transaction_type = 'TOPUP'
        ), 0)::BIGINT AS topup_used,
-       COALESCE(SUM(amount + fee) FILTER (
+       COALESCE(SUM(amount + user_fee) FILTER (
          WHERE transaction_type = 'WITHDRAW'
        ), 0)::BIGINT AS withdraw_used
      FROM transactions
@@ -94,7 +94,7 @@ async function getDailyUsed(db, userId, type) {
   const timezone = await getRequiredDailyLimitTimezone(db);
   const types = BUCKET_TYPES[toBucket(type)].map((t) => `'${t}'`).join(", ");
   const result = await db.query(
-    `SELECT COALESCE(SUM(amount + fee), 0)::BIGINT AS daily_used
+    `SELECT COALESCE(SUM(amount + user_fee), 0)::BIGINT AS daily_used
        FROM transactions
       WHERE source_user_id = $1
         AND transaction_type IN (${types})

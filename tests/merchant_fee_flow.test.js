@@ -162,7 +162,7 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
       assert.equal(results.find(r => r.status === 'rejected').reason.statusCode, 409);
       const saved = await row(p.id);
       const recorded = (await pool.query('SELECT * FROM transactions WHERE id=$1', [saved.transaction_id])).rows[0];
-      assert.equal(recorded.merchant_fee, '6000'); assert.equal(recorded.net_amount, '494000');
+      assert.equal(recorded.merchant_fee, '6000'); assert.equal(Number(recorded.amount) - Number(recorded.merchant_fee), 494000);
       assert.deepEqual(recorded.fee_rate_snapshot, saved.merchant_fee_rule_snapshot);
       const after = await balances();
       const delta = id => Number(after.find(r => r.id === id).balance) - Number(before.find(r => r.id === id).balance);
@@ -187,7 +187,7 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
       await pool.query("UPDATE system_configs SET value=jsonb_set(value,'{rate_bps}','100') WHERE key='USER_FEE_CONFIG'"); limits.invalidateLimitsCache();
       const key = randomUUID(); const result = await direct(key);
       const recorded = (await pool.query('SELECT * FROM transactions WHERE id=$1', [result.transactionId])).rows[0];
-      assert.equal(recorded.merchant_fee, '6000'); assert.equal(recorded.fee, '5000');
+      assert.equal(recorded.merchant_fee, '6000'); assert.equal(recorded.user_fee, '5000');
       assert.equal(recorded.fee_rate_snapshot.pricing_model, 'MERCHANT_INVOICE_BOUNDARY_V1');
       const rows = (await pool.query('SELECT fee_type,amount FROM fee_ledger_entries WHERE transaction_id=$1 ORDER BY fee_type', [result.transactionId])).rows;
       assert.deepEqual(rows, [{ fee_type: 'QR_FEE', amount: '6000' }, { fee_type: 'USER_FEE', amount: '5000' }]);
@@ -199,7 +199,8 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
       await setConfig({ ...baseline, tiers: [], rate_bps: 0, min_fee: 0 });
       const p = await order(); await settle(p);
       const saved = await row(p.id);
-      assert.equal((await pool.query('SELECT merchant_fee,net_amount FROM transactions WHERE id=$1', [saved.transaction_id])).rows[0].net_amount, '500000');
+      const zeroFeeRow = (await pool.query('SELECT amount, merchant_fee FROM transactions WHERE id=$1', [saved.transaction_id])).rows[0];
+      assert.equal(Number(zeroFeeRow.amount) - Number(zeroFeeRow.merchant_fee), 500000);
       assert.equal((await pool.query('SELECT count(*)::int n FROM fee_ledger_entries WHERE transaction_id=$1', [saved.transaction_id])).rows[0].n, 0);
       await setConfig(baseline);
     });

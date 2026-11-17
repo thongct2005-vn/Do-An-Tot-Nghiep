@@ -1275,10 +1275,10 @@ const postpaidRepository = {
            transaction_type,
            source_user_id, source_balance_before, source_balance_after,
            destination_user_id, dest_balance_before, dest_balance_after,
-           amount, fee, merchant_fee, fee_rate_snapshot, net_amount,
+           amount, user_fee, merchant_fee, fee_rate_snapshot,
            description, idempotency_key, status
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10::jsonb, $11, $12, $13, 'SUCCESS')
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10::jsonb, $11, $12, 'SUCCESS')
          RETURNING id, status, created_at`,
         [
           "PAYMENT",
@@ -1291,7 +1291,6 @@ const postpaidRepository = {
           amountNum,
           merchantFeeNum,
           serializeFeeRateSnapshot(merchantFeeDetails?.fee_rate_snapshot),
-          netAmount,
           description,
           idempotencyKey,
         ],
@@ -1542,10 +1541,10 @@ const postpaidRepository = {
            transaction_type,
            source_user_id, source_balance_before, source_balance_after,
            destination_user_id, dest_balance_before, dest_balance_after,
-           amount, fee, merchant_fee, fee_rate_snapshot, net_amount,
+           amount, user_fee, merchant_fee, fee_rate_snapshot,
            description, idempotency_key, status
          )
-         VALUES ('PAYMENT', $1, $2, $3, $4, $5, $6, $7, $8, 0, $9::jsonb, $10, $11, $12, 'SUCCESS')
+         VALUES ('PAYMENT', $1, $2, $3, $4, $5, $6, $7, $8, 0, $9::jsonb, $10, $11, 'SUCCESS')
          RETURNING id, status, created_at`,
         [
           userId,
@@ -1565,7 +1564,6 @@ const postpaidRepository = {
                 }
               : null,
           ),
-          hasPrincipal ? paidPrincipal : paidFeeTotal,
           description,
           idempotencyKey,
         ],
@@ -1917,9 +1915,9 @@ const postpaidRepository = {
              transaction_type,
              source_user_id, source_balance_before, source_balance_after,
              destination_user_id, dest_balance_before, dest_balance_after,
-             amount, fee, merchant_fee, net_amount, description, idempotency_key, status
+             amount, user_fee, merchant_fee, description, idempotency_key, status
            )
-           VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $7, $8, $9, 'SUCCESS')
+           VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, 'SUCCESS')
            RETURNING id`,
           [
             merchantId,
@@ -1952,9 +1950,9 @@ const postpaidRepository = {
              transaction_type,
              source_user_id, source_balance_before, source_balance_after,
              destination_user_id, dest_balance_before, dest_balance_after,
-             amount, fee, merchant_fee, net_amount, description, idempotency_key, status
+             amount, user_fee, merchant_fee, description, idempotency_key, status
            )
-           VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $7, $8, $9, 'SUCCESS')
+           VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, 'SUCCESS')
            RETURNING id`,
           [
             merchantId,

@@ -80,8 +80,8 @@ CREATE TABLE transactions (
   transaction_type transaction_type_enum NOT NULL,
   source_user_id uuid REFERENCES users(id), source_balance_before bigint, source_balance_after bigint,
   destination_user_id uuid REFERENCES users(id), dest_balance_before bigint, dest_balance_after bigint,
-  amount bigint NOT NULL, fee bigint NOT NULL DEFAULT 0, merchant_fee bigint NOT NULL DEFAULT 0,
-  fee_rate_snapshot jsonb, net_amount bigint,
+  amount bigint NOT NULL, user_fee bigint NOT NULL DEFAULT 0, merchant_fee bigint NOT NULL DEFAULT 0,
+  fee_rate_snapshot jsonb,
   status varchar NOT NULL DEFAULT 'PENDING', description text, idempotency_key varchar,
   created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at timestamptz DEFAULT NOW(),
   linked_bank_account_id uuid REFERENCES linked_bank_accounts(id)

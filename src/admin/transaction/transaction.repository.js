@@ -46,14 +46,14 @@ function buildFilterConditions({
              AND t.source_balance_after IS NOT NULL 
              AND t.dest_balance_before IS NOT NULL 
              AND t.dest_balance_after IS NOT NULL 
-             AND ((t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after) 
+             AND ((t.source_balance_before - t.amount - COALESCE(t.user_fee, 0) != t.source_balance_after) 
                   OR (t.dest_balance_before + t.amount - COALESCE(t.merchant_fee, 0) != t.dest_balance_after)))
             OR
             (t.transaction_type = 'PAYMENT'
              AND t.destination_user_id IS NULL
              AND t.source_balance_before IS NOT NULL
              AND t.source_balance_after IS NOT NULL
-             AND (t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after))
+             AND (t.source_balance_before - t.amount - COALESCE(t.user_fee, 0) != t.source_balance_after))
             OR
             (t.transaction_type = 'TOPUP' 
              AND t.source_balance_before IS NOT NULL 
@@ -63,7 +63,7 @@ function buildFilterConditions({
             (t.transaction_type = 'WITHDRAW' 
              AND t.source_balance_before IS NOT NULL 
              AND t.source_balance_after IS NOT NULL 
-             AND (t.source_balance_before - t.amount - COALESCE(t.fee, 0) != t.source_balance_after))
+             AND (t.source_balance_before - t.amount - COALESCE(t.user_fee, 0) != t.source_balance_after))
           )
         )`);
         break;
@@ -310,10 +310,9 @@ const adminTransactionRepository = {
           t.id,
           t.transaction_type,
           t.amount,
-          t.fee,
+          t.user_fee AS fee,
           t.merchant_fee,
           t.fee_rate_snapshot,
-          t.net_amount,
           t.status,
           t.description,
           t.created_at,
@@ -343,7 +342,6 @@ const adminTransactionRepository = {
         p.fee,
         p.merchant_fee,
         p.fee_rate_snapshot,
-        p.net_amount,
         p.status,
         p.description,
         p.created_at,
@@ -378,10 +376,9 @@ const adminTransactionRepository = {
         t.id,
         t.transaction_type,
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         t.merchant_fee,
         t.fee_rate_snapshot,
-        t.net_amount,
         t.status,
         t.description,
         t.idempotency_key,
@@ -473,10 +470,9 @@ const adminTransactionRepository = {
         t.id,
         t.transaction_type,
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         t.merchant_fee,
         t.fee_rate_snapshot,
-        t.net_amount,
         t.status,
         t.description,
         t.created_at,
@@ -700,7 +696,7 @@ const adminTransactionRepository = {
 
   async lockTransactionForDispute(client, transactionId) {
     const query = `
-      SELECT id, transaction_type, amount, fee, status, source_user_id, destination_user_id
+      SELECT id, transaction_type, amount, user_fee AS fee, status, source_user_id, destination_user_id
       FROM transactions
       WHERE id = $1
       FOR UPDATE

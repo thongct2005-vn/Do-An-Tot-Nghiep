@@ -524,7 +524,7 @@ const adminUserRepository = {
         t.id,
         t.transaction_type,
         t.amount,
-        t.fee,
+        t.user_fee AS fee,
         t.merchant_fee,
         t.status,
         t.description,
@@ -1247,7 +1247,7 @@ const adminUserRepository = {
         `
         INSERT INTO transactions (
           transaction_type, source_user_id, source_balance_before, source_balance_after,
-          amount, fee, idempotency_key, status, description, linked_bank_account_id, created_at, completed_at
+          amount, user_fee, idempotency_key, status, description, linked_bank_account_id, created_at, completed_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUCCESS', $8, $9, NOW(), NOW())
         RETURNING id, status, created_at

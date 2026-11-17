@@ -275,11 +275,9 @@ async function buildTransactionsAdminXlsx({
     const rowFee = Number(r.fee) || 0;
     const rowMerchantFee = Number(r.merchant_fee) || 0;
     const rowNetDest =
-      r.net_amount !== null && r.net_amount !== undefined
-        ? Number(r.net_amount) || 0
-        : r.transaction_type === "PAYMENT" || r.transaction_type === "TRANSFER"
-          ? Math.max(0, rowAmount - rowMerchantFee)
-          : rowAmount;
+      r.transaction_type === "PAYMENT" || r.transaction_type === "TRANSFER"
+        ? Math.max(0, rowAmount - rowMerchantFee)
+        : rowAmount;
 
     const cells = [
       idx + 1, // 1. STT

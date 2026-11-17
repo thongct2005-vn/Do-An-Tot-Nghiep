@@ -275,7 +275,10 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
             allowedTypes.includes(t.transaction_type) &&
             t.status === "SUCCESS"
         )
-        .reduce((sum, t) => sum + Number(t.amount) + Number(t.fee || 0), 0);
+        .reduce(
+          (sum, t) => sum + Number(t.amount) + Number(t.user_fee ?? t.fee ?? 0),
+          0,
+        );
       return { rows: [{ daily_used: used }], rowCount: 1 };
     }
 
@@ -293,7 +296,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       if (hooks.delayInsideTransactionMs > 0) {
         await new Promise((r) => setTimeout(r, hooks.delayInsideTransactionMs));
       }
-      const isNewFormat = params.length >= 15;
+      const isNewFormat = params.length >= 14;
       const transactionType = params[0];
       const sourceUserId = params[1];
       const sourceBalanceBefore = params[2];
@@ -304,10 +307,9 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       const amount = params[7];
       const fee = params[8];
       const merchantFee = isNewFormat ? params[9] : 0;
-      const netAmount = isNewFormat ? params[11] : Number(amount);
-      const description = isNewFormat ? params[12] : params[9];
-      const idempotencyKey = isNewFormat ? params[13] : params[10];
-      const status = isNewFormat ? params[14] : params[11];
+      const description = isNewFormat ? params[11] : params[9];
+      const idempotencyKey = isNewFormat ? params[12] : params[10];
+      const status = isNewFormat ? params[13] : params[11];
 
       const duplicate = targetState.transactions.find(
         (t) => t.idempotency_key === idempotencyKey
@@ -329,9 +331,8 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
         dest_balance_before: Number(destBalanceBefore),
         dest_balance_after: Number(destBalanceAfter),
         amount: Number(amount),
-        fee: Number(fee),
+        user_fee: Number(fee),
         merchant_fee: Number(merchantFee),
-        net_amount: Number(netAmount),
         description,
         idempotency_key: idempotencyKey,
         status,
@@ -1074,7 +1075,7 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
       source_user_id: USER_A_ID,
       destination_user_id: USER_B_ID,
       amount: 49500000,
-      fee: 0,
+      user_fee: 0,
       status: "SUCCESS",
       created_at: new Date().toISOString(),
     });

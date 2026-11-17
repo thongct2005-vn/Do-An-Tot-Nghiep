@@ -14,7 +14,7 @@ const POSTPAID_PAYER_JOIN = `
          LIMIT 1
       ) pp ON true`;
 
-const FUNDING_SOURCE_SELECT = `CASE WHEN pp.user_id IS NOT NULL THEN 'POSTPAID' ELSE 'MAIN_WALLET' END AS funding_source`;
+const FUNDING_SOURCE_SELECT = `'Ví Mio'::text AS funding_source`;
 
 const merchantTransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {

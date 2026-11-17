@@ -77,6 +77,7 @@ const SYSTEM_CONFIG_LABELS = {
   DAILY_LIMIT_TIMEZONE: "múi giờ tính hạn mức ngày",
   WALLET_CAPACITY_CONFIG: "cấu hình sức chứa tối đa của ví",
   POSTPAID_CONFIG: "cấu hình Ví trả sau",
+  POSTPAID_REMINDER_CONFIG: "cấu hình nhắc nợ Ví trả sau",
   POSTPAID_STATUS: "danh mục trạng thái Ví trả sau",
   POSTPAID_ENTRY_ACTIONS: "danh mục loại biến động Ví trả sau",
 };

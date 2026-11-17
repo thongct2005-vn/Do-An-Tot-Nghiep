@@ -19,6 +19,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const POSTPAID_SYSTEM_CONFIG_KEYS = Object.freeze({
   CONFIG: "POSTPAID_CONFIG",
+  REMINDER_CONFIG: "POSTPAID_REMINDER_CONFIG",
   STATUS: "POSTPAID_STATUS",
   ENTRY_ACTIONS: "POSTPAID_ENTRY_ACTIONS",
 });
@@ -60,6 +61,7 @@ function getVnDateMeta(nowMs = Date.now()) {
     year,
     month,
     day,
+    hour: vnNow.getUTCHours(),
     cycleMonth: `${year}-${pad2(month)}`,
     todayDateStr: `${year}-${pad2(month)}-${pad2(day)}`,
     nextMonthYear,
@@ -77,6 +79,106 @@ function formatCycleMonthDisplay(cycleMonth) {
   const raw = String(cycleMonth || "").trim();
   const match = /^(\d{4})-(\d{2})$/.exec(raw);
   return match ? `${match[2]}/${match[1]}` : raw;
+}
+
+function formatVnDateFromYmd(ymd) {
+  const raw = String(ymd || "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : raw;
+}
+
+const {
+  normalizePostpaidReminderConfig,
+} = require("./postpaidReminderConfig");
+
+function renderReminderTemplate(templateText, vars) {
+  return String(templateText).replace(/\{\{([a-z0-9_]+)\}\}/gi, (match, rawKey) => {
+    const key = String(rawKey || "").toLowerCase();
+    return Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match;
+  });
+}
+
+/**
+ * Tạo nội dung Push Notification nhắc thanh toán dư nợ Ví trả sau dựa trên template trong `system_configs`.
+ */
+function buildMonthlyDebtReminderNotification(
+  row,
+  { cycleMonth = null, templates } = {},
+) {
+  if (
+    !templates ||
+    !templates.PAST_DUE ||
+    !templates.BILLED ||
+    !templates.UNBILLED
+  ) {
+    throw httpError(500, "Hệ thống chưa thiết lập đầy đủ mẫu nội dung nhắc nợ Ví trả sau");
+  }
+
+  const usedAmount = Math.max(0, Math.trunc(Number(row?.used_amount) || 0));
+  const billedAmount = Math.max(0, Math.trunc(Number(row?.billed_amount) || 0));
+  const serviceFeeAmount = Math.max(
+    0,
+    Math.trunc(Number(row?.service_fee_amount) || 0),
+  );
+  const lateFeeAmount = Math.max(
+    0,
+    Math.trunc(Number(row?.late_fee_amount) || 0),
+  );
+  const statementDebt = billedAmount + serviceFeeAmount + lateFeeAmount;
+  const unbilledAmount = Math.max(0, usedAmount - statementDebt);
+  const cycleDisplay = formatCycleMonthDisplay(row?.current_cycle_month);
+  const dueDateDisplay = formatVnDateFromYmd(row?.due_date_str);
+
+  const cyclePart = cycleDisplay ? ` kỳ ${cycleDisplay}` : "";
+  const duePart = dueDateDisplay ? ` trước ngày ${dueDateDisplay}` : "";
+  const unbilledPart =
+    unbilledAmount > 0 ? ` (tổng dư nợ hiện tại: ${formatVndDot(usedAmount)})` : "";
+  const overdueDetail = [
+    cycleDisplay ? `kỳ ${cycleDisplay}` : "",
+    "quá hạn",
+    dueDateDisplay ? `từ ngày ${dueDateDisplay}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const vars = {
+    used_amount: formatVndDot(usedAmount),
+    statement_debt: formatVndDot(statementDebt),
+    billed_amount: formatVndDot(billedAmount),
+    service_fee_amount: formatVndDot(serviceFeeAmount),
+    late_fee_amount: formatVndDot(lateFeeAmount),
+    unbilled_amount: formatVndDot(unbilledAmount),
+    cycle_month: cycleDisplay,
+    due_date: dueDateDisplay,
+    reminder_month: formatCycleMonthDisplay(cycleMonth),
+    cycle_part: cyclePart,
+    due_part: duePart,
+    unbilled_part: unbilledPart,
+    overdue_detail: overdueDetail,
+  };
+
+  const templateKey =
+    row?.status === "PAST_DUE"
+      ? "PAST_DUE"
+      : statementDebt > 0
+        ? "BILLED"
+        : "UNBILLED";
+  const selectedTemplate = templates[templateKey];
+
+  return {
+    title: renderReminderTemplate(selectedTemplate.title, vars).trim(),
+    body: renderReminderTemplate(selectedTemplate.body, vars).trim(),
+    data: {
+      type: "POSTPAID_MONTHLY_REMINDER",
+      reminder_month: cycleMonth ? String(cycleMonth) : "",
+      postpaid_status: String(row?.status || ""),
+      used_amount: String(usedAmount),
+      billed_amount: String(billedAmount),
+      service_fee_amount: String(serviceFeeAmount),
+      late_fee_amount: String(lateFeeAmount),
+      due_date: String(row?.due_date_str || ""),
+    },
+  };
 }
 
 const POSTPAID_CONFIG_FIELD_LABELS = Object.freeze({
@@ -498,6 +600,17 @@ const postpaidRepository = {
   async getConfig(db = pool) {
     const catalog = await postpaidRepository.getSystemCatalog(db);
     return catalog.config;
+  },
+
+  async getReminderConfig(db = pool) {
+    const res = await db.query(
+      `SELECT value FROM system_configs WHERE key = $1 LIMIT 1`,
+      [POSTPAID_SYSTEM_CONFIG_KEYS.REMINDER_CONFIG],
+    );
+    if (!res.rows[0]) {
+      throw httpError(500, "Hệ thống chưa thiết lập cấu hình nhắc nợ Ví trả sau");
+    }
+    return normalizePostpaidReminderConfig(res.rows[0].value);
   },
 
   async getWalletInfo(db = pool) {
@@ -2302,7 +2415,137 @@ const postpaidRepository = {
       todayDate: vnMeta.todayDateStr,
     };
   },
+
+  /**
+   * Khóa và đánh dấu theo từng lô các ví trả sau còn dư nợ chưa nhắc trong tháng `reminderMonth` (`YYYY-MM`).
+   * Cập nhật `last_reminder_month` ngay khi claim để chống gửi trùng giữa các worker hoặc khi restart server.
+   */
+  async claimMonthlyDebtReminderBatch(
+    { reminderMonth, batchSize = 500, requireFcmToken = true } = {},
+    db = pool,
+  ) {
+    const cleanMonth = String(reminderMonth || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(cleanMonth)) {
+      throw new Error("reminderMonth phải có định dạng YYYY-MM");
+    }
+
+    const [catalog, reminderConfig] = await Promise.all([
+      postpaidRepository.getSystemCatalog(db),
+      postpaidRepository.getReminderConfig(db),
+    ]);
+    const { config, statuses } = catalog;
+    if (!config.enabled) {
+      return { skipped: true, reason: "POSTPAID_DISABLED", rows: [], reminderConfig };
+    }
+    if (!reminderConfig.enabled) {
+      return { skipped: true, reason: "REMINDER_DISABLED", rows: [], reminderConfig };
+    }
+
+    const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
+    const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
+    const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
+    const safeBatch = Math.min(Math.max(1, Number(batchSize) || 500), 1000);
+
+    const useOwnClient = typeof db.connect === "function";
+    const client = useOwnClient ? await db.connect() : db;
+    let claimedRows = [];
+
+    try {
+      if (useOwnClient) {
+        await client.query("BEGIN");
+      }
+
+      const claimRes = await client.query(
+        `WITH picked AS (
+           SELECT pw.user_id
+             FROM postpaid_wallets pw
+             JOIN users u ON u.id = pw.user_id
+            WHERE pw.status IN ($2, $3, $4)
+              AND pw.used_amount > 0
+              AND pw.last_reminder_month IS DISTINCT FROM $1
+              AND u.role = 'USER'
+              AND u.status = 'ACTIVE'
+              AND ($6::boolean = false OR (u.fcm_token IS NOT NULL AND BTRIM(u.fcm_token) <> ''))
+            ORDER BY pw.user_id ASC
+            LIMIT $5
+            FOR UPDATE OF pw SKIP LOCKED
+         )
+         UPDATE postpaid_wallets pw
+            SET last_reminder_month = $1,
+                updated_at = NOW()
+           FROM picked
+           JOIN users u ON u.id = picked.user_id
+          WHERE pw.user_id = picked.user_id
+          RETURNING pw.user_id,
+                    pw.status,
+                    pw.used_amount,
+                    pw.billed_amount,
+                    pw.service_fee_amount,
+                    pw.late_fee_amount,
+                    pw.current_cycle_month,
+                    TO_CHAR(pw.due_date, 'YYYY-MM-DD') AS due_date_str,
+                    u.full_name,
+                    u.fcm_token`,
+        [
+          cleanMonth,
+          activeStatus,
+          pastDueStatus,
+          frozenStatus,
+          safeBatch,
+          Boolean(requireFcmToken),
+        ],
+      );
+
+      claimedRows = claimRes.rows;
+
+      if (claimedRows.length > 0) {
+        await client.query(
+          `INSERT INTO audit_outbox (id, event_type, payload)
+           SELECT t.id, 'POSTPAID_MONTHLY_REMINDER_SENT', t.payload
+             FROM unnest($1::uuid[], $2::jsonb[]) AS t(id, payload)`,
+          [
+            claimedRows.map(() => uuidv7()),
+            claimedRows.map((row) =>
+              JSON.stringify({
+                user_id: row.user_id,
+                reminder_month: cleanMonth,
+                status: row.status,
+                used_amount: Number(row.used_amount),
+                billed_amount: Number(row.billed_amount),
+                service_fee_amount: Number(row.service_fee_amount),
+                late_fee_amount: Number(row.late_fee_amount),
+                due_date: row.due_date_str || null,
+              }),
+            ),
+          ],
+        );
+      }
+
+      if (useOwnClient) {
+        await client.query("COMMIT");
+      }
+    } catch (e) {
+      if (useOwnClient) {
+        await client.query("ROLLBACK");
+      }
+      throw e;
+    } finally {
+      if (useOwnClient && typeof client.release === "function") {
+        client.release();
+      }
+    }
+
+    return {
+      skipped: false,
+      rows: claimedRows,
+      reminderConfig,
+    };
+  },
+
+  getVnDateMeta,
   formatCycleMonthDisplay,
+  normalizePostpaidReminderConfig,
+  buildMonthlyDebtReminderNotification,
 };
 
 module.exports = postpaidRepository;

@@ -10,6 +10,7 @@ const {
   calculatePerTransactionFeeDetails,
   calculateMerchantTransferFeeDetails,
   getVnMonthMeta,
+  serializeFeeRateSnapshot,
 } = require("../fee/feeCalculator");
 
 const TransactionRepository = {
@@ -93,6 +94,43 @@ const TransactionRepository = {
       [idempotencyKey, staleSeconds],
     );
     return result.rowCount === 1;
+  },
+
+  /**
+   * Xóa theo từng lô các bản ghi `idempotency_keys` đã quá hạn (`expires_at < NOW()`)
+   * để tránh giữ lock dài hoặc làm phình bảng khi vận hành lâu dài.
+   */
+  async cleanupExpiredIdempotencyKeys(
+    db = pool,
+    { batchSize = 1000, maxBatches = 10 } = {},
+  ) {
+    const safeBatchSize = Math.min(Math.max(1, Number(batchSize) || 1000), 5000);
+    const safeMaxBatches = Math.min(Math.max(1, Number(maxBatches) || 10), 100);
+    let deletedCount = 0;
+
+    for (let i = 0; i < safeMaxBatches; i++) {
+      const result = await db.query(
+        `WITH doomed AS (
+           SELECT idempotency_key
+             FROM idempotency_keys
+            WHERE expires_at IS NOT NULL
+              AND expires_at < NOW()
+            ORDER BY expires_at ASC
+            LIMIT $1
+         )
+         DELETE FROM idempotency_keys k
+          USING doomed d
+          WHERE k.idempotency_key = d.idempotency_key`,
+        [safeBatchSize],
+      );
+      const removed = result?.rowCount ?? 0;
+      deletedCount += removed;
+      if (removed < safeBatchSize) {
+        break;
+      }
+    }
+
+    return { deletedCount };
   },
 
   async executeTransfer(
@@ -294,7 +332,7 @@ const TransactionRepository = {
         amount,
         effectiveFeeNum,
         merchantFeeNum,
-        JSON.stringify(txFeeRateSnapshot),
+        serializeFeeRateSnapshot(txFeeRateSnapshot),
         netAmount,
         description,
         idempotencyKey,
@@ -526,7 +564,7 @@ const TransactionRepository = {
           sourceBalanceAfter,
           amount,
           computedFeeNum,
-          JSON.stringify(feeSnapshot),
+          serializeFeeRateSnapshot(feeSnapshot),
           amountNum,
           idempotencyKey,
           status,
@@ -701,7 +739,6 @@ const TransactionRepository = {
 
       paymentResult = await paymentRequestRepository.markAsPaid(client, {
         referenceCode: referenceCode,
-        sourceUserId: sourceUserId,
         transactionId: transferResult.transactionId,
       });
       if (!paymentResult) {

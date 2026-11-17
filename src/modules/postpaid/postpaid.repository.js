@@ -8,6 +8,7 @@ const merchantFeeService = require("../merchant/production/fee/fee.service");
 const {
   FEE_TYPES,
   assertSystemFeeWalletConfigured,
+  serializeFeeRateSnapshot,
 } = require("../fee/feeCalculator");
 const {
   assertValidSystemWalletRow,
@@ -1289,7 +1290,7 @@ const postpaidRepository = {
           destAfter,
           amountNum,
           merchantFeeNum,
-          JSON.stringify(merchantFeeDetails?.fee_rate_snapshot || null),
+          serializeFeeRateSnapshot(merchantFeeDetails?.fee_rate_snapshot),
           netAmount,
           description,
           idempotencyKey,
@@ -1337,7 +1338,6 @@ const postpaidRepository = {
 
       const paidPr = await paymentRequestRepository.markAsPaid(client, {
         referenceCode,
-        sourceUserId,
         transactionId: createdTxId,
       });
       if (!paidPr) {
@@ -1556,7 +1556,7 @@ const postpaidRepository = {
           hasPrincipal ? sysAfter : null,
           hasPrincipal ? paidPrincipal : paidFeeTotal,
           hasPrincipal ? paidFeeTotal : 0,
-          JSON.stringify(
+          serializeFeeRateSnapshot(
             paidFeeTotal > 0
               ? {
                   cycle_month: pw.current_cycle_month,

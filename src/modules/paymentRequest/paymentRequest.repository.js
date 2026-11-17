@@ -73,13 +73,13 @@ const paymentRequestRepository = {
     return result?.rows[0] ?? null;
   },
 
-  async markAsPaid(client, { referenceCode, sourceUserId, transactionId }) {
+  async markAsPaid(client, { referenceCode, transactionId }) {
     const result = await client.query(
       `UPDATE payment_requests
-       SET status = 'SUCCESS', source_user_id = $1, transaction_id = $2, paid_at = now(), updated_at = now()
-       WHERE reference_code = $3 AND status = 'PENDING'
+       SET status = 'SUCCESS', transaction_id = $1, paid_at = now(), updated_at = now()
+       WHERE reference_code = $2 AND status = 'PENDING'
        RETURNING *`,
-      [sourceUserId, transactionId, referenceCode],
+      [transactionId, referenceCode],
     );
     return result?.rows[0] ?? null;
   },

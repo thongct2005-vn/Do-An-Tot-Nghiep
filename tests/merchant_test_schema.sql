@@ -37,7 +37,7 @@ CREATE TABLE admin_user_change_history (
   ))
 );
 CREATE TABLE payment_requests (
-  id uuid PRIMARY KEY, source_user_id uuid REFERENCES users(id), destination_user_id uuid REFERENCES users(id),
+  id uuid PRIMARY KEY, destination_user_id uuid REFERENCES users(id),
   reference_code varchar, transaction_id varchar, status varchar DEFAULT 'PENDING', created_at timestamptz DEFAULT NOW(),
   amount bigint, description varchar(50), order_id varchar, callback_url text, return_url text,
   expires_at timestamptz DEFAULT NOW() + interval '15 minutes', paid_at timestamptz,
@@ -51,7 +51,8 @@ CREATE TABLE audit_outbox (
 CREATE TABLE idempotency_keys (
   idempotency_key varchar PRIMARY KEY, actor_id uuid, actor_type varchar, request_path text, request_hash text,
   status varchar DEFAULT 'PENDING', response_body jsonb, response_status_code integer,
-  create_at timestamptz DEFAULT NOW()
+  create_at timestamptz DEFAULT NOW(),
+  expires_at timestamptz DEFAULT NOW() + interval '7 days'
 );
 CREATE TABLE webhook_deliveries (
   id uuid PRIMARY KEY, payment_request_id uuid REFERENCES payment_requests(id),

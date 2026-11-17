@@ -1556,6 +1556,14 @@ function getVnMonthMeta(nowMs = Date.now()) {
   };
 }
 
+/**
+ * Tuần tự hóa JSON cho cột `transactions.fee_rate_snapshot`.
+ * Trả SQL `null` khi không có snapshot thay vì chuỗi JSON `"null"`.
+ */
+function serializeFeeRateSnapshot(snapshot) {
+  return snapshot == null ? null : JSON.stringify(snapshot);
+}
+
 module.exports = {
   SYSTEM_FEE_WALLET_ID,
   SYSTEM_FEE_WALLET_PHONE,
@@ -1581,4 +1589,5 @@ module.exports = {
   calculateWithdrawFeeDetails,
   previewFeeCalculation,
   getVnMonthMeta,
+  serializeFeeRateSnapshot,
 };

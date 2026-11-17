@@ -95,7 +95,7 @@ const kycRepository = {
         `UPDATE user_kyc
          SET id = $1, dob = $2, gender = $3, address = $4,
              front_image_url = $5, back_image_url = $6, face_image_url = $7,
-             face_match_score = $8
+             face_match_score = $8, updated_at = NOW()
          WHERE user_id = $9 AND status = 'APPROVED'
          RETURNING id, user_id, dob, gender, address`,
         [
@@ -131,7 +131,7 @@ const kycRepository = {
 
   async updateFaceImage({ userId, faceImageUrl }) {
     await pool.query(
-      `UPDATE user_kyc SET face_image_url = $1 WHERE user_id = $2`,
+      `UPDATE user_kyc SET face_image_url = $1, updated_at = NOW() WHERE user_id = $2`,
       [faceImageUrl, userId],
     );
   },

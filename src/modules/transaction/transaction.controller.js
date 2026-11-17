@@ -12,6 +12,8 @@ const transactionController = {
         destination_user_id: destinationUserId,
         amount,
         description,
+        linked_bank_account_id: linkedBankAccountId = null,
+        funding_source: fundingSource = null,
       } = req.body;
       const result = await transactionService.transferMoney({
         sourceUserId,
@@ -20,6 +22,8 @@ const transactionController = {
         amount,
         description,
         idempotencyKey,
+        linkedBankAccountId,
+        fundingSource,
       });
       emitToUser(sourceUserId, "wallet_balance_updated", {
         balance: result.sourceBalanceAfter,
@@ -149,6 +153,7 @@ const transactionController = {
       const {
         reference_code: referenceCode,
         funding_source: fundingSource = "MAIN_WALLET",
+        linked_bank_account_id: linkedBankAccountId = null,
       } = req.body;
 
       const result = await transactionService.processQRPayment({
@@ -156,6 +161,7 @@ const transactionController = {
         idempotencyKey,
         referenceCode,
         fundingSource,
+        linkedBankAccountId,
       });
 
       if (result.fundingSource === "POSTPAID") {

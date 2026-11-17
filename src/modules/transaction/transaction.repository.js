@@ -3,6 +3,7 @@ const paymentRequestRepository = require("../paymentRequest/paymentRequest.repos
 const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
 const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
+const { assertKyc } = require("../kyc/kyc.guard");
 const { uuidv7 } = require("uuidv7");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
 const {
@@ -133,6 +134,139 @@ const TransactionRepository = {
     return { deletedCount };
   },
 
+  parsePositiveAmountForFailure(raw) {
+    let value;
+    if (typeof raw === "number") {
+      value = raw;
+    } else if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
+      value = Number(raw.trim());
+    } else {
+      return null;
+    }
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  },
+
+  buildTransferFailureSnapshot({ isBankFunded = false, userMessage = null } = {}) {
+    const cleanMsg =
+      typeof userMessage === "string" ? userMessage.trim().slice(0, 255) : "";
+    const obj = {
+      ...(isBankFunded ? { funding_source: "BANK" } : {}),
+      ...(cleanMsg ? { user_message: cleanMsg } : {}),
+    };
+    return Object.keys(obj).length > 0 ? obj : null;
+  },
+
+  async runPreCheckWithFailureRecord(failureMeta, checkFn) {
+    try {
+      return await checkFn();
+    } catch (e) {
+      const meta =
+        typeof failureMeta === "function" ? failureMeta(e) : failureMeta;
+      if (meta) {
+        await TransactionRepository.recordFailedTransactionSafe({
+          ...meta,
+          reason: e.message,
+        });
+      }
+      throw e;
+    }
+  },
+
+  async recordFailedTransactionSafe({
+    transactionType,
+    sourceUserId,
+    destinationUserId = null,
+    amount,
+    linkedBankAccountId = null,
+    reason,
+    feeRateSnapshot = null,
+    sourceBalance = null,
+  }) {
+    try {
+      const amountNum = Number(amount);
+      if (
+        !transactionType ||
+        !sourceUserId ||
+        !Number.isFinite(amountNum) ||
+        amountNum <= 0
+      ) {
+        return null;
+      }
+
+      if (destinationUserId) {
+        const destRes = await pool.query(`SELECT id FROM users WHERE id = $1`, [
+          destinationUserId,
+        ]);
+        if (!destRes.rows[0]) return null;
+      }
+
+      let safeBankId = linkedBankAccountId || null;
+      let safeSnapshot =
+        feeRateSnapshot && typeof feeRateSnapshot === "object"
+          ? { ...feeRateSnapshot }
+          : null;
+      if (safeBankId) {
+        const bankRes = await pool.query(
+          `SELECT id FROM linked_bank_accounts WHERE id = $1 AND user_id = $2`,
+          [safeBankId, sourceUserId],
+        );
+        if (!bankRes.rows[0]) {
+          safeBankId = null;
+          if (safeSnapshot?.funding_source === "BANK") {
+            delete safeSnapshot.funding_source;
+            if (Object.keys(safeSnapshot).length === 0) {
+              safeSnapshot = null;
+            }
+          }
+        }
+      }
+
+      let balanceSnapshot =
+        sourceBalance !== null && sourceBalance !== undefined
+          ? Number(sourceBalance)
+          : null;
+      if (!Number.isFinite(balanceSnapshot)) {
+        const userRes = await pool.query(
+          `SELECT balance FROM users WHERE id = $1`,
+          [sourceUserId],
+        );
+        if (!userRes.rows[0]) return null;
+        balanceSnapshot = Number(userRes.rows[0].balance);
+      }
+
+      const cleanReason =
+        String(reason || "Giao dịch thất bại").trim().slice(0, 500) ||
+        "Giao dịch thất bại";
+
+      const result = await pool.query(
+        `INSERT INTO transactions (
+           transaction_type,
+           source_user_id, source_balance_before, source_balance_after,
+           destination_user_id, dest_balance_before, dest_balance_after,
+           amount, user_fee, merchant_fee, fee_rate_snapshot,
+           description, idempotency_key, status, completed_at, linked_bank_account_id
+         )
+         VALUES ($1, $2, $3, $4, $5, NULL, NULL, $6, 0, 0, $7::jsonb, $8, NULL, 'FAILED', NULL, $9)
+         RETURNING id, status, created_at`,
+        [
+          transactionType,
+          sourceUserId,
+          balanceSnapshot,
+          balanceSnapshot,
+          destinationUserId || null,
+          Math.trunc(amountNum),
+          serializeFeeRateSnapshot(safeSnapshot),
+          cleanReason,
+          safeBankId,
+        ],
+      );
+      return result.rows[0] || null;
+    } catch (recordErr) {
+      console.error("Ghi giao dịch FAILED thất bại:", recordErr.message);
+      return null;
+    }
+  },
+
   async executeTransfer(
     client,
     {
@@ -144,16 +278,38 @@ const TransactionRepository = {
       idempotencyKey,
       transactionType = "TRANSFER",
       status = "SUCCESS",
+      linkedBankAccountId = null,
+      fundingSource = null,
+      failureContext = null,
     },
   ) {
     const amountNum = Number(amount);
     const feeNum = Number(fee);
+    const normalizedFunding = String(
+      fundingSource || (linkedBankAccountId ? "BANK" : "MAIN_WALLET"),
+    )
+      .trim()
+      .toUpperCase();
+    const isBankFunded = normalizedFunding === "BANK" || Boolean(linkedBankAccountId);
+
+    if (failureContext) {
+      failureContext.transactionType = transactionType;
+      failureContext.sourceUserId = sourceUserId;
+      failureContext.destinationUserId = destinationUserId;
+      failureContext.amount = amountNum;
+      failureContext.linkedBankAccountId = isBankFunded ? linkedBankAccountId : null;
+    }
 
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      if (failureContext) failureContext.shouldRecordFailure = false;
       throw httpError(400, "Số tiền không hợp lệ");
     }
     if (!Number.isFinite(feeNum) || feeNum < 0) {
+      if (failureContext) failureContext.shouldRecordFailure = false;
       throw httpError(400, "Phí giao dịch không hợp lệ");
+    }
+    if (isBankFunded && !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
     if (String(sourceUserId) === String(destinationUserId)) {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
@@ -177,6 +333,7 @@ const TransactionRepository = {
     const secondUser = secondUserResult.rows[0];
 
     if (!firstUser || !secondUser) {
+      if (failureContext) failureContext.shouldRecordFailure = false;
       throw httpError(
         404,
         "Không tìm thấy thông tin người gửi hoặc người nhận",
@@ -187,6 +344,10 @@ const TransactionRepository = {
     const sourceUser = sourceIsFirst ? firstUser : secondUser;
     const destUser = sourceIsFirst ? secondUser : firstUser;
 
+    if (failureContext) {
+      failureContext.sourceBalance = Number(sourceUser.balance);
+    }
+
     if (sourceUser.status !== "ACTIVE" || sourceUser.role === "SYSTEM") {
       throw httpError(
         403,
@@ -195,6 +356,23 @@ const TransactionRepository = {
     }
     if (destUser.status !== "ACTIVE" || destUser.role === "SYSTEM") {
       throw httpError(422, "Tài khoản người nhận không khả dụng");
+    }
+
+    let bankRow = null;
+    if (isBankFunded) {
+      const bankResult = await client.query(
+        `SELECT lba.balance, b.name AS bank_name
+           FROM linked_bank_accounts lba
+           LEFT JOIN banks b ON lba.bank_id = b.id
+          WHERE lba.id = $1 AND lba.user_id = $2 AND lba.status = 'ACTIVE'
+          FOR UPDATE OF lba`,
+        [linkedBankAccountId, sourceUserId],
+      );
+      bankRow = bankResult.rows[0] || null;
+      if (!bankRow) {
+        if (failureContext) failureContext.linkedBankAccountId = null;
+        throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+      }
     }
 
     let effectiveFeeNum = feeNum;
@@ -220,8 +398,14 @@ const TransactionRepository = {
 
     const totalDeduct = amountNum + effectiveFeeNum;
     const sourceBalanceBefore = Number(sourceUser.balance);
+    const bankBalanceBefore = isBankFunded ? Number(bankRow.balance) : null;
+    const bankName = bankRow?.bank_name || null;
 
-    if (sourceBalanceBefore < totalDeduct) {
+    if (isBankFunded) {
+      if (bankBalanceBefore < totalDeduct) {
+        throw httpError(422, "Số dư ngân hàng không đủ để thực hiện giao dịch");
+      }
+    } else if (sourceBalanceBefore < totalDeduct) {
       throw httpError(422, "Số dư không đủ để thực hiện giao dịch");
     }
 
@@ -233,7 +417,12 @@ const TransactionRepository = {
       fee: effectiveFeeNum,
     });
 
-    const sourceBalanceAfter = sourceBalanceBefore - totalDeduct;
+    const sourceBalanceAfter = isBankFunded
+      ? sourceBalanceBefore
+      : sourceBalanceBefore - totalDeduct;
+    const bankBalanceAfter = isBankFunded
+      ? bankBalanceBefore - totalDeduct
+      : null;
 
     // Áp dụng biểu phí QR của merchant cả khi PAYMENT và khi TRANSFER vào ví MERCHANT (tránh né phí QR bằng P2P)
     const isMerchantInboundFeeTx =
@@ -276,17 +465,30 @@ const TransactionRepository = {
     });
     const destBalanceAfter = destBalanceBefore + netAmount;
 
-    if (
-      sourceBalanceBefore + destBalanceBefore !==
-      sourceBalanceAfter + destBalanceAfter + effectiveFeeNum + merchantFeeNum
-    ) {
-      throw httpError(500, "Lỗi toàn vẹn số dư giao dịch");
+    if (isBankFunded) {
+      if (
+        bankBalanceBefore + destBalanceBefore !==
+          bankBalanceAfter + destBalanceAfter + effectiveFeeNum + merchantFeeNum ||
+        sourceBalanceBefore !== sourceBalanceAfter
+      ) {
+        throw httpError(500, "Lỗi toàn vẹn số dư giao dịch");
+      }
+      await client.query(
+        `UPDATE linked_bank_accounts SET balance = $1 WHERE id = $2`,
+        [bankBalanceAfter, linkedBankAccountId],
+      );
+    } else {
+      if (
+        sourceBalanceBefore + destBalanceBefore !==
+        sourceBalanceAfter + destBalanceAfter + effectiveFeeNum + merchantFeeNum
+      ) {
+        throw httpError(500, "Lỗi toàn vẹn số dư giao dịch");
+      }
+      await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
+        sourceBalanceAfter,
+        sourceUserId,
+      ]);
     }
-
-    await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
-      sourceBalanceAfter,
-      sourceUserId,
-    ]);
 
     await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
       destBalanceAfter,
@@ -317,9 +519,9 @@ const TransactionRepository = {
         transaction_type, source_user_id, source_balance_before, source_balance_after,
         destination_user_id, dest_balance_before, dest_balance_after,
         amount, user_fee, merchant_fee, fee_rate_snapshot,
-        description, idempotency_key, status
+        description, idempotency_key, status, linked_bank_account_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15)
       RETURNING id, status, created_at`,
       [
         transactionType,
@@ -336,6 +538,7 @@ const TransactionRepository = {
         description,
         idempotencyKey,
         status,
+        isBankFunded ? linkedBankAccountId : null,
       ],
     );
 
@@ -417,6 +620,8 @@ const TransactionRepository = {
       sourceBalanceAfter,
       destBalanceBefore,
       destBalanceAfter,
+      fundingSource: isBankFunded ? "BANK" : "MAIN_WALLET",
+      bankName,
     };
   },
 
@@ -440,6 +645,15 @@ const TransactionRepository = {
       throw httpError(400, "Phí giao dịch không hợp lệ");
     }
 
+    const failureCtx = {
+      transactionType: transactionType || (isTopup ? "TOPUP" : "WITHDRAW"),
+      sourceUserId,
+      amount: amountNum,
+      linkedBankAccountId,
+      sourceBalance: null,
+      shouldRecordFailure: true,
+    };
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -450,8 +664,10 @@ const TransactionRepository = {
       );
       const sourceUser = userResult.rows[0];
       if (!sourceUser) {
+        failureCtx.shouldRecordFailure = false;
         throw httpError(404, "Không tìm thấy thông tin người dùng");
       }
+      failureCtx.sourceBalance = Number(sourceUser.balance);
       if (sourceUser.status !== "ACTIVE" || sourceUser.role === "SYSTEM") {
         throw httpError(
           403,
@@ -469,6 +685,7 @@ const TransactionRepository = {
       );
       const bankRow = bankResult.rows[0];
       if (!bankRow) {
+        failureCtx.linkedBankAccountId = null;
         throw httpError(404, "Không tìm thấy ngân hàng liên kết");
       }
 
@@ -623,6 +840,12 @@ const TransactionRepository = {
       };
     } catch (e) {
       await client.query("ROLLBACK");
+      if (failureCtx.shouldRecordFailure) {
+        await TransactionRepository.recordFailedTransactionSafe({
+          ...failureCtx,
+          reason: e.message,
+        });
+      }
       throw e;
     } finally {
       client.release();
@@ -672,17 +895,40 @@ const TransactionRepository = {
   },
 
   async transferMoney(params) {
+    const isBankFunded =
+      Boolean(params?.linkedBankAccountId) ||
+      String(params?.fundingSource || "").trim().toUpperCase() === "BANK";
+    const failureCtx = {
+      transactionType: params?.transactionType || "TRANSFER",
+      sourceUserId: params?.sourceUserId,
+      destinationUserId: params?.destinationUserId || null,
+      amount: Number(params?.amount),
+      linkedBankAccountId: params?.linkedBankAccountId || null,
+      feeRateSnapshot: TransactionRepository.buildTransferFailureSnapshot({
+        isBankFunded,
+        userMessage: params?.description,
+      }),
+      sourceBalance: null,
+      shouldRecordFailure: true,
+    };
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const result = await TransactionRepository.executeTransfer(
-        client,
-        params,
-      );
+      const result = await TransactionRepository.executeTransfer(client, {
+        ...params,
+        failureContext: failureCtx,
+      });
       await client.query("COMMIT");
       return result;
     } catch (e) {
       await client.query("ROLLBACK");
+      if (failureCtx.shouldRecordFailure) {
+        await TransactionRepository.recordFailedTransactionSafe({
+          ...failureCtx,
+          reason: e.message,
+        });
+      }
       throw e;
     } finally {
       client.release();
@@ -694,7 +940,24 @@ const TransactionRepository = {
     referenceCode,
     idempotencyKey,
     transactionType,
+    linkedBankAccountId = null,
+    fundingSource = "MAIN_WALLET",
   }) {
+    const failureCtx = {
+      transactionType: transactionType || "PAYMENT",
+      sourceUserId,
+      destinationUserId: null,
+      amount: null,
+      linkedBankAccountId:
+        String(fundingSource || "").trim().toUpperCase() === "BANK" ||
+        Boolean(linkedBankAccountId)
+          ? linkedBankAccountId
+          : null,
+      feeRateSnapshot: null,
+      sourceBalance: null,
+      shouldRecordFailure: true,
+    };
+
     const client = await pool.connect();
     let transferResult;
     let paymentResult;
@@ -705,6 +968,7 @@ const TransactionRepository = {
       // All participating paths lock users before payment rows.
       const target = await client.query('SELECT destination_user_id FROM payment_requests WHERE reference_code=$1', [referenceCode]);
       if (target.rows[0]) {
+        failureCtx.destinationUserId = target.rows[0].destination_user_id;
         await client.query('SELECT id FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[sourceUserId, target.rows[0].destination_user_id]]);
       }
       const paymentRequest =
@@ -713,8 +977,18 @@ const TransactionRepository = {
           referenceCode,
         );
       if (!paymentRequest) {
+        await assertKyc(sourceUserId);
         throw httpError(404, "Không tìm thấy mã QR");
       }
+      failureCtx.destinationUserId = paymentRequest.destination_user_id;
+      failureCtx.amount = Number(paymentRequest.amount);
+      if (paymentRequest.order_id || failureCtx.linkedBankAccountId) {
+        failureCtx.feeRateSnapshot = {
+          ...(failureCtx.linkedBankAccountId ? { funding_source: "BANK" } : {}),
+          ...(paymentRequest.order_id ? { order_id: paymentRequest.order_id } : {}),
+        };
+      }
+      await assertKyc(sourceUserId);
       if (paymentRequest.status !== 'PENDING') {
         throw httpError(409, "Mã QR không còn chờ thanh toán");
       }
@@ -733,6 +1007,9 @@ const TransactionRepository = {
           paymentRequest.description || `Thanh toán QR ${referenceCode}`,
         transactionType: transactionType,
         idempotencyKey: idempotencyKey,
+        linkedBankAccountId,
+        fundingSource,
+        failureContext: failureCtx,
       });
 
       paymentResult = await paymentRequestRepository.markAsPaid(client, {
@@ -765,6 +1042,12 @@ const TransactionRepository = {
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK");
+      if (failureCtx.shouldRecordFailure && Number(failureCtx.amount) > 0) {
+        await TransactionRepository.recordFailedTransactionSafe({
+          ...failureCtx,
+          reason: e.message,
+        });
+      }
       throw e;
     } finally {
       client.release();
@@ -829,6 +1112,7 @@ const TransactionRepository = {
           SELECT t.id
             FROM transactions t
            WHERE t.destination_user_id = $1
+             AND t.status <> 'FAILED'
              AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
              AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
              AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
@@ -877,6 +1161,10 @@ const TransactionRepository = {
         
         t.destination_user_id,
         CASE
+          WHEN (
+            pp.action IN ('REPAY_PRINCIPAL', 'REPAY_LATE_FEE', 'REPAY_SERVICE_FEE')
+            OR (t.fee_rate_snapshot->>'postpaid_action') IN ('REPAY_PRINCIPAL', 'REPAY_LATE_FEE', 'REPAY_SERVICE_FEE')
+          ) AND t.destination_user_id IS NULL THEN 'Ví trả sau'
           WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
           WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
           ELSE du.full_name
@@ -893,12 +1181,17 @@ const TransactionRepository = {
         t.fee_rate_snapshot,
         CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END::bigint AS net_amount,
         t.description,
+        t.fee_rate_snapshot->>'user_message' AS user_message,
         t.status,
         t.created_at,
         b.name AS bank_name,
-        pr.order_id AS order_id,
-        CASE WHEN pp.user_id IS NOT NULL THEN 'POSTPAID' ELSE 'MAIN_WALLET' END AS funding_source,
-        pp.action AS postpaid_action,
+        COALESCE(pr.order_id, t.fee_rate_snapshot->>'order_id') AS order_id,
+        CASE
+          WHEN pp.user_id IS NOT NULL OR (t.fee_rate_snapshot->>'funding_source') = 'POSTPAID' THEN 'POSTPAID'
+          WHEN t.linked_bank_account_id IS NOT NULL THEN 'BANK'
+          ELSE 'MAIN_WALLET'
+        END AS funding_source,
+        COALESCE(pp.action, t.fee_rate_snapshot->>'postpaid_action') AS postpaid_action,
         CASE
           WHEN t.transaction_type = 'TOPUP' THEN 'IN'
           WHEN pp.action = 'PURCHASE' AND pp.user_id = $1 THEN 'OUT'
@@ -911,12 +1204,22 @@ const TransactionRepository = {
             (SELECT GREATEST(0, pw.credit_limit - pp.used_before) FROM postpaid_wallets pw WHERE pw.user_id = $1),
             0
           )
+          WHEN (t.fee_rate_snapshot->>'funding_source') = 'POSTPAID' AND pp.user_id IS NULL THEN COALESCE(
+            (t.fee_rate_snapshot->>'postpaid_available_after')::bigint,
+            (SELECT GREATEST(0, pw.credit_limit - pw.used_amount) FROM postpaid_wallets pw WHERE pw.user_id = $1),
+            0
+          )
           WHEN t.source_user_id = $1 THEN t.source_balance_before
           ELSE t.dest_balance_before
         END AS balance_before,
         CASE
           WHEN pp.action IN ('PURCHASE', 'REFUND') AND pp.user_id = $1 THEN COALESCE(
             (SELECT GREATEST(0, pw.credit_limit - pp.used_after) FROM postpaid_wallets pw WHERE pw.user_id = $1),
+            0
+          )
+          WHEN (t.fee_rate_snapshot->>'funding_source') = 'POSTPAID' AND pp.user_id IS NULL THEN COALESCE(
+            (t.fee_rate_snapshot->>'postpaid_available_after')::bigint,
+            (SELECT GREATEST(0, pw.credit_limit - pw.used_amount) FROM postpaid_wallets pw WHERE pw.user_id = $1),
             0
           )
           WHEN t.source_user_id = $1 THEN t.source_balance_after
@@ -942,6 +1245,10 @@ const TransactionRepository = {
           OR (
             unaccent(COALESCE(
               CASE
+                WHEN (
+                  pp.action IN ('REPAY_PRINCIPAL', 'REPAY_LATE_FEE', 'REPAY_SERVICE_FEE')
+                  OR (t.fee_rate_snapshot->>'postpaid_action') IN ('REPAY_PRINCIPAL', 'REPAY_LATE_FEE', 'REPAY_SERVICE_FEE')
+                ) AND t.destination_user_id IS NULL THEN 'Ví trả sau'
                 WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
                 WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
                 ELSE du.full_name
@@ -1088,6 +1395,8 @@ const TransactionRepository = {
         END AS source_display_phone,
         t.destination_user_id,
         CASE
+          WHEN (t.fee_rate_snapshot->>'postpaid_action') IN ('REPAY_PRINCIPAL', 'REPAY_LATE_FEE', 'REPAY_SERVICE_FEE')
+            AND t.destination_user_id IS NULL THEN 'Ví trả sau'
           WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
           WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
           ELSE du.full_name
@@ -1104,6 +1413,7 @@ const TransactionRepository = {
         t.fee_rate_snapshot,
         CASE WHEN t.destination_user_id = $1 THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE t.amount END::bigint AS net_amount,
         t.description,
+        t.fee_rate_snapshot->>'user_message' AS user_message,
         t.status,
         t.created_at,
         b.name AS bank_name,
@@ -1121,7 +1431,7 @@ const TransactionRepository = {
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+      WHERE (t.source_user_id = $1 OR (t.destination_user_id = $1 AND t.status <> 'FAILED'))
         AND (
           $2::boolean = false
           OR (

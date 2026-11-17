@@ -16,6 +16,8 @@ const merchantTransactionController = {
         destination_user_id: destinationUserId,
         amount,
         description,
+        linked_bank_account_id: linkedBankAccountId = null,
+        funding_source: fundingSource = null,
       } = req.body;
       const result = await merchantTransactionService.transferMoney({
         sourceUserId,
@@ -23,6 +25,8 @@ const merchantTransactionController = {
         amount,
         description,
         idempotencyKey,
+        linkedBankAccountId,
+        fundingSource,
       });
       emitToUser(sourceUserId, "wallet_balance_updated", {
         balance: result.sourceBalanceAfter,

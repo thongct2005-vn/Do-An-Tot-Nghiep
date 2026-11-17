@@ -109,21 +109,7 @@ const merchantTransactionRepository = {
   },
 
   async transferMoney(params) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await merchantTransactionRepository.executeTransfer(
-        client,
-        params,
-      );
-      await client.query("COMMIT");
-      return result;
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+    return transactionRepository.transferMoney(params);
   },
 
   async getTransferHistory(
@@ -235,7 +221,7 @@ const merchantTransactionRepository = {
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+      WHERE (t.source_user_id = $1 OR (t.destination_user_id = $1 AND t.status <> 'FAILED'))
         AND ($2::boolean = false OR ${cursorClause})
         AND (
           $5::boolean = false
@@ -397,7 +383,7 @@ const merchantTransactionRepository = {
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+      WHERE (t.source_user_id = $1 OR (t.destination_user_id = $1 AND t.status <> 'FAILED'))
         AND (
           $2::boolean = false
           OR (
@@ -482,6 +468,7 @@ const merchantTransactionRepository = {
         b.logo_url AS bank_logo_url,
         lba.account_number,
         lba.account_holder_name,
+        (t.linked_bank_account_id IS NOT NULL) AS has_linked_bank,
         pr.id AS payment_request_id,
         pr.order_id,
         pr.reference_code,
@@ -497,7 +484,7 @@ const merchantTransactionRepository = {
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       WHERE t.id = $2
-        AND (t.source_user_id = $1 OR t.destination_user_id = $1)
+        AND (t.source_user_id = $1 OR (t.destination_user_id = $1 AND t.status <> 'FAILED'))
       `,
       [userId, transactionId],
     );
@@ -622,7 +609,7 @@ const merchantTransactionRepository = {
           THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE NULL 
         END), 0) AS avg_order_value
       FROM transactions t
-      WHERE (t.source_user_id = $1 OR t.destination_user_id = $1)
+      WHERE (t.source_user_id = $1 OR (t.destination_user_id = $1 AND t.status <> 'FAILED'))
         AND (
           $2::boolean = false
           OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'

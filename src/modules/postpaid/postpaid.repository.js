@@ -2,6 +2,7 @@ require("dotenv").config();
 const pool = require("../../config/database");
 const { httpError } = require("../../utils/httpError");
 const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
+const { assertKyc } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../webhook/webhook.repository");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
@@ -1121,6 +1122,15 @@ const postpaidRepository = {
 
     const client = await pool.connect();
     let resultPayload;
+    const failureCtx = {
+      transactionType: "PAYMENT",
+      sourceUserId,
+      destinationUserId: null,
+      amount: null,
+      sourceBalance: null,
+      feeRateSnapshot: { funding_source: "POSTPAID", reference_code: referenceCode },
+      shouldRecordFailure: true,
+    };
 
     try {
       await client.query("BEGIN");
@@ -1130,10 +1140,12 @@ const postpaidRepository = {
         [referenceCode],
       );
       if (!targetRes.rows[0]) {
+        await assertKyc(sourceUserId);
         throw httpError(404, "Không tìm thấy mã QR");
       }
 
       const merchantId = targetRes.rows[0].destination_user_id;
+      failureCtx.destinationUserId = merchantId;
       if (String(sourceUserId) === String(merchantId)) {
         throw httpError(400, "Không thể thanh toán cho chính mình");
       }
@@ -1148,8 +1160,10 @@ const postpaidRepository = {
       const destUser = usersMap.get(String(merchantId));
 
       if (!sourceUser || !destUser) {
+        failureCtx.shouldRecordFailure = false;
         throw httpError(404, "Không tìm thấy thông tin người thanh toán hoặc cửa hàng");
       }
+      failureCtx.sourceBalance = Number(sourceUser.balance);
       if (sourceUser.status !== "ACTIVE" || sourceUser.role === "SYSTEM") {
         throw httpError(403, "Tài khoản của bạn đang bị khóa hoặc không khả dụng");
       }
@@ -1165,6 +1179,14 @@ const postpaidRepository = {
       if (!paymentRequest) {
         throw httpError(404, "Không tìm thấy mã QR");
       }
+      failureCtx.amount = Number(paymentRequest.amount);
+      failureCtx.feeRateSnapshot = {
+        funding_source: "POSTPAID",
+        postpaid_action: "PURCHASE",
+        reference_code: referenceCode,
+        ...(paymentRequest.order_id ? { order_id: paymentRequest.order_id } : {}),
+      };
+      await assertKyc(sourceUserId);
       if (paymentRequest.status !== "PENDING") {
         throw httpError(409, "Mã QR không còn chờ thanh toán");
       }
@@ -1174,6 +1196,7 @@ const postpaidRepository = {
 
       const amountNum = Number(paymentRequest.amount);
       if (!Number.isSafeInteger(amountNum) || amountNum <= 0) {
+        failureCtx.shouldRecordFailure = false;
         throw httpError(400, "Số tiền đơn thanh toán không hợp lệ");
       }
 
@@ -1185,6 +1208,15 @@ const postpaidRepository = {
         [sourceUserId],
       );
       const pw = pwRes.rows[0];
+      if (pw) {
+        failureCtx.feeRateSnapshot = {
+          ...failureCtx.feeRateSnapshot,
+          postpaid_available_after: Math.max(
+            0,
+            Number(pw.credit_limit) - Number(pw.used_amount),
+          ),
+        };
+      }
       if (!pw || pw.status === inactiveStatus) {
         throw httpError(403, "Bạn chưa kích hoạt Ví trả sau");
       }
@@ -1388,6 +1420,13 @@ const postpaidRepository = {
       };
     } catch (e) {
       await client.query("ROLLBACK");
+      if (failureCtx.shouldRecordFailure && Number(failureCtx.amount) > 0) {
+        const { recordFailedTransactionSafe } = require("../transaction/transaction.repository");
+        await recordFailedTransactionSafe({
+          ...failureCtx,
+          reason: e.message,
+        });
+      }
       throw e;
     } finally {
       client.release();
@@ -1434,6 +1473,15 @@ const postpaidRepository = {
 
     const client = await pool.connect();
     let resultPayload;
+    const repayFailureCtx = {
+      transactionType: "PAYMENT",
+      sourceUserId: userId,
+      destinationUserId: null,
+      amount: repayAmount,
+      sourceBalance: null,
+      feeRateSnapshot: { funding_source: "POSTPAID", postpaid_action: "REPAY_PRINCIPAL" },
+      shouldRecordFailure: true,
+    };
 
     try {
       await client.query("BEGIN");
@@ -1443,8 +1491,10 @@ const postpaidRepository = {
       const user = usersMap.get(String(userId));
 
       if (!user) {
+        repayFailureCtx.shouldRecordFailure = false;
         throw httpError(404, "Không tìm thấy người dùng");
       }
+      repayFailureCtx.sourceBalance = Number(user.balance);
       if (user.status !== "ACTIVE" || user.role === "SYSTEM") {
         throw httpError(403, "Tài khoản của bạn đang bị khóa hoặc không khả dụng");
       }
@@ -1475,16 +1525,26 @@ const postpaidRepository = {
         throw httpError(400, "Số tiền thanh toán vượt quá tổng dư nợ hiện tại");
       }
 
-      const userBefore = Number(user.balance);
-      if (userBefore < repayAmount) {
-        throw httpError(422, "Số dư ví chính không đủ để thanh toán dư nợ");
-      }
-
       const paidLateFee = Math.min(repayAmount, oldLateFee);
       const remainingAfterLateFee = repayAmount - paidLateFee;
       const paidServiceFee = Math.min(remainingAfterLateFee, oldServiceFee);
       const paidPrincipal = remainingAfterLateFee - paidServiceFee;
       const paidFeeTotal = paidLateFee + paidServiceFee;
+      const effectiveRepayAction =
+        paidPrincipal > 0
+          ? repayPrincipalAction
+          : paidLateFee > 0
+            ? repayLateFeeAction
+            : repayServiceFeeAction;
+      repayFailureCtx.feeRateSnapshot = {
+        funding_source: "POSTPAID",
+        postpaid_action: effectiveRepayAction,
+      };
+
+      const userBefore = Number(user.balance);
+      if (userBefore < repayAmount) {
+        throw httpError(422, "Số dư ví chính không đủ để thanh toán dư nợ");
+      }
 
       const newLateFee = oldLateFee - paidLateFee;
       const newServiceFee = oldServiceFee - paidServiceFee;
@@ -1558,6 +1618,8 @@ const postpaidRepository = {
           serializeFeeRateSnapshot(
             paidFeeTotal > 0
               ? {
+                  funding_source: "POSTPAID",
+                  postpaid_action: effectiveRepayAction,
                   cycle_month: pw.current_cycle_month,
                   late_fee_paid: paidLateFee,
                   service_fee_paid: paidServiceFee,
@@ -1691,6 +1753,13 @@ const postpaidRepository = {
       };
     } catch (e) {
       await client.query("ROLLBACK");
+      if (repayFailureCtx.shouldRecordFailure && Number(repayFailureCtx.amount) > 0) {
+        const { recordFailedTransactionSafe } = require("../transaction/transaction.repository");
+        await recordFailedTransactionSafe({
+          ...repayFailureCtx,
+          reason: e.message,
+        });
+      }
       throw e;
     } finally {
       client.release();

@@ -3,6 +3,7 @@ const { httpError } = require("../../utils/httpError");
 const { parseAmount } = require("../../utils/amount");
 const { assertKyc } = require("../kyc/kyc.guard");
 const { resolveOneYearRange } = require("../../utils/dateRange");
+const transactionRepository = require("../transaction/transaction.repository");
 
 const postpaidService = {
   async getWalletInfo() {
@@ -94,7 +95,6 @@ const postpaidService = {
     if (!referenceCode || !String(referenceCode).trim()) {
       throw httpError(400, "Thiếu thông tin của mã QR");
     }
-    await assertKyc(sourceUserId);
     return postpaidRepository.processPostpaidQRPayment({
       sourceUserId,
       referenceCode: String(referenceCode).trim(),
@@ -110,7 +110,18 @@ const postpaidService = {
     if (!Number.isSafeInteger(parsedAmount) || parsedAmount <= 0) {
       throw httpError(400, "Số tiền thanh toán dư nợ phải lớn hơn 0");
     }
-    await assertKyc(userId);
+    await transactionRepository.runPreCheckWithFailureRecord(
+      {
+        transactionType: "PAYMENT",
+        sourceUserId: userId,
+        amount: parsedAmount,
+        feeRateSnapshot: {
+          funding_source: "POSTPAID",
+          postpaid_action: "REPAY_PRINCIPAL",
+        },
+      },
+      () => assertKyc(userId),
+    );
     return postpaidRepository.repayDebt({
       userId,
       amount: parsedAmount,

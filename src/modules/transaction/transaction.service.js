@@ -41,6 +41,8 @@ const TransactionService = {
     amount,
     description,
     idempotencyKey,
+    linkedBankAccountId = null,
+    fundingSource = null,
   }) {
     if (!sourceUserId || !destinationUserId) {
       throw httpError(400, "Thiếu thông tin người gửi hoặc người nhận");
@@ -50,15 +52,38 @@ const TransactionService = {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
 
-    await assertKycBoth(sourceUserId, destinationUserId);
+    const normalizedFunding = String(fundingSource || (linkedBankAccountId ? "BANK" : "MAIN_WALLET"))
+      .trim()
+      .toUpperCase();
+    const isBankFunded = normalizedFunding === "BANK" || Boolean(linkedBankAccountId);
+    const candidateAmount = transactionRepository.parsePositiveAmountForFailure(amount);
 
-    const actorRole = await resolveActorRole(sourceUserId, role);
-    const transferRule = await getEffectiveTransactionLimit(pool, {
-      userId: sourceUserId,
-      role: actorRole,
-      transactionType: "TRANSFER",
-    });
-    const numAmount = parseAmountInRange(amount, transferRule, "chuyển");
+    const numAmount = await transactionRepository.runPreCheckWithFailureRecord(
+      candidateAmount !== null
+        ? {
+            transactionType: "TRANSFER",
+            sourceUserId,
+            destinationUserId,
+            amount: candidateAmount,
+            linkedBankAccountId: isBankFunded ? linkedBankAccountId : null,
+            feeRateSnapshot: transactionRepository.buildTransferFailureSnapshot({
+              isBankFunded,
+              userMessage: description,
+            }),
+          }
+        : null,
+      async () => {
+        await assertKycBoth(sourceUserId, destinationUserId);
+
+        const actorRole = await resolveActorRole(sourceUserId, role);
+        const transferRule = await getEffectiveTransactionLimit(pool, {
+          userId: sourceUserId,
+          role: actorRole,
+          transactionType: "TRANSFER",
+        });
+        return parseAmountInRange(amount, transferRule, "chuyển");
+      },
+    );
 
     return await transactionRepository.transferMoney({
       sourceUserId,
@@ -69,6 +94,8 @@ const TransactionService = {
       idempotencyKey,
       transactionType: "TRANSFER",
       status: "SUCCESS",
+      linkedBankAccountId,
+      fundingSource,
     });
   },
 
@@ -83,19 +110,33 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const actorRole = await resolveActorRole(sourceUserId, role);
-    const topupRule = await getEffectiveTransactionLimit(pool, {
-      userId: sourceUserId,
-      role: actorRole,
-      transactionType: "TOPUP",
-    });
-    const numAmount = parseAmountInRange(amount, topupRule, "nạp");
+    const candidateAmount = transactionRepository.parsePositiveAmountForFailure(amount);
+    const numAmount = await transactionRepository.runPreCheckWithFailureRecord(
+      candidateAmount !== null && linkedBankAccountId
+        ? {
+            transactionType: "TOPUP",
+            sourceUserId,
+            amount: candidateAmount,
+            linkedBankAccountId,
+          }
+        : null,
+      async () => {
+        const actorRole = await resolveActorRole(sourceUserId, role);
+        const topupRule = await getEffectiveTransactionLimit(pool, {
+          userId: sourceUserId,
+          role: actorRole,
+          transactionType: "TOPUP",
+        });
+        const parsed = parseAmountInRange(amount, topupRule, "nạp");
 
-    if (!linkedBankAccountId) {
-      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
-    }
+        if (!linkedBankAccountId) {
+          throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
+        }
 
-    await assertKyc(sourceUserId);
+        await assertKyc(sourceUserId);
+        return parsed;
+      },
+    );
 
     return await transactionRepository.topupMoney({
       sourceUserId,
@@ -119,19 +160,33 @@ const TransactionService = {
       throw httpError(400, "Thiếu thông tin người thực hiện giao dịch");
     }
 
-    const actorRole = await resolveActorRole(sourceUserId, role);
-    const withdrawRule = await getEffectiveTransactionLimit(pool, {
-      userId: sourceUserId,
-      role: actorRole,
-      transactionType: "WITHDRAW",
-    });
-    const numAmount = parseAmountInRange(amount, withdrawRule, "rút");
+    const candidateAmount = transactionRepository.parsePositiveAmountForFailure(amount);
+    const numAmount = await transactionRepository.runPreCheckWithFailureRecord(
+      candidateAmount !== null && linkedBankAccountId
+        ? {
+            transactionType: "WITHDRAW",
+            sourceUserId,
+            amount: candidateAmount,
+            linkedBankAccountId,
+          }
+        : null,
+      async () => {
+        const actorRole = await resolveActorRole(sourceUserId, role);
+        const withdrawRule = await getEffectiveTransactionLimit(pool, {
+          userId: sourceUserId,
+          role: actorRole,
+          transactionType: "WITHDRAW",
+        });
+        const parsed = parseAmountInRange(amount, withdrawRule, "rút");
 
-    if (!linkedBankAccountId) {
-      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
-    }
+        if (!linkedBankAccountId) {
+          throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
+        }
 
-    await assertKyc(sourceUserId);
+        await assertKyc(sourceUserId);
+        return parsed;
+      },
+    );
 
     return await transactionRepository.withdrawMoney({
       sourceUserId,
@@ -149,12 +204,11 @@ const TransactionService = {
     idempotencyKey,
     referenceCode,
     fundingSource = "MAIN_WALLET",
+    linkedBankAccountId = null,
   }) {
     if (!sourceUserId) {
       throw httpError(400, "Thiếu thông tin người gửi");
     }
-
-    await assertKyc(sourceUserId);
 
     if (!referenceCode) {
       throw httpError(400, "Thiếu thông tin của mã QR");
@@ -163,7 +217,7 @@ const TransactionService = {
     const normalizedFunding = String(fundingSource || "MAIN_WALLET")
       .trim()
       .toUpperCase();
-    if (!["MAIN_WALLET", "POSTPAID"].includes(normalizedFunding)) {
+    if (!["MAIN_WALLET", "POSTPAID", "BANK"].includes(normalizedFunding)) {
       throw httpError(400, "Nguồn tiền thanh toán không hợp lệ");
     }
 
@@ -175,12 +229,19 @@ const TransactionService = {
       });
     }
 
+    if (normalizedFunding === "BANK" && !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
+    }
+
     return await transactionRepository.processQRPayment({
       sourceUserId,
       idempotencyKey,
       referenceCode,
       transactionType: "PAYMENT",
       status: "SUCCESS",
+      fundingSource: normalizedFunding,
+      linkedBankAccountId:
+        normalizedFunding === "BANK" ? linkedBankAccountId : null,
     });
   },
 
@@ -326,6 +387,7 @@ const TransactionService = {
       destinationUserName: result.destinationUserName,
       sourceBalanceAfter: result.sourceBalanceAfter,
       fundingSource: result.fundingSource || "MAIN_WALLET",
+      ...(result.bankName ? { bankName: result.bankName } : {}),
       ...(result.postpaidUsedAfter !== undefined
         ? { postpaidUsedAfter: result.postpaidUsedAfter }
         : {}),

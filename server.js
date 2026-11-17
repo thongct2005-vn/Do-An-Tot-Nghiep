@@ -4,6 +4,7 @@ const path = require("path");
 require("dotenv").config();
 const helmet = require("helmet");
 const cors = require("cors");
+const compression = require("compression");
 const app = express();
 const errorHandler = require("./src/middlewares/errorHandler");
 const router = require("./src/routes/index");
@@ -51,6 +52,7 @@ app.use(
     credentials: true,
   }),
 );
+app.use(compression());
 
 initSocket(server, allowedOrigins);
 app.use(

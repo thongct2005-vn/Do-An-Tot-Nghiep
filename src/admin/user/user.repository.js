@@ -5,6 +5,13 @@ const mongoose = require("mongoose");
 const {
   UserLoginEvent,
 } = require("../../models/mongo/userLoginEvent.model");
+const {
+  LoginStatsDailyUser,
+  LoginStatsRollupState,
+  advanceLoginRollupCutoff,
+} = require("../../models/mongo/loginStatsDailyUser.model");
+const { computeHybridWindow } = require("../dashboard/dashboardRollup");
+const { getCurrentMonthBoundsInVietnam } = require("../../utils/dateRange");
 const { claimEmail } = require("../../utils/emailClaim");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
 const { httpError } = require("../../utils/httpError");
@@ -25,59 +32,239 @@ const adminUserRepository = {
   },
 
   /**
-   * Truy vấn sự kiện đăng nhập Mobile App thành công từ MongoDB collection user_login_events,
-   * gom nhóm theo múi giờ Asia/Ho_Chi_Minh.
+   * Truy vấn sự kiện đăng nhập Mobile App thành công theo mô hình Hybrid Rollup trên MongoDB:
+   * - Ngày đã khép (< rollup_until_instant) đọc từ login_stats_daily_users
+   * - Phần mới (>= splitInstant) hoặc groupBy='hour' đọc từ user_login_events
+   * Toàn bộ phép đếm unique_users chạy trong MongoDB ($group + $facet), không trả mảng $addToSet về Node.
    */
-  async getLoginStatsRows({ startInstant, nextDayInstant, groupBy }) {
+  async getLoginStatsRows({ startInstant, nextDayInstant, groupBy, now }) {
     if (mongoose.connection.readyState !== 1) {
       throw httpError(503, "Dữ liệu đăng nhập tạm thời không khả dụng");
     }
 
-    let dateFormat = "%Y-%m-%d";
-    if (groupBy === "hour") {
-      dateFormat = "%Y-%m-%d %H";
-    } else if (groupBy === "month") {
-      dateFormat = "%Y-%m";
-    }
-    // Với groupBy === "week", gom nhóm theo ngày "%Y-%m-%d" tại MongoDB rồi gộp theo tuần ở tầng Service.
+    const buildTailBucketExpr = (mode) => {
+      if (mode === "hour") {
+        return {
+          $dateToString: {
+            format: "%Y-%m-%d %H",
+            date: "$logged_in_at",
+            timezone: "Asia/Ho_Chi_Minh",
+          },
+        };
+      }
+      if (mode === "month") {
+        return {
+          $dateToString: {
+            format: "%Y-%m",
+            date: "$logged_in_at",
+            timezone: "Asia/Ho_Chi_Minh",
+          },
+        };
+      }
+      if (mode === "week") {
+        return {
+          $dateToString: {
+            format: "%Y-%m-%d",
+            date: {
+              $dateTrunc: {
+                date: "$logged_in_at",
+                unit: "week",
+                startOfWeek: "monday",
+                timezone: "Asia/Ho_Chi_Minh",
+              },
+            },
+            timezone: "Asia/Ho_Chi_Minh",
+          },
+        };
+      }
+      return {
+        $dateToString: {
+          format: "%Y-%m-%d",
+          date: "$logged_in_at",
+          timezone: "Asia/Ho_Chi_Minh",
+        },
+      };
+    };
 
-    let rows;
-    try {
-      rows = await UserLoginEvent.aggregate([
+    const buildFacetStage = () => ({
+      $facet: {
+        buckets: [
+          {
+            $group: {
+              _id: { bucket_key: "$bucket_key", user_id: "$user_id" },
+              cnt: { $sum: "$cnt" },
+            },
+          },
+          {
+            $group: {
+              _id: "$_id.bucket_key",
+              total_logins: { $sum: "$cnt" },
+              unique_users: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ],
+        summary: [
+          {
+            $group: {
+              _id: "$user_id",
+              cnt: { $sum: "$cnt" },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total_logins: { $sum: "$cnt" },
+              unique_users: { $sum: 1 },
+            },
+          },
+        ],
+      },
+    });
+
+    const buildTailStages = (fromInstant, toInstant, mode) => [
       {
         $match: {
           status: "SUCCESS",
           logged_in_at: {
-            $gte: startInstant,
-            $lt: nextDayInstant,
+            $gte: fromInstant,
+            $lt: toInstant,
           },
         },
       },
       {
         $group: {
           _id: {
-            $dateToString: {
-              format: dateFormat,
-              date: "$logged_in_at",
-              timezone: "Asia/Ho_Chi_Minh",
-            },
+            bucket_key: buildTailBucketExpr(mode),
+            user_id: "$user_id",
           },
-          total_logins: { $sum: 1 },
-          user_ids: { $addToSet: "$user_id" },
+          cnt: { $sum: 1 },
         },
       },
       {
-        $sort: { _id: 1 },
+        $project: {
+          _id: 0,
+          bucket_key: "$_id.bucket_key",
+          user_id: "$_id.user_id",
+          cnt: 1,
+        },
       },
-      ]);
+    ];
+
+    try {
+      let facetResult;
+
+      if (groupBy === "hour") {
+        const rows = await UserLoginEvent.collection
+          .aggregate(
+            [
+              ...buildTailStages(startInstant, nextDayInstant, "hour"),
+              buildFacetStage(),
+            ],
+            { allowDiskUse: true },
+          )
+          .toArray();
+        facetResult = rows[0] || {};
+      } else {
+        await advanceLoginRollupCutoff({ now });
+        const state = await LoginStatsRollupState.collection.findOne({
+          _id: "default",
+        });
+        const rollupUntilInstant = state?.rollup_until_instant
+          ? new Date(state.rollup_until_instant)
+          : null;
+
+        const { useRollup, useTail, splitInstant } = computeHybridWindow(
+          startInstant,
+          nextDayInstant,
+          rollupUntilInstant,
+        );
+
+        const rollupBucketField =
+          groupBy === "week"
+            ? "$week_vn"
+            : groupBy === "month"
+              ? "$month_vn"
+              : "$date_vn";
+
+        if (useRollup) {
+          const startDateVn =
+            getCurrentMonthBoundsInVietnam(startInstant).endDate;
+          const splitDateVn =
+            getCurrentMonthBoundsInVietnam(splitInstant).endDate;
+
+          const pipeline = [
+            {
+              $match: {
+                date_vn: {
+                  $gte: startDateVn,
+                  $lt: splitDateVn,
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                bucket_key: rollupBucketField,
+                user_id: "$user_id",
+                cnt: "$login_count",
+              },
+            },
+          ];
+
+          if (useTail) {
+            pipeline.push({
+              $unionWith: {
+                coll: UserLoginEvent.collection.collectionName,
+                pipeline: buildTailStages(splitInstant, nextDayInstant, groupBy),
+              },
+            });
+          }
+
+          pipeline.push(buildFacetStage());
+          const rows = await LoginStatsDailyUser.collection
+            .aggregate(pipeline, { allowDiskUse: true })
+            .toArray();
+          facetResult = rows[0] || {};
+        } else if (useTail) {
+          const rows = await UserLoginEvent.collection
+            .aggregate(
+              [
+                ...buildTailStages(splitInstant, nextDayInstant, groupBy),
+                buildFacetStage(),
+              ],
+              { allowDiskUse: true },
+            )
+            .toArray();
+          facetResult = rows[0] || {};
+        } else {
+          facetResult = {};
+        }
+      }
+
+      const rawSummary = facetResult.summary?.[0];
+      return {
+        buckets: (facetResult.buckets || []).map((b) => ({
+          _id: String(b._id || ""),
+          total_logins: Number(b.total_logins || 0),
+          unique_users: Number(b.unique_users || 0),
+        })),
+        summary: {
+          total_logins: Number(rawSummary?.total_logins || 0),
+          unique_users: Number(rawSummary?.unique_users || 0),
+        },
+      };
     } catch (err) {
-      if (mongoose.connection.readyState !== 1 || /Mongo(Network|ServerSelection|Timeout)|MongooseServerSelection/.test(err?.name || "")) {
+      if (
+        mongoose.connection.readyState !== 1 ||
+        /Mongo(Network|ServerSelection|Timeout)|MongooseServerSelection/.test(
+          err?.name || "",
+        )
+      ) {
         throw httpError(503, "Dữ liệu đăng nhập tạm thời không khả dụng");
       }
       throw err;
     }
-
-    return rows;
   },
 
   async getUsers({ search, status, limit = 10, offset = 0 }) {
@@ -255,48 +442,64 @@ const adminUserRepository = {
   },
 
   async getUserTransactions({ userId, startDate, endDate, keyword, limit = 10, offset = 0 }) {
-    const conditions = [
-      `(t.source_user_id = $1 OR t.destination_user_id = $1)`
-    ];
+    const baseConditions = [];
     const params = [userId];
 
     if (startDate) {
       params.push(startDate);
-      conditions.push(`t.created_at >= $${params.length}`);
+      baseConditions.push(`t.created_at >= $${params.length}`);
     }
 
     if (endDate) {
       params.push(endDate);
-      conditions.push(`t.created_at <= $${params.length}`);
+      baseConditions.push(`t.created_at <= $${params.length}`);
     }
 
-    if (keyword && keyword.trim() !== "") {
-      params.push(`%${keyword.trim()}%`);
+    const cleanKeyword = keyword ? keyword.trim() : "";
+    const hasKeyword = cleanKeyword !== "";
+    let keywordFilterClause = "";
+    let keywordJoins = "";
+
+    if (hasKeyword) {
+      params.push(`%${cleanKeyword}%`);
       const kwIdx = params.length;
-      conditions.push(
-        `(t.id::TEXT LIKE $${kwIdx} 
-          OR su.full_name ILIKE $${kwIdx} 
-          OR du.full_name ILIKE $${kwIdx} 
-          OR su.phone LIKE $${kwIdx} 
-          OR du.phone LIKE $${kwIdx} 
-          OR t.description ILIKE $${kwIdx} 
-          OR b.name ILIKE $${kwIdx} 
-          OR pr.reference_code ILIKE $${kwIdx})`
-      );
+      keywordJoins = `
+        LEFT JOIN users su ON t.source_user_id = su.id
+        LEFT JOIN users du ON t.destination_user_id = du.id
+        LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
+        LEFT JOIN banks b ON lba.bank_id = b.id
+        LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
+      `;
+      keywordFilterClause = `AND (t.id::TEXT LIKE $${kwIdx}
+        OR su.full_name ILIKE $${kwIdx}
+        OR du.full_name ILIKE $${kwIdx}
+        OR su.phone LIKE $${kwIdx}
+        OR du.phone LIKE $${kwIdx}
+        OR t.description ILIKE $${kwIdx}
+        OR b.name ILIKE $${kwIdx}
+        OR pr.reference_code ILIKE $${kwIdx})`;
     }
 
-    const whereClause = conditions.join(" AND ");
+    const commonSuffix = baseConditions.length > 0 ? `AND ${baseConditions.join(" AND ")}` : "";
+    const unionCte = `
+      WITH matched_tx AS (
+        SELECT t.id, t.created_at
+        FROM transactions t
+        ${keywordJoins}
+        WHERE t.source_user_id = $1 ${commonSuffix} ${keywordFilterClause}
+        UNION
+        SELECT t.id, t.created_at
+        FROM transactions t
+        ${keywordJoins}
+        WHERE t.destination_user_id = $1 ${commonSuffix} ${keywordFilterClause}
+      )
+    `;
 
     const countResult = await pool.query(
       `
+      ${unionCte}
       SELECT COUNT(*)::INT AS total
-      FROM transactions t
-      LEFT JOIN users su ON t.source_user_id = su.id
-      LEFT JOIN users du ON t.destination_user_id = du.id
-      LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
-      LEFT JOIN banks b ON lba.bank_id = b.id
-      LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      WHERE ${whereClause}
+      FROM matched_tx
       `,
       params
     );
@@ -310,7 +513,14 @@ const adminUserRepository = {
 
     const itemsResult = await pool.query(
       `
-      SELECT 
+      ${unionCte},
+      paged_tx AS (
+        SELECT id
+        FROM matched_tx
+        ORDER BY created_at DESC, id DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      )
+      SELECT
         t.id,
         t.transaction_type,
         t.amount,
@@ -332,15 +542,14 @@ const adminUserRepository = {
         b.name AS bank_name,
         lba.account_number AS bank_account,
         pr.reference_code
-      FROM transactions t
+      FROM paged_tx p
+      JOIN transactions t ON t.id = p.id
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      WHERE ${whereClause}
-      ORDER BY t.created_at DESC
-      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      ORDER BY t.created_at DESC, t.id DESC
       `,
       queryParams
     );

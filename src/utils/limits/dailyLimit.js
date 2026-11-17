@@ -49,14 +49,49 @@ async function getDailyLimit(db, { userId = null, role = "USER", type }) {
   return sysDaily == null ? customDaily : Math.min(sysDaily, customDaily);
 }
 
-// Lấy hạn mức đã dùng trong ngày của 1 người dùng theo loại giao dịch
-async function getDailyUsed(db, userId, type) {
+async function getRequiredDailyLimitTimezone(db) {
   const timezone = String(
     (await getSystemConfig("DAILY_LIMIT_TIMEZONE", db)) ?? "",
   ).trim();
   if (!timezone) {
     throw httpError(500, "Cấu hình múi giờ hạn mức ngày của hệ thống không hợp lệ");
   }
+  return timezone;
+}
+
+// Lấy đồng thời hạn mức đã dùng của 3 nhóm (TRANSFER/PAYMENT, TOPUP, WITHDRAW) trong 1 truy vấn duy nhất
+async function getDailyUsedByBuckets(db, userId) {
+  const timezone = await getRequiredDailyLimitTimezone(db);
+  const result = await db.query(
+    `SELECT
+       COALESCE(SUM(amount + fee) FILTER (
+         WHERE transaction_type IN ('TRANSFER', 'PAYMENT')
+           AND (transaction_type <> 'PAYMENT' OR destination_user_id IS NOT NULL)
+       ), 0)::BIGINT AS transfer_used,
+       COALESCE(SUM(amount + fee) FILTER (
+         WHERE transaction_type = 'TOPUP'
+       ), 0)::BIGINT AS topup_used,
+       COALESCE(SUM(amount + fee) FILTER (
+         WHERE transaction_type = 'WITHDRAW'
+       ), 0)::BIGINT AS withdraw_used
+     FROM transactions
+     WHERE source_user_id = $1
+       AND transaction_type IN ('TRANSFER', 'PAYMENT', 'TOPUP', 'WITHDRAW')
+       AND status = 'SUCCESS'
+       AND created_at >= (NOW() AT TIME ZONE $2::text)::date AT TIME ZONE $2::text`,
+    [userId, timezone],
+  );
+  const row = result.rows[0] || {};
+  return {
+    TRANSFER: Number(row.transfer_used || 0),
+    TOPUP: Number(row.topup_used || 0),
+    WITHDRAW: Number(row.withdraw_used || 0),
+  };
+}
+
+// Lấy hạn mức đã dùng trong ngày của 1 người dùng theo loại giao dịch
+async function getDailyUsed(db, userId, type) {
+  const timezone = await getRequiredDailyLimitTimezone(db);
   const types = BUCKET_TYPES[toBucket(type)].map((t) => `'${t}'`).join(", ");
   const result = await db.query(
     `SELECT COALESCE(SUM(amount + fee), 0)::BIGINT AS daily_used
@@ -126,18 +161,24 @@ async function assertWalletCapacity(
   }
 }
 
-// Lấy danh sách hạn mức tối đa, đã dùng, còn lại của từng loại giao dịch trong ngày
+// Lấy danh sách hạn mức tối đa, đã dùng, còn lại của từng loại giao dịch trong ngày trong 1 lượt đọc DB
 async function getDailyUsage(db, userId, role) {
+  const buckets = Object.keys(BUCKET_TYPES);
+  const [usedByBucket, ...limits] = await Promise.all([
+    getDailyUsedByBuckets(db, userId),
+    ...buckets.map((bucket) => getDailyLimit(db, { userId, role, type: bucket })),
+  ]);
+
   const usage = {};
-  for (const bucket of Object.keys(BUCKET_TYPES)) {
-    const limit = await getDailyLimit(db, { userId, role, type: bucket });
-    const used = await getDailyUsed(db, userId, bucket);
+  buckets.forEach((bucket, idx) => {
+    const limit = limits[idx];
+    const used = usedByBucket[bucket] ?? 0;
     usage[bucket] = {
       limit,
       used,
       remaining: limit === null ? null : Math.max(0, limit - used),
     };
-  }
+  });
   return usage;
 }
 
@@ -147,20 +188,28 @@ async function getDailyUsage(db, userId, role) {
  */
 async function getTransactionLimitsSummary(db, { userId = null, role = "USER" } = {}) {
   const normalizedRole = role === "MERCHANT" ? "MERCHANT" : "USER";
-  const result = {};
+  const [rules, usedByBucket] = await Promise.all([
+    Promise.all(
+      LIMIT_TRANSACTION_TYPES.map((transactionType) =>
+        getEffectiveTransactionLimit(db, {
+          userId,
+          role: normalizedRole,
+          transactionType,
+        }),
+      ),
+    ),
+    userId ? getDailyUsedByBuckets(db, userId) : Promise.resolve(null),
+  ]);
 
-  for (const transactionType of LIMIT_TRANSACTION_TYPES) {
-    const rule = await getEffectiveTransactionLimit(db, {
-      userId,
-      role: normalizedRole,
-      transactionType,
-    });
+  const result = {};
+  LIMIT_TRANSACTION_TYPES.forEach((transactionType, idx) => {
+    const rule = rules[idx];
     const dailyLimit = rule.dailyLimit == null ? null : Number(rule.dailyLimit);
     let dailyUsed = null;
     let dailyRemaining = null;
 
-    if (userId && BUCKET_TYPES[transactionType]) {
-      dailyUsed = await getDailyUsed(db, userId, transactionType);
+    if (userId && BUCKET_TYPES[transactionType] && usedByBucket) {
+      dailyUsed = usedByBucket[transactionType] ?? 0;
       dailyRemaining =
         dailyLimit === null ? null : Math.max(0, dailyLimit - dailyUsed);
     }
@@ -172,7 +221,7 @@ async function getTransactionLimitsSummary(db, { userId = null, role = "USER" } 
       daily_used: dailyUsed,
       daily_remaining: dailyRemaining,
     };
-  }
+  });
 
   return result;
 }

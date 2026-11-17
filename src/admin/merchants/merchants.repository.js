@@ -419,12 +419,19 @@ const adminMerchantsRepository = {
     }
 
     const whereClause = conditions.join(" AND ");
+    const needKycInFilter = Boolean(
+      tab === "PENDING" ||
+        (approvalStatus && approvalStatus !== "ALL") ||
+        status === "PENDING_ACTIVATION" ||
+        status === "DISABLED" ||
+        (search && search.trim() !== ""),
+    );
 
     const countResult = await db.query(
       `
       SELECT COUNT(*)::INT AS total
       FROM users u
-      ${KYC_LATERAL_JOIN}
+      ${needKycInFilter ? KYC_LATERAL_JOIN : ""}
       WHERE ${whereClause}
       `,
       params
@@ -437,27 +444,50 @@ const adminMerchantsRepository = {
 
     const itemsResult = await db.query(
       `
+      WITH paged_merchants AS (
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.phone,
+          u.balance,
+          u.status AS raw_user_status,
+          u.call_back_url,
+          (u.api_key IS NOT NULL) AS has_api_key,
+          (u.secret_key IS NOT NULL) AS has_secret_key,
+          u.totp_enabled,
+          u.created_at,
+          u.updated_at,
+          ${OPERATIONAL_STATUS_EXPR} AS operational_status,
+          ${API_STATUS_EXPR} AS api_status
+          ${needKycInFilter ? `, k.tax_code, k.address, ${APPROVAL_STATUS_EXPR} AS approval_status` : ""}
+        FROM users u
+        ${needKycInFilter ? KYC_LATERAL_JOIN : ""}
+        WHERE ${whereClause}
+        ORDER BY u.created_at DESC, u.id DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      )
       SELECT
         u.id,
         u.full_name,
         u.email,
         u.phone,
         u.balance,
-        u.status AS raw_user_status,
+        u.raw_user_status,
         u.call_back_url,
-        (u.api_key IS NOT NULL) AS has_api_key,
-        (u.secret_key IS NOT NULL) AS has_secret_key,
+        u.has_api_key,
+        u.has_secret_key,
         u.totp_enabled,
         u.created_at,
         u.updated_at,
-        k.tax_code,
-        k.address,
+        ${needKycInFilter ? "u.tax_code" : "k.tax_code"},
+        ${needKycInFilter ? "u.address" : "k.address"},
         lb.account_holder_name AS owner_name,
-        ${APPROVAL_STATUS_EXPR} AS approval_status,
-        ${OPERATIONAL_STATUS_EXPR} AS operational_status,
-        ${API_STATUS_EXPR} AS api_status
-      FROM users u
-      ${KYC_LATERAL_JOIN}
+        ${needKycInFilter ? "u.approval_status" : `${APPROVAL_STATUS_EXPR} AS approval_status`},
+        u.operational_status,
+        u.api_status
+      FROM paged_merchants u
+      ${needKycInFilter ? "" : KYC_LATERAL_JOIN}
       LEFT JOIN LATERAL (
         SELECT l.account_holder_name
         FROM linked_bank_accounts l
@@ -465,9 +495,7 @@ const adminMerchantsRepository = {
         ORDER BY l.is_default DESC, l.created_at DESC
         LIMIT 1
       ) lb ON true
-      WHERE ${whereClause}
       ORDER BY u.created_at DESC, u.id DESC
-      LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       queryParams
     );
@@ -478,7 +506,7 @@ const adminMerchantsRepository = {
     };
   },
 
-  async getMerchantDetail(merchantId) {
+  async getMerchantDetail(merchantId, { now } = {}) {
     const merchantResult = await pool.query(
       `
       SELECT
@@ -598,29 +626,36 @@ const adminMerchantsRepository = {
         ),
         pool.query(
           `
+          WITH bounds AS (
+            SELECT
+              (DATE_TRUNC('month', COALESCE($2::timestamptz, NOW()) AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS curr_start,
+              ((DATE_TRUNC('month', COALESCE($2::timestamptz, NOW()) AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '1 month') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS prev_start,
+              ((DATE_TRUNC('month', COALESCE($2::timestamptz, NOW()) AT TIME ZONE 'Asia/Ho_Chi_Minh') + INTERVAL '1 month') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS next_start
+          )
           SELECT
             COALESCE(
               SUM(t.amount - COALESCE(t.merchant_fee, 0)) FILTER (
-                WHERE t.destination_user_id = $1
-                  AND t.status = 'SUCCESS'
-                  AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
-                  AND date_trunc('month', t.created_at) = date_trunc('month', CURRENT_TIMESTAMP)
+                WHERE t.created_at >= b.curr_start
+                  AND t.created_at < b.next_start
               ),
               0
             )::BIGINT AS current_month_volume,
             COALESCE(
               SUM(t.amount - COALESCE(t.merchant_fee, 0)) FILTER (
-                WHERE t.destination_user_id = $1
-                  AND t.status = 'SUCCESS'
-                  AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
-                  AND date_trunc('month', t.created_at) = date_trunc('month', CURRENT_TIMESTAMP - INTERVAL '1 month')
+                WHERE t.created_at >= b.prev_start
+                  AND t.created_at < b.curr_start
               ),
               0
             )::BIGINT AS previous_month_volume
           FROM transactions t
+          CROSS JOIN bounds b
           WHERE t.destination_user_id = $1
+            AND t.created_at >= b.prev_start
+            AND t.created_at < b.next_start
+            AND t.status = 'SUCCESS'
+            AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
           `,
-          [merchantId]
+          [merchantId, now ?? null]
         ),
       ]);
 

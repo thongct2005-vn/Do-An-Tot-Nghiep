@@ -93,6 +93,13 @@ const userRepository = {
     return result.rows[0];
   },
 
+  async holdPinChallengeAttempt({ userId, attempts }) {
+    await pool.query(
+      `UPDATE users SET pin_failed_attempts = $2, pin_locked_until = NULL WHERE id = $1`,
+      [userId, attempts],
+    );
+  },
+
   async resetFailedPin(userId) {
     await pool.query(
       `UPDATE users SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE id = $1`,

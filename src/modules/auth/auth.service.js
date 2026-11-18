@@ -84,7 +84,6 @@ async function checkCredentials(phone, password) {
   }
 
   user.prior_failed_attempts = Number(user.failed_login_attempts || 0);
-  await authRepository.resetFailedLogin(phone);
   return user;
 }
 
@@ -281,6 +280,10 @@ const authService = {
       await otpService.verifyOtp({ email: user.email, otp });
     }
 
+    if (Number(user.failed_login_attempts || 0) > 0 || user.locked_until) {
+      await authRepository.resetFailedLogin(user.phone || phone);
+    }
+
     if (user.must_change_password === true) {
       return buildFirstLoginChallenge(user, {
         purpose: "user_first_login_change",
@@ -315,6 +318,9 @@ const authService = {
   // sau khi đăng nhập (enableTotp), nên chỉ biết mật khẩu thì chưa chiếm được bước 2.
   async setupTotp({ phone, password }) {
     const user = await checkCredentials(phone, password);
+    if (Number(user.failed_login_attempts || 0) > 0 || user.locked_until) {
+      await authRepository.resetFailedLogin(phone);
+    }
 
     if (user.must_change_password === true) {
       throw httpError(
@@ -350,6 +356,9 @@ const authService = {
   // Cần đúng mật khẩu; trả về đúng khoá cũ, không tạo khoá mới.
   async recoverTotp({ phone, password }) {
     const user = await checkCredentials(phone, password);
+    if (Number(user.failed_login_attempts || 0) > 0 || user.locked_until) {
+      await authRepository.resetFailedLogin(phone);
+    }
 
     if (user.must_change_password === true) {
       throw httpError(
@@ -484,7 +493,7 @@ const authService = {
       throw httpError(400, "Mật khẩu không hợp lệ");
     }
 
-    await otpService.verifyOtp({ email, phone, otp });
+    await otpService.verifyOtp({ email, otp });
 
     const existingUser = await authRepository.findUserByPhone(phone);
     if (existingUser) {

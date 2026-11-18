@@ -13,26 +13,20 @@ const OTP_PATTERN = /^\d{6}$/;
 
 const { httpError } = require("../../utils/httpError");
 
-function detectChannel({ email, phone }) {
-  if (email && phone) {
-    throw httpError(
-      400,
-      "Chỉ được chọn một trong hai: email hoặc số điện thoại",
-    );
+function requireEmail(email) {
+  const normalized = typeof email === "string" ? email.trim() : "";
+  if (!normalized) {
+    throw httpError(400, "Thiếu email");
   }
-  if (email) return { channel: "email", identifier: email };
-  if (phone) return { channel: "phone", identifier: phone };
-
-  throw httpError(400, "Thiếu email hoặc số điện thoại");
+  return normalized;
 }
 
 const otpService = {
-  async generateAndSaveOtp({ email, phone }) {
-    const { channel, identifier } = detectChannel({ email, phone });
+  async generateAndSaveOtp({ email }) {
+    const normalizedEmail = requireEmail(email);
 
     const existing = await otpRepository.findExistingOtp({
-      channel,
-      identifier,
+      email: normalizedEmail,
     });
 
     if (existing) {
@@ -57,43 +51,39 @@ const otpService = {
 
     if (existing) {
       await otpRepository.updateOtp({
-        channel,
-        identifier,
+        email: normalizedEmail,
         otpHash,
         expiredMinutes: OTP_EXPIRE_MINUTES,
       });
     } else {
       await otpRepository.createOtp({
         id: uuidv7(),
-        channel,
-        identifier,
+        email: normalizedEmail,
         otpHash,
         expiredMinutes: OTP_EXPIRE_MINUTES,
       });
     }
 
-    if (channel === "email") {
-      await sendOtpEmail({
-        to: identifier,
-        otp,
-        expiresInMinutes: OTP_EXPIRE_MINUTES,
-      });
-    }
+    await sendOtpEmail({
+      to: normalizedEmail,
+      otp,
+      expiresInMinutes: OTP_EXPIRE_MINUTES,
+    });
 
     return {
-      [channel]: identifier,
+      email: normalizedEmail,
     };
   },
 
   async verifyOtp({ email, otp }) {
-    const { channel, identifier } = detectChannel({ email });
+    const normalizedEmail = requireEmail(email);
 
     const code = String(otp ?? "");
     if (!OTP_PATTERN.test(code)) {
       throw httpError(400, "Mã OTP không hợp lệ");
     }
 
-    const record = await otpRepository.findOtp({ channel, identifier });
+    const record = await otpRepository.findOtp({ email: normalizedEmail });
     if (!record) {
       throw httpError(400, "Mã OTP không hợp lệ hoặc đã được sử dụng");
     }
@@ -109,8 +99,7 @@ const otpService = {
     const isMatch = await bcrypt.compare(code, record.otp_hash);
     if (!isMatch) {
       const row = await otpRepository.registerFailedAttempt({
-        channel,
-        identifier,
+        email: normalizedEmail,
         maxAttempts: MAX_FAILED_ATTEMPTS,
         lockMinutes: LOCK_MINUTES,
       });
@@ -130,12 +119,12 @@ const otpService = {
       );
     }
 
-    const consumed = await otpRepository.consumeOtp({ channel, identifier });
+    const consumed = await otpRepository.consumeOtp({ email: normalizedEmail });
     if (!consumed) {
       throw httpError(400, "Mã OTP đã được sử dụng hoặc hết hạn");
     }
 
-    return { [channel]: identifier };
+    return { email: normalizedEmail };
   },
 };
 

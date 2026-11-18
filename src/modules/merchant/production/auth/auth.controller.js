@@ -37,7 +37,6 @@ const merchantAuthController = {
         password,
         riskChallenge,
       });
-      clearFailure(phone);
       return successResponse(
         res,
         200,

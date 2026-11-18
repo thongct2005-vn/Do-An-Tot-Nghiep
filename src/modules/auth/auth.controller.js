@@ -36,7 +36,6 @@ const authController = {
         password,
         riskChallenge: Boolean(req.risk?.challenge),
       });
-      clearFailure(phone);
       return successResponse(
         res,
         200,

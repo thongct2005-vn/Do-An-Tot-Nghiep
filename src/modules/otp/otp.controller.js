@@ -4,8 +4,8 @@ const { successResponse } = require("../../utils/apiResponse");
 const otpController = {
   async generateOtp(req, res, next) {
     try {
-      const { email, phone } = req.body;
-      const result = await otpService.generateAndSaveOtp({ email, phone });
+      const { email } = req.body;
+      const result = await otpService.generateAndSaveOtp({ email });
       return successResponse(res, 200, "Gửi mã OTP thành công", result);
     } catch (e) {
       next(e);

@@ -96,11 +96,20 @@ const walletService = {
       };
     }
 
-    await userRepository.resetFailedPin(userId);
-
     // Kích hoạt thử thách bảo mật bổ sung (Step-Up OTP Challenge) khi điểm rủi ro cao
     // hoặc khi vừa nhập sai PIN từ 2 lần trở lên trước khi nhập đúng ở lần thứ 3-4.
+    // Không reset pin_failed_attempts trước khi người dùng hoàn tất bước xác thực bổ sung
+    // để tránh trường hợp bấm tắt hộp thoại rồi nhập lại PIN đúng sẽ bỏ qua thử thách.
     if (riskChallenge || attempts >= 3) {
+      const heldAttempts = Math.min(
+        Math.max(attempts - 1, 2),
+        MAX_PIN_ATTEMPTS - 1,
+      );
+      await userRepository.holdPinChallengeAttempt({
+        userId,
+        attempts: heldAttempts,
+      });
+
       if (!claimed.totp_enabled && claimed.email) {
         try {
           await otpService.generateAndSaveOtp({ email: claimed.email });
@@ -129,6 +138,8 @@ const walletService = {
       };
     }
 
+    await userRepository.resetFailedPin(userId);
+
     return {
       is_correct: true,
       pin_token: tokenUtil.generatePinToken({
@@ -154,6 +165,8 @@ const walletService = {
     } else {
       await otpService.verifyOtp({ email: otpUser.email, otp });
     }
+
+    await userRepository.resetFailedPin(userId);
 
     return {
       is_correct: true,

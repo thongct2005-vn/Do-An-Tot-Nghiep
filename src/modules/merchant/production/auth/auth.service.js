@@ -95,7 +95,6 @@ async function checkCredentials(phone, password) {
   }
 
   const priorFailedAttempts = Number(user.failed_login_attempts || 0);
-  await merchantAuthRepository.resetFailedLogin(phone);
   user.prior_failed_attempts = priorFailedAttempts;
   return user;
 }
@@ -291,6 +290,10 @@ const merchantAuthService = {
       await otpService.verifyOtp({ email: user.email, otp });
     }
 
+    if (Number(user.failed_login_attempts || 0) > 0 || user.locked_until) {
+      await merchantAuthRepository.resetFailedLogin(user.phone || phone);
+    }
+
     if (user.must_change_password === true) {
       return buildFirstLoginChallenge(user);
     }
@@ -331,6 +334,9 @@ const merchantAuthService = {
     const user = await checkCredentials(phone, password);
     if (user.id !== userId) {
       throw httpError(403, "Tài khoản không hợp lệ");
+    }
+    if (Number(user.failed_login_attempts || 0) > 0 || user.locked_until) {
+      await merchantAuthRepository.resetFailedLogin(phone);
     }
 
     if (user.totp_enabled) {
@@ -510,7 +516,7 @@ const merchantAuthService = {
     }
     const safeCallbackUrl = await validateCallbackUrlForSave(callbackUrl);
 
-    await otpService.verifyOtp({ email, phone, otp });
+    await otpService.verifyOtp({ email, otp });
 
     const existingUser =
       await merchantAuthRepository.findMerchantByPhone(phone);

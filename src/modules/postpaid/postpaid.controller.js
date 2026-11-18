@@ -129,12 +129,18 @@ const postpaidController = {
     try {
       const { user_id: userId } = req.user;
       const idempotencyKey = req.idempotencyKey;
-      const { amount } = req.body;
+      const {
+        amount,
+        funding_source: fundingSource = "MAIN_WALLET",
+        linked_bank_account_id: linkedBankAccountId = null,
+      } = req.body;
 
       const result = await postpaidService.repayDebt({
         userId,
         amount,
         idempotencyKey,
+        fundingSource,
+        linkedBankAccountId,
       });
 
       emitToUser(userId, "wallet_balance_updated", {
@@ -143,13 +149,16 @@ const postpaidController = {
         type: "POSTPAID_REPAY",
       });
 
+      const viaBankSuffix = result.bankName ? ` qua ${result.bankName}` : "";
       sendPushNotification(userId, {
         title: "Thanh toán Ví trả sau thành công",
-        body: `Bạn đã thanh toán ${Number(result.amount).toLocaleString("vi-VN")}đ dư nợ Ví trả sau. Hạn mức khả dụng: ${Number(result.availableLimitAfter).toLocaleString("vi-VN")}đ`,
+        body: `Bạn đã thanh toán ${Number(result.amount).toLocaleString("vi-VN")}đ dư nợ Ví trả sau${viaBankSuffix}. Hạn mức khả dụng: ${Number(result.availableLimitAfter).toLocaleString("vi-VN")}đ`,
         data: {
           type: "POSTPAID_REPAY",
           transactionId: result.transactionId,
           balance: result.mainBalanceAfter,
+          fundingSource: result.fundingSource,
+          ...(result.bankName ? { bankName: result.bankName } : {}),
         },
       });
 

@@ -216,7 +216,10 @@ function calculateIntegrityAndAnomalies(t) {
           message: "Giao dịch thu phí thiếu dữ liệu ảnh chụp số dư nguồn",
         });
       } else {
-        const sourceExpected = sourceBefore - (amount + fee);
+        const isBankFunded = Boolean(t.linked_bank_account_id);
+        const sourceExpected = isBankFunded
+          ? sourceBefore
+          : sourceBefore - (amount + fee);
         const sourceMatches = sourceAfter === sourceExpected;
         source_snapshot_status = sourceMatches ? "VALID" : "INVALID";
         if (sourceMatches) {

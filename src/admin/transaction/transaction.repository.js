@@ -56,7 +56,10 @@ function buildFilterConditions({
              AND t.destination_user_id IS NULL
              AND t.source_balance_before IS NOT NULL
              AND t.source_balance_after IS NOT NULL
-             AND (t.source_balance_before - t.amount - COALESCE(t.user_fee, 0) != t.source_balance_after))
+             AND (
+               (t.linked_bank_account_id IS NOT NULL AND t.source_balance_before != t.source_balance_after)
+               OR (t.linked_bank_account_id IS NULL AND (t.source_balance_before - t.amount - COALESCE(t.user_fee, 0) != t.source_balance_after))
+             ))
             OR
             (t.transaction_type = 'TOPUP' 
              AND t.source_balance_before IS NOT NULL 

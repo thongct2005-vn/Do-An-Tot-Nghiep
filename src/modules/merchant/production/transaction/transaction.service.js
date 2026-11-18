@@ -17,6 +17,7 @@ const {
   parseAmountInRange,
   parseAmount,
   formatVnd,
+  assertBankFundingMinAmount,
 } = require("../../../../utils/amount");
 const { uuidv7 } = require("uuidv7");
 const pool = require("../../../../config/database");
@@ -46,6 +47,19 @@ const {
   assertKyc,
   assertKycBoth,
 } = require("../../../kyc/kyc.guard");
+const {
+  normalizeTypeAndDirection,
+  normalizeHistoryStatus,
+  normalizeAmountRange,
+  normalizeFundingSourceFilter,
+} = require("../../../../utils/historyFilters");
+
+const MERCHANT_FUNDING_ALIAS_MAP = {
+  MIO: "MAIN_WALLET",
+  MAIN_WALLET: "MAIN_WALLET",
+  WALLET: "MAIN_WALLET",
+  BANK: "BANK",
+};
 
 
 function toNumberOrNull(value) {
@@ -381,7 +395,11 @@ const merchantTransactionService = {
           role: "MERCHANT",
           transactionType: "TRANSFER",
         });
-        return parseAmountInRange(amount, transferRule, "chuyển");
+        const parsed = parseAmountInRange(amount, transferRule, "chuyển");
+        if (isBankFunded) {
+          assertBankFundingMinAmount(parsed, "chuyển tiền");
+        }
+        return parsed;
       },
     );
 
@@ -496,7 +514,21 @@ const merchantTransactionService = {
   },
 
   // Xuất lịch sử giao dịch ra file Excel (web merchant)
-  async exportHistory(userId, { keyword, type, startDate, endDate, productId }) {
+  async exportHistory(
+    userId,
+    {
+      keyword,
+      type,
+      direction = null,
+      startDate,
+      endDate,
+      productId,
+      status = null,
+      minAmount = null,
+      maxAmount = null,
+      fundingSource = null,
+    },
+  ) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để xuất lịch sử giao dịch");
     }
@@ -504,19 +536,32 @@ const merchantTransactionService = {
     const range = resolveExportRange(startDate, endDate);
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
     const normalizedProductId = normalizeProductIdFilter(productId);
-    const normalizedType =
-      type && String(type).trim() ? String(type).trim().toUpperCase() : null;
-    if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
-      throw httpError(400, "Loại giao dịch không hợp lệ");
-    }
+    const { type: normalizedType, direction: normalizedDirection } =
+      normalizeTypeAndDirection({
+        type,
+        direction,
+        allowedTypes: TRANSACTION_TYPES,
+      });
+    const normalizedStatus = normalizeHistoryStatus(status);
+    const { minAmount: parsedMinAmount, maxAmount: parsedMaxAmount } =
+      normalizeAmountRange(minAmount, maxAmount);
+    const normalizedFundingSource = normalizeFundingSourceFilter(
+      fundingSource,
+      MERCHANT_FUNDING_ALIAS_MAP,
+    );
 
     const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS", pool);
     const rows = await merchantTransactionRepository.exportHistory(userId, {
       keyword: normalizedKeyword,
       type: normalizedType,
+      direction: normalizedDirection,
       startDate: range.startDate,
       endDate: range.endDate,
       productId: normalizedProductId,
+      status: normalizedStatus,
+      minAmount: parsedMinAmount,
+      maxAmount: parsedMaxAmount,
+      fundingSource: normalizedFundingSource,
       limit: exportMaxRows + 1,
     });
     if (rows.length > exportMaxRows) {
@@ -527,7 +572,24 @@ const merchantTransactionService = {
     }
 
     const filters = [];
-    if (normalizedType) filters.push(`loại ${normalizedType}`);
+    if (normalizedType) {
+      filters.push(
+        normalizedType === "TRANSFER" && normalizedDirection
+          ? `dịch vụ ${normalizedDirection === "OUT" ? "Chuyển tiền" : "Nhận tiền"}`
+          : `loại ${normalizedType}`,
+      );
+    }
+    if (normalizedStatus) filters.push(`trạng thái ${normalizedStatus}`);
+    if (normalizedFundingSource) {
+      filters.push(
+        `nguồn ${normalizedFundingSource === "BANK" ? "Ngân hàng liên kết" : "Ví Mio Merchant"}`,
+      );
+    }
+    if (parsedMinAmount !== null || parsedMaxAmount !== null) {
+      const fromText = parsedMinAmount !== null ? formatVnd(parsedMinAmount) : "0đ";
+      const toText = parsedMaxAmount !== null ? formatVnd(parsedMaxAmount) : "Không giới hạn";
+      filters.push(`số tiền ${fromText} - ${toText}`);
+    }
     if (normalizedProductId) filters.push(`sản phẩm ${normalizedProductId}`);
     if (normalizedKeyword) filters.push(`từ khóa "${normalizedKeyword}"`);
 
@@ -546,6 +608,11 @@ const merchantTransactionService = {
         start_date: range.startDate,
         end_date: range.endDate,
         type: normalizedType,
+        direction: normalizedDirection,
+        status: normalizedStatus,
+        min_amount: parsedMinAmount,
+        max_amount: parsedMaxAmount,
+        funding_source: normalizedFundingSource,
         keyword: normalizedKeyword,
         product_id: normalizedProductId,
         row_count: rows.length,
@@ -560,7 +627,22 @@ const merchantTransactionService = {
 
   async getTransferHistory(
     userId,
-    { cursorId, limit, keyword, type, startDate, endDate, sort, sortBy, productId },
+    {
+      cursorId,
+      limit,
+      keyword,
+      type,
+      direction = null,
+      startDate,
+      endDate,
+      sort,
+      sortBy,
+      productId,
+      status = null,
+      minAmount = null,
+      maxAmount = null,
+      fundingSource = null,
+    },
   ) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
@@ -574,11 +656,19 @@ const merchantTransactionService = {
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
     const normalizedProductId = normalizeProductIdFilter(productId);
 
-    const normalizedType =
-      type && String(type).trim() ? String(type).trim().toUpperCase() : null;
-    if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
-      throw httpError(400, "Loại giao dịch không hợp lệ");
-    }
+    const { type: normalizedType, direction: normalizedDirection } =
+      normalizeTypeAndDirection({
+        type,
+        direction,
+        allowedTypes: TRANSACTION_TYPES,
+      });
+    const normalizedStatus = normalizeHistoryStatus(status);
+    const { minAmount: parsedMinAmount, maxAmount: parsedMaxAmount } =
+      normalizeAmountRange(minAmount, maxAmount);
+    const normalizedFundingSource = normalizeFundingSourceFilter(
+      fundingSource,
+      MERCHANT_FUNDING_ALIAS_MAP,
+    );
 
     const normalizedSort =
       sort !== undefined && sort !== null && String(sort).trim()
@@ -631,11 +721,16 @@ const merchantTransactionService = {
         limit: maxLimit,
         keyword: normalizedKeyword,
         type: normalizedType,
+        direction: normalizedDirection,
         startDate: startDay,
         endDate: endDay,
         sort: normalizedSort,
         sortBy: normalizedSortBy,
         productId: normalizedProductId,
+        status: normalizedStatus,
+        minAmount: parsedMinAmount,
+        maxAmount: parsedMaxAmount,
+        fundingSource: normalizedFundingSource,
       },
     );
 

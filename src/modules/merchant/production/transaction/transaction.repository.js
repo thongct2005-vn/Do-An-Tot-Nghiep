@@ -16,6 +16,71 @@ const POSTPAID_PAYER_JOIN = `
 
 const FUNDING_SOURCE_SELECT = `'Ví Mio'::text AS funding_source`;
 
+function buildMerchantExtraFilters({
+  direction = null,
+  status = null,
+  minAmount = null,
+  maxAmount = null,
+  fundingSource = null,
+  startIndex,
+}) {
+  const hasDirection = Boolean(direction && String(direction).trim());
+  const hasStatus = Boolean(status && String(status).trim());
+  const hasMinAmount = minAmount !== null && minAmount !== undefined;
+  const hasMaxAmount = maxAmount !== null && maxAmount !== undefined;
+  const hasFundingSource = Boolean(fundingSource && String(fundingSource).trim());
+
+  const iDirFlag = startIndex;
+  const iDirVal = startIndex + 1;
+  const iStatusFlag = startIndex + 2;
+  const iStatusVal = startIndex + 3;
+  const iMinFlag = startIndex + 4;
+  const iMinVal = startIndex + 5;
+  const iMaxFlag = startIndex + 6;
+  const iMaxVal = startIndex + 7;
+  const iFundFlag = startIndex + 8;
+  const iFundVal = startIndex + 9;
+
+  const sql = `
+        AND (
+          $${iDirFlag}::boolean = false
+          OR (
+            CASE
+              WHEN t.transaction_type = 'TOPUP' THEN 'IN'
+              WHEN t.source_user_id = $1 THEN 'OUT'
+              ELSE 'IN'
+            END
+          ) = $${iDirVal}::text
+        )
+        AND ($${iStatusFlag}::boolean = false OR t.status = $${iStatusVal}::text)
+        AND ($${iMinFlag}::boolean = false OR t.amount >= $${iMinVal}::bigint)
+        AND ($${iMaxFlag}::boolean = false OR t.amount <= $${iMaxVal}::bigint)
+        AND (
+          $${iFundFlag}::boolean = false
+          OR (
+            CASE
+              WHEN t.linked_bank_account_id IS NOT NULL AND lba.user_id = $1 THEN 'BANK'
+              ELSE 'MAIN_WALLET'
+            END
+          ) = $${iFundVal}::text
+        )`;
+
+  const values = [
+    hasDirection,
+    hasDirection ? String(direction).trim().toUpperCase() : null,
+    hasStatus,
+    hasStatus ? String(status).trim().toUpperCase() : null,
+    hasMinAmount,
+    hasMinAmount ? Number(minAmount) : null,
+    hasMaxAmount,
+    hasMaxAmount ? Number(maxAmount) : null,
+    hasFundingSource,
+    hasFundingSource ? String(fundingSource).trim().toUpperCase() : null,
+  ];
+
+  return { sql, values };
+}
+
 const merchantTransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
     const result = await pool.query(
@@ -120,11 +185,16 @@ const merchantTransactionRepository = {
       limit,
       keyword = null,
       type = null,
+      direction = null,
       startDate = null,
       endDate = null,
       sort = "DESC",
       sortBy = "time",
       productId = null,
+      status = null,
+      minAmount = null,
+      maxAmount = null,
+      fundingSource = null,
     } = {},
   ) {
     const hasCursor = Boolean(cursorId);
@@ -141,10 +211,40 @@ const merchantTransactionRepository = {
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
 
+    const baseParams = [
+      userId,
+      hasCursor,
+      cursorId,
+      limit,
+      hasKeyword,
+      safeKeyword,
+      hasStartDate,
+      startDate,
+      hasEndDate,
+      endDate,
+      hasType,
+      type,
+      hasProductId,
+      productId,
+    ];
+    const extraFilters = buildMerchantExtraFilters({
+      direction,
+      status,
+      minAmount,
+      maxAmount,
+      fundingSource,
+      startIndex: baseParams.length + 1,
+    });
+    const params = [...baseParams, ...extraFilters.values];
+    const pCursorAmt = `$${params.length + 1}`;
+    if (isAmountSort) {
+      params.push(hasCursor ? Number(cursorAmount || 0) : 0);
+    }
+
     const cursorClause = isAmountSort
       ? isAsc
-        ? `(t.amount > $15::bigint OR (t.amount = $15::bigint AND (LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)))`
-        : `(t.amount < $15::bigint OR (t.amount = $15::bigint AND (LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)))`
+        ? `(t.amount > ${pCursorAmt}::bigint OR (t.amount = ${pCursorAmt}::bigint AND (LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)))`
+        : `(t.amount < ${pCursorAmt}::bigint OR (t.amount = ${pCursorAmt}::bigint AND (LENGTH(t.id), t.id) < (LENGTH($3::text), $3::text)))`
       : isIdSort
         ? isAsc
           ? `(LENGTH(t.id), t.id) > (LENGTH($3::text), $3::text)`
@@ -255,43 +355,11 @@ const merchantTransactionRepository = {
               AND pri.product_id = $14::text
           )
         )
+        ${extraFilters.sql}
       ORDER BY ${orderByClause}
       LIMIT $4
       `,
-      isAmountSort
-        ? [
-          userId,
-          hasCursor,
-          cursorId,
-          limit,
-          hasKeyword,
-          safeKeyword,
-          hasStartDate,
-          startDate,
-          hasEndDate,
-          endDate,
-          hasType,
-          type,
-          hasProductId,
-          productId,
-          hasCursor ? Number(cursorAmount || 0) : 0,
-        ]
-        : [
-          userId,
-          hasCursor,
-          cursorId,
-          limit,
-          hasKeyword,
-          safeKeyword,
-          hasStartDate,
-          startDate,
-          hasEndDate,
-          endDate,
-          hasType,
-          type,
-          hasProductId,
-          productId,
-        ],
+      params,
     );
 
     const rows = result.rows;
@@ -314,7 +382,19 @@ const merchantTransactionRepository = {
    */
   async exportHistory(
     userId,
-    { keyword = null, type = null, startDate, endDate, productId = null, limit = null },
+    {
+      keyword = null,
+      type = null,
+      direction = null,
+      startDate,
+      endDate,
+      productId = null,
+      status = null,
+      minAmount = null,
+      maxAmount = null,
+      fundingSource = null,
+      limit = null,
+    },
   ) {
     const hasKeyword = Boolean(keyword && keyword.trim());
     const hasType = Boolean(type);
@@ -322,6 +402,27 @@ const merchantTransactionRepository = {
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
+
+    const baseExportParams = [
+      userId,
+      hasKeyword,
+      safeKeyword,
+      startDate,
+      endDate,
+      hasType,
+      type,
+      limit,
+      hasProductId,
+      productId,
+    ];
+    const extraFilters = buildMerchantExtraFilters({
+      direction,
+      status,
+      minAmount,
+      maxAmount,
+      fundingSource,
+      startIndex: baseExportParams.length + 1,
+    });
 
     const result = await pool.query(
       `
@@ -410,10 +511,11 @@ const merchantTransactionRepository = {
               AND pri.product_id = $10::text
           )
         )
+        ${extraFilters.sql}
       ORDER BY t.created_at ASC, t.id ASC
       LIMIT $8::int
       `,
-      [userId, hasKeyword, safeKeyword, startDate, endDate, hasType, type, limit, hasProductId, productId],
+      [...baseExportParams, ...extraFilters.values],
     );
 
     return result.rows;

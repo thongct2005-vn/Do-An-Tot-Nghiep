@@ -235,6 +235,10 @@ const transactionController = {
         direction,
         start_date: startDate,
         end_date: endDate,
+        status,
+        min_amount: minAmount,
+        max_amount: maxAmount,
+        funding_source: fundingSource,
       } = req.query;
 
       const result = await transactionService.getTransferHistory(userId, {
@@ -245,6 +249,10 @@ const transactionController = {
         direction,
         startDate,
         endDate,
+        status,
+        minAmount,
+        maxAmount,
+        fundingSource,
       });
 
       return successResponse(

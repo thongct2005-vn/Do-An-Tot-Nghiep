@@ -155,11 +155,16 @@ const merchantTransactionController = {
         limit,
         keyword,
         type,
+        direction,
         start_date: startDate,
         end_date: endDate,
         sort,
         sort_by: sortBy,
         product_id: productId,
+        status,
+        min_amount: minAmount,
+        max_amount: maxAmount,
+        funding_source: fundingSource,
       } = req.query;
 
       const result = await merchantTransactionService.getTransferHistory(
@@ -169,11 +174,16 @@ const merchantTransactionController = {
           limit,
           keyword,
           type,
+          direction,
           startDate,
           endDate,
           sort,
           sortBy,
           productId,
+          status,
+          minAmount,
+          maxAmount,
+          fundingSource,
         },
       );
 
@@ -194,17 +204,27 @@ const merchantTransactionController = {
       const {
         keyword,
         type,
+        direction,
         start_date: startDate,
         end_date: endDate,
         product_id: productId,
+        status,
+        min_amount: minAmount,
+        max_amount: maxAmount,
+        funding_source: fundingSource,
       } = req.query;
 
       const file = await merchantTransactionService.exportHistory(userId, {
         keyword,
         type,
+        direction,
         startDate,
         endDate,
         productId,
+        status,
+        minAmount,
+        maxAmount,
+        fundingSource,
       });
 
       return sendXlsx(res, file);

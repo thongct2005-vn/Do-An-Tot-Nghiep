@@ -63,12 +63,20 @@ app.use(
   }),
 );
 
+app.use((req, res, next) => {
+  res.on("finish", () => {
+    const suffix = res.locals.errorMessage ? ` - ${res.locals.errorMessage}` : "";
+    console.log(`[${res.statusCode}] ${req.method} ${req.originalUrl}${suffix}`);
+  });
+  next();
+});
+
 if (!environment) {
   throw new Error("Thiếu môi trường");
 } else if (environment === "production") {
   app.use("/api/v2", router);
 }
-else if(environment === "sandbox"){
+else if (environment === "sandbox") {
   app.use("/sb/api/v2", router);
 }
 else {

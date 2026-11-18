@@ -1,6 +1,9 @@
 const postpaidRepository = require("./postpaid.repository");
 const { httpError } = require("../../utils/httpError");
-const { parseAmount } = require("../../utils/amount");
+const {
+  parseAmount,
+  assertBankFundingMinAmount,
+} = require("../../utils/amount");
 const { assertKyc } = require("../kyc/kyc.guard");
 const { resolveOneYearRange } = require("../../utils/dateRange");
 const transactionRepository = require("../transaction/transaction.repository");
@@ -102,10 +105,29 @@ const postpaidService = {
     });
   },
 
-  async repayDebt({ userId, amount, idempotencyKey }) {
+  async repayDebt({
+    userId,
+    amount,
+    idempotencyKey,
+    fundingSource = "MAIN_WALLET",
+    linkedBankAccountId = null,
+  }) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin người dùng");
     }
+    const normalizedFunding = String(
+      fundingSource || (linkedBankAccountId ? "BANK" : "MAIN_WALLET"),
+    )
+      .trim()
+      .toUpperCase();
+    if (!["MAIN_WALLET", "BANK"].includes(normalizedFunding)) {
+      throw httpError(400, "Nguồn tiền thanh toán không hợp lệ");
+    }
+    if (normalizedFunding === "BANK" && !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
+    }
+    const isBankFunded = normalizedFunding === "BANK";
+
     const parsedAmount = parseAmount(amount);
     if (!Number.isSafeInteger(parsedAmount) || parsedAmount <= 0) {
       throw httpError(400, "Số tiền thanh toán dư nợ phải lớn hơn 0");
@@ -115,17 +137,26 @@ const postpaidService = {
         transactionType: "PAYMENT",
         sourceUserId: userId,
         amount: parsedAmount,
+        linkedBankAccountId: isBankFunded ? linkedBankAccountId : null,
         feeRateSnapshot: {
           funding_source: "POSTPAID",
           postpaid_action: "REPAY_PRINCIPAL",
+          ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
         },
       },
-      () => assertKyc(userId),
+      async () => {
+        await assertKyc(userId);
+        if (isBankFunded) {
+          assertBankFundingMinAmount(parsedAmount, "thanh toán");
+        }
+      },
     );
     return postpaidRepository.repayDebt({
       userId,
       amount: parsedAmount,
       idempotencyKey,
+      fundingSource: normalizedFunding,
+      linkedBankAccountId: isBankFunded ? linkedBankAccountId : null,
     });
   },
 

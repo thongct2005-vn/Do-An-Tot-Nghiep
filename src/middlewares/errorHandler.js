@@ -9,9 +9,7 @@ const errorHandler = (err, req, res, next) => {
   if (err.statusCode === 500) {
     console.log(err.stack);
   } else {
-    console.log(
-      `[${statusCode}] ${req.method} ${req.originalUrl} - ${message}`,
-    );
+    res.locals.errorMessage = message;
   }
 
   if (err.code === "23505") {

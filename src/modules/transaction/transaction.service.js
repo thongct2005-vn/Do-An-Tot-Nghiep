@@ -1,6 +1,9 @@
 const transactionRepository = require("./transaction.repository");
 const { httpError } = require("../../utils/httpError");
-const { parseAmountInRange } = require("../../utils/amount");
+const {
+  parseAmountInRange,
+  assertBankFundingMinAmount,
+} = require("../../utils/amount");
 const pool = require("../../config/database");
 const {
   getEffectiveTransactionLimit,
@@ -24,9 +27,21 @@ const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
 const postpaidService = require("../postpaid/postpaid.service");
+const {
+  normalizeTypeAndDirection,
+  normalizeHistoryStatus,
+  normalizeAmountRange,
+  normalizeFundingSourceFilter,
+} = require("../../utils/historyFilters");
 
 const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
 const TRANSACTION_DIRECTIONS = ["IN", "OUT"];
+const USER_FUNDING_ALIAS_MAP = {
+  MIO: "MIO",
+  MAIN_WALLET: "MIO",
+  WALLET: "MIO",
+  POSTPAID: "POSTPAID",
+};
 
 async function resolveActorRole(userId, explicitRole = null) {
   if (explicitRole) return explicitRole;
@@ -81,7 +96,11 @@ const TransactionService = {
           role: actorRole,
           transactionType: "TRANSFER",
         });
-        return parseAmountInRange(amount, transferRule, "chuyển");
+        const parsed = parseAmountInRange(amount, transferRule, "chuyển");
+        if (isBankFunded) {
+          assertBankFundingMinAmount(parsed, "chuyển tiền");
+        }
+        return parsed;
       },
     );
 
@@ -247,7 +266,19 @@ const TransactionService = {
 
   async getTransferHistory(
     userId,
-    { cursorId, limit, keyword, type, direction, startDate, endDate },
+    {
+      cursorId,
+      limit,
+      keyword,
+      type,
+      direction,
+      startDate,
+      endDate,
+      status = null,
+      minAmount = null,
+      maxAmount = null,
+      fundingSource = null,
+    },
   ) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy lịch sử giao dịch");
@@ -260,32 +291,20 @@ const TransactionService = {
     );
 
     const normalizedKeyword = keyword && keyword.trim() ? keyword.trim() : null;
-    const rawType =
-      type && String(type).trim() ? String(type).trim().toUpperCase() : null;
-    let normalizedDirection =
-      direction && String(direction).trim()
-        ? String(direction).trim().toUpperCase()
-        : null;
-    if (
-      normalizedDirection &&
-      !TRANSACTION_DIRECTIONS.includes(normalizedDirection)
-    ) {
-      throw httpError(400, "Chiều giao dịch không hợp lệ");
-    }
-
-    let normalizedType = rawType;
-    if (rawType === "TRANSFER_OUT" || rawType === "TRANSFER_IN") {
-      const impliedDirection = rawType === "TRANSFER_OUT" ? "OUT" : "IN";
-      if (normalizedDirection && normalizedDirection !== impliedDirection) {
-        throw httpError(400, "Loại giao dịch không khớp với chiều giao dịch");
-      }
-      normalizedType = "TRANSFER";
-      normalizedDirection = impliedDirection;
-    }
-
-    if (normalizedType && !TRANSACTION_TYPES.includes(normalizedType)) {
-      throw httpError(400, "Loại giao dịch không hợp lệ");
-    }
+    const { type: normalizedType, direction: normalizedDirection } =
+      normalizeTypeAndDirection({
+        type,
+        direction,
+        allowedTypes: TRANSACTION_TYPES,
+        allowedDirections: TRANSACTION_DIRECTIONS,
+      });
+    const normalizedStatus = normalizeHistoryStatus(status);
+    const { minAmount: parsedMinAmount, maxAmount: parsedMaxAmount } =
+      normalizeAmountRange(minAmount, maxAmount);
+    const normalizedFundingSource = normalizeFundingSourceFilter(
+      fundingSource,
+      USER_FUNDING_ALIAS_MAP,
+    );
 
     const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
       startDate,
@@ -305,6 +324,10 @@ const TransactionService = {
       direction: normalizedDirection,
       startDate: startDay,
       endDate: endDay,
+      status: normalizedStatus,
+      minAmount: parsedMinAmount,
+      maxAmount: parsedMaxAmount,
+      fundingSource: normalizedFundingSource,
     });
   },
 

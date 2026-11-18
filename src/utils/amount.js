@@ -37,4 +37,22 @@ function parseAmountInRange(raw, rule, label) {
   return value;
 }
 
-module.exports = { parseAmount, parseAmountInRange, formatVnd };
+const BANK_FUNDING_MIN_AMOUNT = 10000;
+
+// Kiểm tra số tiền tối thiểu khi dùng nguồn tiền ngân hàng liên kết
+function assertBankFundingMinAmount(amount, actionLabel = "giao dịch") {
+  if (Number(amount) < BANK_FUNDING_MIN_AMOUNT) {
+    throw httpError(
+      400,
+      `Số tiền ${actionLabel} qua ngân hàng liên kết tối thiểu là ${formatVnd(BANK_FUNDING_MIN_AMOUNT)}`,
+    );
+  }
+}
+
+module.exports = {
+  parseAmount,
+  parseAmountInRange,
+  formatVnd,
+  BANK_FUNDING_MIN_AMOUNT,
+  assertBankFundingMinAmount,
+};

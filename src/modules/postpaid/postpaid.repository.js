@@ -1435,10 +1435,28 @@ const postpaidRepository = {
     return resultPayload;
   },
 
-  async repayDebt({ userId, amount, idempotencyKey }) {
+  async repayDebt({
+    userId,
+    amount,
+    idempotencyKey,
+    fundingSource = "MAIN_WALLET",
+    linkedBankAccountId = null,
+  }) {
     const repayAmount = Number(amount);
     if (!Number.isSafeInteger(repayAmount) || repayAmount <= 0) {
       throw httpError(400, "Số tiền thanh toán dư nợ không hợp lệ");
+    }
+    const normalizedFunding = String(
+      fundingSource || (linkedBankAccountId ? "BANK" : "MAIN_WALLET"),
+    )
+      .trim()
+      .toUpperCase();
+    if (!["MAIN_WALLET", "BANK"].includes(normalizedFunding)) {
+      throw httpError(400, "Nguồn tiền thanh toán không hợp lệ");
+    }
+    const isBankFunded = normalizedFunding === "BANK" || Boolean(linkedBankAccountId);
+    if (isBankFunded && !linkedBankAccountId) {
+      throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
     }
 
     const { statuses, entryActions } =
@@ -1478,15 +1496,20 @@ const postpaidRepository = {
       sourceUserId: userId,
       destinationUserId: null,
       amount: repayAmount,
+      linkedBankAccountId: isBankFunded ? linkedBankAccountId : null,
       sourceBalance: null,
-      feeRateSnapshot: { funding_source: "POSTPAID", postpaid_action: "REPAY_PRINCIPAL" },
+      feeRateSnapshot: {
+        funding_source: "POSTPAID",
+        postpaid_action: "REPAY_PRINCIPAL",
+        ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
+      },
       shouldRecordFailure: true,
     };
 
     try {
       await client.query("BEGIN");
 
-      // Khóa ví người trả nợ trước; SYSTEM_POSTPAID_WALLET khóa ở cuối sau khi kiểm tra xong điều kiện nợ/số dư
+      // Khóa ví người trả nợ trước; ngân hàng liên kết (nếu có); rồi postpaid_wallets và các ví hệ thống ở cuối
       const usersMap = await lockUsersByIdsOrdered(client, [userId]);
       const user = usersMap.get(String(userId));
 
@@ -1497,6 +1520,23 @@ const postpaidRepository = {
       repayFailureCtx.sourceBalance = Number(user.balance);
       if (user.status !== "ACTIVE" || user.role === "SYSTEM") {
         throw httpError(403, "Tài khoản của bạn đang bị khóa hoặc không khả dụng");
+      }
+
+      let bankRow = null;
+      if (isBankFunded) {
+        const bankRes = await client.query(
+          `SELECT lba.id, lba.balance, b.name AS bank_name
+             FROM linked_bank_accounts lba
+             LEFT JOIN banks b ON lba.bank_id = b.id
+            WHERE lba.id = $1 AND lba.user_id = $2 AND lba.status = 'ACTIVE'
+            FOR UPDATE OF lba`,
+          [linkedBankAccountId, userId],
+        );
+        bankRow = bankRes.rows[0] || null;
+        if (!bankRow) {
+          repayFailureCtx.linkedBankAccountId = null;
+          throw httpError(404, "Không tìm thấy ngân hàng liên kết");
+        }
       }
 
       const pwRes = await client.query(
@@ -1539,11 +1579,27 @@ const postpaidRepository = {
       repayFailureCtx.feeRateSnapshot = {
         funding_source: "POSTPAID",
         postpaid_action: effectiveRepayAction,
+        ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
       };
 
       const userBefore = Number(user.balance);
-      if (userBefore < repayAmount) {
-        throw httpError(422, "Số dư ví chính không đủ để thanh toán dư nợ");
+      let userAfter = userBefore;
+      let bankBalanceBefore = null;
+      let bankBalanceAfter = null;
+      if (isBankFunded) {
+        bankBalanceBefore = Number(bankRow.balance);
+        if (bankBalanceBefore < repayAmount) {
+          throw httpError(
+            422,
+            "Số dư tài khoản ngân hàng không đủ để thanh toán dư nợ",
+          );
+        }
+        bankBalanceAfter = bankBalanceBefore - repayAmount;
+      } else {
+        if (userBefore < repayAmount) {
+          throw httpError(422, "Số dư ví chính không đủ để thanh toán dư nợ");
+        }
+        userAfter = userBefore - repayAmount;
       }
 
       const newLateFee = oldLateFee - paidLateFee;
@@ -1564,7 +1620,6 @@ const postpaidRepository = {
           ? activeStatus
           : pw.status;
 
-      const userAfter = userBefore - repayAmount;
       const sysWallet = await lockSystemPostpaidWalletTx(
         client,
         postpaidWalletId,
@@ -1572,10 +1627,17 @@ const postpaidRepository = {
       const sysBefore = Number(sysWallet.balance);
       const sysAfter = sysBefore + paidPrincipal;
 
-      await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
-        userAfter,
-        userId,
-      ]);
+      if (isBankFunded) {
+        await client.query(
+          `UPDATE linked_bank_accounts SET balance = $1 WHERE id = $2`,
+          [bankBalanceAfter, linkedBankAccountId],
+        );
+      } else {
+        await client.query(
+          `UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`,
+          [userAfter, userId],
+        );
+      }
 
       if (paidPrincipal > 0) {
         await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
@@ -1596,15 +1658,31 @@ const postpaidRepository = {
                 : "Thanh toán dư nợ Ví trả sau";
 
       const hasPrincipal = paidPrincipal > 0;
+      const repaySnapshot =
+        isBankFunded || paidFeeTotal > 0
+          ? {
+              funding_source: "POSTPAID",
+              postpaid_action: effectiveRepayAction,
+              ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
+              ...(paidFeeTotal > 0
+                ? {
+                    cycle_month: pw.current_cycle_month,
+                    late_fee_paid: paidLateFee,
+                    service_fee_paid: paidServiceFee,
+                  }
+                : {}),
+            }
+          : null;
+
       const txInsertRes = await client.query(
         `INSERT INTO transactions (
            transaction_type,
            source_user_id, source_balance_before, source_balance_after,
            destination_user_id, dest_balance_before, dest_balance_after,
            amount, user_fee, merchant_fee, fee_rate_snapshot,
-           description, idempotency_key, status
+           description, idempotency_key, status, linked_bank_account_id
          )
-         VALUES ('PAYMENT', $1, $2, $3, $4, $5, $6, $7, $8, 0, $9::jsonb, $10, $11, 'SUCCESS')
+         VALUES ('PAYMENT', $1, $2, $3, $4, $5, $6, $7, $8, 0, $9::jsonb, $10, $11, 'SUCCESS', $12)
          RETURNING id, status, created_at`,
         [
           userId,
@@ -1615,19 +1693,10 @@ const postpaidRepository = {
           hasPrincipal ? sysAfter : null,
           hasPrincipal ? paidPrincipal : paidFeeTotal,
           hasPrincipal ? paidFeeTotal : 0,
-          serializeFeeRateSnapshot(
-            paidFeeTotal > 0
-              ? {
-                  funding_source: "POSTPAID",
-                  postpaid_action: effectiveRepayAction,
-                  cycle_month: pw.current_cycle_month,
-                  late_fee_paid: paidLateFee,
-                  service_fee_paid: paidServiceFee,
-                }
-              : null,
-          ),
+          serializeFeeRateSnapshot(repaySnapshot),
           description,
           idempotencyKey,
+          isBankFunded ? linkedBankAccountId : null,
         ],
       );
 
@@ -1721,6 +1790,10 @@ const postpaidRepository = {
       await recordAudit(client, "POSTPAID_REPAY", {
         user_id: userId,
         transaction_id: createdTxId,
+        funding_source: isBankFunded ? "BANK" : "MAIN_WALLET",
+        linked_bank_account_id: isBankFunded ? linkedBankAccountId : null,
+        bank_balance_before: bankBalanceBefore,
+        bank_balance_after: bankBalanceAfter,
         repay_amount: repayAmount,
         paid_late_fee: paidLateFee,
         paid_service_fee: paidServiceFee,
@@ -1744,6 +1817,8 @@ const postpaidRepository = {
         paidServiceFee,
         paidLateFee,
         mainBalanceAfter: userAfter,
+        fundingSource: isBankFunded ? "BANK" : "MAIN_WALLET",
+        bankName: bankRow?.bank_name || null,
         usedAmountAfter: newUsed,
         availableLimitAfter: creditLimit - newUsed,
         billedAmountAfter: newBilled,

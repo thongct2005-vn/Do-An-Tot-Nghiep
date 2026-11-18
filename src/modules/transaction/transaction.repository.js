@@ -2,6 +2,7 @@ const pool = require("../../config/database");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
+const { assertBankFundingMinAmount } = require("../../utils/amount");
 const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
 const { assertKyc } = require("../kyc/kyc.guard");
 const { uuidv7 } = require("uuidv7");
@@ -310,6 +311,12 @@ const TransactionRepository = {
     }
     if (isBankFunded && !linkedBankAccountId) {
       throw httpError(400, "Thiếu thông tin ngân hàng liên kết");
+    }
+    if (isBankFunded) {
+      assertBankFundingMinAmount(
+        amountNum,
+        transactionType === "PAYMENT" ? "thanh toán" : "chuyển tiền",
+      );
     }
     if (String(sourceUserId) === String(destinationUserId)) {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
@@ -998,6 +1005,12 @@ const TransactionRepository = {
       if (String(sourceUserId) === String(paymentRequest.destination_user_id)) {
         throw httpError(400, "Không thể chuyển tiền cho chính mình");
       }
+      if (
+        String(fundingSource || "").trim().toUpperCase() === "BANK" ||
+        Boolean(linkedBankAccountId)
+      ) {
+        assertBankFundingMinAmount(paymentRequest.amount, "thanh toán");
+      }
 
       transferResult = await TransactionRepository.executeTransfer(client, {
         sourceUserId: sourceUserId,
@@ -1066,6 +1079,10 @@ const TransactionRepository = {
       direction = null,
       startDate = null,
       endDate = null,
+      status = null,
+      minAmount = null,
+      maxAmount = null,
+      fundingSource = null,
     } = {},
   ) {
     const validCursorId =
@@ -1076,15 +1093,23 @@ const TransactionRepository = {
     const hasDirection = Boolean(direction && String(direction).trim());
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
+    const hasStatus = Boolean(status && String(status).trim());
+    const normalizedStatus = hasStatus ? String(status).trim().toUpperCase() : null;
+    const hasMinAmount = minAmount !== null && minAmount !== undefined;
+    const hasMaxAmount = maxAmount !== null && maxAmount !== undefined;
+    const hasFundingSource = Boolean(fundingSource && String(fundingSource).trim());
+    const normalizedFundingSource = hasFundingSource
+      ? String(fundingSource).trim().toUpperCase()
+      : null;
 
     const safeKeyword = hasKeyword
       ? keyword.trim().replace(/[\\%_]/g, "\\$&")
       : null;
 
-    // Khi không lọc keyword/direction, mỗi nhánh UNION chỉ cần lấy tối đa `limit` dòng mới nhất
+    // Khi không lọc keyword/direction/nguồn tiền, mỗi nhánh UNION chỉ cần lấy tối đa `limit` dòng mới nhất
     // vì top `limit` toàn cục theo (created_at DESC, id DESC) luôn nằm trong top `limit` từng nhánh.
     const branchLimitClause =
-      !hasKeyword && !hasDirection
+      !hasKeyword && !hasDirection && !hasFundingSource
         ? "ORDER BY t.created_at DESC, t.id DESC LIMIT $4"
         : "";
 
@@ -1105,6 +1130,9 @@ const TransactionRepository = {
              AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
              AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
              AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+             AND ($15::boolean = false OR t.status = $16::text)
+             AND ($17::boolean = false OR t.amount >= $18::bigint)
+             AND ($19::boolean = false OR t.amount <= $20::bigint)
            ${branchLimitClause}
         )
         UNION
@@ -1117,6 +1145,9 @@ const TransactionRepository = {
              AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
              AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
              AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+             AND ($15::boolean = false OR t.status = $16::text)
+             AND ($17::boolean = false OR t.amount >= $18::bigint)
+             AND ($19::boolean = false OR t.amount <= $20::bigint)
            ${branchLimitClause}
         )
         UNION
@@ -1137,6 +1168,9 @@ const TransactionRepository = {
                  AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
                  AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
                  AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+                 AND ($15::boolean = false OR t.status = $16::text)
+                 AND ($17::boolean = false OR t.amount >= $18::bigint)
+                 AND ($19::boolean = false OR t.amount <= $20::bigint)
                LIMIT 1
             ) t ON true
            ${branchLimitClause}
@@ -1325,6 +1359,15 @@ const TransactionRepository = {
             END
           ) = $14::text
         )
+        AND (
+          $21::boolean = false
+          OR (
+            CASE
+              WHEN pp.user_id IS NOT NULL OR (t.fee_rate_snapshot->>'funding_source') = 'POSTPAID' THEN 'POSTPAID'
+              ELSE 'MIO'
+            END
+          ) = $22::text
+        )
       ORDER BY t.created_at DESC, t.id DESC
       LIMIT $4
       `,
@@ -1343,6 +1386,14 @@ const TransactionRepository = {
         hasType ? String(type).trim().toUpperCase() : null,
         hasDirection,
         hasDirection ? String(direction).trim().toUpperCase() : null,
+        hasStatus,
+        normalizedStatus,
+        hasMinAmount,
+        hasMinAmount ? Number(minAmount) : null,
+        hasMaxAmount,
+        hasMaxAmount ? Number(maxAmount) : null,
+        hasFundingSource,
+        normalizedFundingSource,
       ],
     );
 

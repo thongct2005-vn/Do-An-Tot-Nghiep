@@ -1,10 +1,24 @@
-const { queryReportFull } = require('./reportRollup');
+const { getAnalyticsStorageMode } = require('../analyticsStorage');
+const {
+  getReportRollupState,
+  queryReportFull,
+  queryMerchantFeeSeries,
+} = require('./reportRollup');
 const { exactInteger, normalizeIntegers, previousRange } = require('./financialReport.data');
 
 // Accept a caller-owned connection: export can read all sections in one snapshot.
-// No pool access or rollup maintenance is allowed in this repository.
+// No pool access or rollup maintenance (writes) is allowed in this repository.
+async function resolveReadOnlyReportCutoff(db) {
+  if (getAnalyticsStorageMode() !== 'v2') {
+    return null;
+  }
+  const state = await getReportRollupState(db, { storageMode: 'v2' });
+  return state && !state.hasDirty && state.rollupUntil ? state.rollupUntil : null;
+}
+
 async function merchantReport(db, filters) {
-  return normalizeIntegers(await queryReportFull(db, filters, null, { allMerchants: true }));
+  const rollupUntil = await resolveReadOnlyReportCutoff(db);
+  return normalizeIntegers(await queryReportFull(db, filters, rollupUntil, { allMerchants: true }));
 }
 
 const SUCCESS = "('SUCCESS','COMPLETED')";
@@ -97,6 +111,10 @@ async function controls(db, filters) {
 }
 
 async function merchantFeeSeries(db, filters) {
+  const rollupUntil = await resolveReadOnlyReportCutoff(db);
+  if (rollupUntil) {
+    return numericRows(await queryMerchantFeeSeries(db, filters, rollupUntil), ['payment_fee', 'transfer_fee']);
+  }
   const {rows}=await db.query(`SELECT to_char(date_trunc($3,l.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh'),'YYYY-MM-DD') bucket,
     coalesce(sum(l.amount) FILTER (WHERE t.transaction_type='PAYMENT'),0) payment_fee,
     coalesce(sum(l.amount) FILTER (WHERE t.transaction_type='TRANSFER'),0) transfer_fee

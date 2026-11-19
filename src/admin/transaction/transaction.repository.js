@@ -1,5 +1,6 @@
 const pool = require("../../config/database");
 const { uuidv7 } = require("uuidv7");
+const { handleMissingRollupRelation } = require("../analyticsStorage");
 const {
   ensureRollupConsistent,
   computeHybridWindow,
@@ -276,6 +277,10 @@ const adminTransactionRepository = {
           if (!err || err.code !== "42P01") {
             throw err;
           }
+          handleMissingRollupRelation(err, {
+            domain: "dashboard",
+            relation: "dashboard_tx_hourly",
+          });
         }
       }
     }

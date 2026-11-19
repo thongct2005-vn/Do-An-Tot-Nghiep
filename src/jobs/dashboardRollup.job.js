@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { getAnalyticsStorageMode } = require("../admin/analyticsStorage");
 const dashboardRollup = require("../admin/dashboard/dashboardRollup");
 const reportRollup = require("../admin/reports/reportRollup");
 const { advanceLoginRollupCutoff } = require("../models/mongo/loginStatsDailyUser.model");
@@ -9,7 +10,8 @@ let timer = null;
 let running = false;
 
 /**
- * Thực thi 1 chu kỳ đối soát dirty hours và cuộn mốc rollup_until cho Dashboard, Reports & Login stats.
+ * Thực thi 1 chu kỳ đối soát dirty buckets và cuộn mốc rollup_until cho Dashboard, Reports & Login stats
+ * theo ANALYTICS_STORAGE_MODE ('v1' | 'v2' | 'raw').
  */
 async function tick(deps = {}) {
   if (running) {
@@ -18,14 +20,15 @@ async function tick(deps = {}) {
   running = true;
   try {
     const db = deps.db || pool;
+    const mode = deps.storageMode || getAnalyticsStorageMode();
     const advanceFn =
       deps.advanceRollupCutoff || dashboardRollup.advanceRollupCutoff;
-    const result = await advanceFn(db);
+    const result = await advanceFn(db, { storageMode: mode });
     let reportResult = null;
     if (deps.advanceReportRollupCutoff || !deps.advanceRollupCutoff) {
       const advanceReportFn =
         deps.advanceReportRollupCutoff || reportRollup.advanceReportRollupCutoff;
-      reportResult = await advanceReportFn(db);
+      reportResult = await advanceReportFn(db, { storageMode: mode });
     }
     let loginResult = null;
     if (deps.advanceLoginRollupCutoff || !deps.advanceRollupCutoff) {
@@ -35,6 +38,7 @@ async function tick(deps = {}) {
     }
     return {
       skipped: false,
+      mode,
       ...result,
       ...(reportResult ? { reportRollup: reportResult } : {}),
       ...(loginResult && !loginResult.skippedDisconnected

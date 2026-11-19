@@ -24,12 +24,16 @@ CREATE INDEX IF NOT EXISTS idx_report_fin_daily_merchant_day
   ON public.report_merchant_financial_daily (merchant_id, bucket_day);
 
 CREATE TABLE IF NOT EXISTS public.aggregation_rollup_state (
-  domain            varchar(32) PRIMARY KEY,
-  rollup_until      timestamptz NOT NULL DEFAULT '-infinity'::timestamptz,
-  dirty_guard_until timestamptz,
-  updated_at        timestamptz NOT NULL DEFAULT NOW(),
+  domain             varchar(32) PRIMARY KEY,
+  rollup_until       timestamptz NOT NULL DEFAULT '-infinity'::timestamptz,
+  dirty_guard_until  timestamptz,
+  triggers_paused_at timestamptz,
+  updated_at         timestamptz NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_agg_state_domain CHECK (domain IN ('dashboard', 'report_merchant'))
 );
+
+ALTER TABLE public.aggregation_rollup_state
+  ADD COLUMN IF NOT EXISTS triggers_paused_at timestamptz;
 
 INSERT INTO public.aggregation_rollup_state (domain, rollup_until, dirty_guard_until)
 VALUES

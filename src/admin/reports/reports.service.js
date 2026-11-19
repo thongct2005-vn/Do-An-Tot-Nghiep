@@ -3,6 +3,10 @@ const { httpError } = require('../../utils/httpError');
 const { resolveAdminDateRange } = require('../../utils/dateRange');
 const { ensureRollupConsistent: ensureDashboardRollupConsistent } = require('../dashboard/dashboardRollup');
 const {
+  getAnalyticsStorageMode,
+  handleMissingRollupRelation,
+} = require('../analyticsStorage');
+const {
   isMissingRelationError,
   ensureReportRollupConsistent,
   queryFeeRevenueSummary,
@@ -96,14 +100,15 @@ SELECT jsonb_build_object(
   'gateway',(SELECT to_jsonb(g) FROM gateway g)
 ) data`;
 
-async function with42P01Fallback(rollupUntil, rollupRunner, fallbackRunner) {
-  if (!rollupUntil) {
+async function with42P01Fallback(rollupUntil, rollupRunner, fallbackRunner, domain = 'report_merchant') {
+  if (!rollupUntil || getAnalyticsStorageMode() === 'raw') {
     return fallbackRunner();
   }
   try {
     return await rollupRunner(rollupUntil);
   } catch (err) {
     if (isMissingRelationError(err)) {
+      handleMissingRollupRelation(err, { domain, relation: `${domain}_rollup_table` });
       return fallbackRunner();
     }
     throw err;
@@ -178,6 +183,7 @@ async function growth(input, { db = pool } = {}) {
       dashRollupUntil,
       (cutoff) => queryGrowthVolume(db, f, previous, cutoff),
       () => queryGrowthVolume(db, f, previous, null),
+      'dashboard',
     ),
   ]);
 

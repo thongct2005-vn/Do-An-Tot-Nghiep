@@ -13,7 +13,7 @@ const adminUserController = require("../src/admin/user/user.controller");
 const authMiddleware = require("../src/middlewares/auth.middleware");
 const socketUtil = require("../src/utils/socket");
 const firebaseNotification = require("../src/utils/firebaseNotification");
-const limitsDb = require("../src/utils/limitsDb");
+const limitsDb = require("../src/utils/limits/limitsDb");
 
 describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Scenarios)", () => {
   const originalPoolQuery = pool.query.bind(pool);
@@ -258,6 +258,42 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
     }
 
     // 11. Daily transfer limit query inside executeTransfer / getDailyUsage
+    if (
+      norm.includes("AS transfer_used") &&
+      norm.includes("AS topup_used") &&
+      norm.includes("AS withdraw_used") &&
+      norm.includes("FROM transactions WHERE source_user_id = $1")
+    ) {
+      const sourceUserId = params[0];
+      const successTxs = targetState.transactions.filter(
+        (t) =>
+          String(t.source_user_id) === String(sourceUserId) &&
+          t.status === "SUCCESS"
+      );
+      const sumBucket = (predicate) =>
+        successTxs
+          .filter(predicate)
+          .reduce(
+            (sum, t) => sum + Number(t.amount) + Number(t.user_fee ?? t.fee ?? 0),
+            0,
+          );
+      return {
+        rows: [
+          {
+            transfer_used: sumBucket(
+              (t) =>
+                t.transaction_type === "TRANSFER" ||
+                (t.transaction_type === "PAYMENT" &&
+                  t.destination_user_id != null),
+            ),
+            topup_used: sumBucket((t) => t.transaction_type === "TOPUP"),
+            withdraw_used: sumBucket((t) => t.transaction_type === "WITHDRAW"),
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+
     if (norm.includes("AS daily_used FROM transactions WHERE source_user_id = $1")) {
       const sourceUserId = params[0];
       let allowedTypes = ["TRANSFER", "WITHDRAW", "PAYMENT"];

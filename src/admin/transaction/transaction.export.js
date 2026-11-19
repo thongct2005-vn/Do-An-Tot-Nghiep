@@ -85,6 +85,13 @@ const COLUMNS = [
   { header: "Nội dung / Ghi chú", width: 36 },
 ];
 
+function isReversalExportRow(row) {
+  return Boolean(
+    row?.fee_rate_snapshot?.operation_type === "REVERSAL" ||
+      row?.admin_action === "ADMIN_OP_REVERSAL"
+  );
+}
+
 /**
  * Xây dựng Buffer file Excel báo cáo toàn hệ thống với ExcelJS
  */
@@ -131,13 +138,15 @@ async function buildTransactionsAdminXlsx({
 
   // 4. Ghi chú thống kê tài chính
   ws.getCell(4, 1).value =
-    "* Thống kê trên các giao dịch được xuất trong báo cáo này (chỉ cộng dồn các giao dịch THÀNH CÔNG):";
+    "* Thống kê trên các giao dịch được xuất trong báo cáo này (chỉ cộng dồn các giao dịch THÀNH CÔNG; P2P thông thường tách riêng khỏi Hoàn tiền P2P):";
   ws.getCell(4, 1).font = { size: 10, italic: true, color: { argb: "FF555555" } };
 
-  // 5. Tính toán 4 KPI độc lập (Tránh Double Counting)
+  // 5. Tính toán KPI độc lập (tách riêng TRANSFER thông thường và Hoàn tiền P2P REVERSAL)
   let totalTopup = 0;
   let totalWithdraw = 0;
   let totalTransfer = 0;
+  let totalReversal = 0;
+  let reversalCount = 0;
   let totalPayment = 0;
   let totalFee = 0;
 
@@ -149,12 +158,18 @@ async function buildTransactionsAdminXlsx({
       totalFee += f + mf;
       if (r.transaction_type === "TOPUP") totalTopup += amt;
       else if (r.transaction_type === "WITHDRAW") totalWithdraw += amt;
-      else if (r.transaction_type === "TRANSFER") totalTransfer += amt;
-      else if (r.transaction_type === "PAYMENT") totalPayment += amt;
+      else if (r.transaction_type === "TRANSFER") {
+        if (isReversalExportRow(r)) {
+          totalReversal += amt;
+          reversalCount += 1;
+        } else {
+          totalTransfer += amt;
+        }
+      } else if (r.transaction_type === "PAYMENT") totalPayment += amt;
     }
   }
 
-  // Khối KPI dòng 5 & 6
+  // Khối KPI dòng 5, 6 & 7
   ws.getCell(5, 1).value = "Tổng số giao dịch xuất:";
   ws.getCell(5, 1).font = { bold: true };
   ws.getCell(5, 2).value = rows.length;
@@ -167,7 +182,7 @@ async function buildTransactionsAdminXlsx({
   ws.getCell(5, 5).numFmt = MONEY_FMT;
   ws.getCell(5, 5).font = { bold: true };
 
-  ws.getCell(5, 7).value = "Tổng chuyển P2P (TRANSFER):";
+  ws.getCell(5, 7).value = "Tổng chuyển P2P thông thường (TRANSFER):";
   ws.getCell(5, 7).font = { bold: true };
   ws.getCell(5, 8).value = totalTransfer;
   ws.getCell(5, 8).numFmt = MONEY_FMT;
@@ -190,6 +205,18 @@ async function buildTransactionsAdminXlsx({
   ws.getCell(6, 8).value = totalPayment;
   ws.getCell(6, 8).numFmt = MONEY_FMT;
   ws.getCell(6, 8).font = { bold: true };
+
+  ws.getCell(7, 4).value = "Số giao dịch hoàn tiền P2P:";
+  ws.getCell(7, 4).font = { bold: true };
+  ws.getCell(7, 5).value = reversalCount;
+  ws.getCell(7, 5).numFmt = "#,##0";
+  ws.getCell(7, 5).font = { bold: true };
+
+  ws.getCell(7, 7).value = "Tổng hoàn tiền P2P (REVERSAL):";
+  ws.getCell(7, 7).font = { bold: true };
+  ws.getCell(7, 8).value = totalReversal;
+  ws.getCell(7, 8).numFmt = MONEY_FMT;
+  ws.getCell(7, 8).font = { bold: true };
 
   // 6. Header Table tại Dòng 8
   const headerRow = ws.getRow(8);
@@ -254,6 +281,9 @@ async function buildTransactionsAdminXlsx({
       const parts = [];
       if (r.admin_name) parts.push(`Admin: ${r.admin_name}`);
       if (r.admin_action) parts.push(`Lệnh: ${r.admin_action}`);
+      if (r.admin_original_transaction_id) {
+        parts.push(`GD gốc: ${r.admin_original_transaction_id}`);
+      }
       if (r.admin_reason) parts.push(`Lý do: ${r.admin_reason}`);
       if (r.admin_auth_ref) parts.push(`Số ủy quyền: ${r.admin_auth_ref}`);
       adminDetail = parts.join(" | ");
@@ -279,11 +309,15 @@ async function buildTransactionsAdminXlsx({
         ? Math.max(0, rowAmount - rowMerchantFee)
         : rowAmount;
 
+    const txTypeDisplay = isReversalExportRow(r)
+      ? "Hoàn tiền P2P (REVERSAL)"
+      : TYPE_LABEL[r.transaction_type] || r.transaction_type;
+
     const cells = [
       idx + 1, // 1. STT
       sanitizeExcelString(r.id), // 2. Mã giao dịch
       toVnDate(r.created_at), // 3. Thời gian
-      TYPE_LABEL[r.transaction_type] || r.transaction_type, // 4. Loại giao dịch
+      txTypeDisplay, // 4. Loại giao dịch
       INITIATOR_LABEL[r.initiator_role] || r.initiator_role, // 5. Nguồn thực hiện
       sanitizeExcelString(adminDetail), // 6. Chi tiết Admin can thiệp
       sanitizeExcelString(sourceText), // 7. Người gửi / Ví nguồn

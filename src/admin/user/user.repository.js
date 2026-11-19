@@ -792,7 +792,7 @@ const adminUserRepository = {
       SELECT COUNT(*)::INT AS total
       FROM admin_user_change_history h
       WHERE h.user_id = $1
-         OR (h.action = 'ADMIN_OP_P2P' AND (h.new_values->>'destination_user_id') = $1::text)
+         OR (h.action IN ('ADMIN_OP_P2P', 'ADMIN_OP_REVERSAL') AND (h.new_values->>'destination_user_id') = $1::text)
       `,
       [userId]
     );
@@ -818,7 +818,7 @@ const adminUserRepository = {
       FROM admin_user_change_history h
       JOIN users a ON h.admin_id = a.id
       WHERE h.user_id = $1
-         OR (h.action = 'ADMIN_OP_P2P' AND (h.new_values->>'destination_user_id') = $1::text)
+         OR (h.action IN ('ADMIN_OP_P2P', 'ADMIN_OP_REVERSAL') AND (h.new_values->>'destination_user_id') = $1::text)
       ORDER BY h.created_at DESC
       LIMIT $2 OFFSET $3
       `,

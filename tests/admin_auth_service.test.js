@@ -7,6 +7,7 @@ const tokenUtil = require("../src/utils/jwt");
 describe("Admin Auth Service - Session Maintenance Tests", () => {
   const originalFindRefreshToken = adminAuthRepository.findAdminByRefreshToken;
   const originalUpdateRefreshToken = adminAuthRepository.updateRefreshToken;
+  const originalRotateRefreshToken = adminAuthRepository.rotateRefreshToken;
   const originalFindAdminById = adminAuthRepository.findAdminById;
   const originalLogout = adminAuthRepository.logout;
 
@@ -14,6 +15,7 @@ describe("Admin Auth Service - Session Maintenance Tests", () => {
   beforeEach(() => {
     adminAuthRepository.findAdminByRefreshToken = originalFindRefreshToken;
     adminAuthRepository.updateRefreshToken = originalUpdateRefreshToken;
+    adminAuthRepository.rotateRefreshToken = originalRotateRefreshToken;
     adminAuthRepository.findAdminById = originalFindAdminById;
     adminAuthRepository.logout = originalLogout;
   });
@@ -88,8 +90,7 @@ describe("Admin Auth Service - Session Maintenance Tests", () => {
     });
 
     it("nên cấp cặp token mới (Token Rotation) và cập nhật DB khi refresh token hợp lệ", async () => {
-      let updatedDbToken = null;
-      let updatedDbUserId = null;
+      let rotatedPayload = null;
 
       adminAuthRepository.findAdminByRefreshToken = async (token) => {
         if (token === "valid_refresh_token") {
@@ -104,9 +105,9 @@ describe("Admin Auth Service - Session Maintenance Tests", () => {
         return null;
       };
 
-      adminAuthRepository.updateRefreshToken = async ({ refreshToken, userId }) => {
-        updatedDbToken = refreshToken;
-        updatedDbUserId = userId;
+      adminAuthRepository.rotateRefreshToken = async (payload) => {
+        rotatedPayload = payload;
+        return true;
       };
 
       const result = await adminAuthService.refreshToken("valid_refresh_token");
@@ -114,14 +115,41 @@ describe("Admin Auth Service - Session Maintenance Tests", () => {
       assert.ok(result.token, "Kết quả phải chứa object token");
       assert.ok(result.token.access_token, "Phải có access_token mới");
       assert.ok(result.token.refresh_token, "Phải có refresh_token mới");
-      assert.strictEqual(updatedDbUserId, "admin-uuid-1");
-      assert.strictEqual(updatedDbToken, result.token.refresh_token, "Token lưu vào DB phải là token mới (rotation)");
+      assert.strictEqual(rotatedPayload?.userId, "admin-uuid-1");
+      assert.strictEqual(rotatedPayload?.oldRefreshToken, "valid_refresh_token");
+      assert.strictEqual(
+        rotatedPayload?.newRefreshToken,
+        result.token.refresh_token,
+        "Token lưu vào DB phải là token mới (rotation)",
+      );
 
       // Kiểm tra access token decode không chứa phone
       const decodedAccess = tokenUtil.verifyAccessToken(result.token.access_token);
       assert.strictEqual(decodedAccess.user_id, "admin-uuid-1");
       assert.strictEqual(decodedAccess.type, "ADMIN");
       assert.strictEqual(decodedAccess.phone, undefined, "Access token không được chứa phone");
+    });
+
+    it("nên ném lỗi 401 nếu rotateRefreshToken trả false (xung đột phiên đồng thời)", async () => {
+      adminAuthRepository.findAdminByRefreshToken = async () => ({
+        id: "admin-uuid-1",
+        email: "admin@system.com",
+        full_name: "Admin Tổng",
+        role: "ADMIN",
+        status: "ACTIVE",
+      });
+      adminAuthRepository.rotateRefreshToken = async () => false;
+
+      await assert.rejects(
+        async () => {
+          await adminAuthService.refreshToken("race_refresh_token");
+        },
+        (err) => {
+          assert.strictEqual(err.statusCode, 401);
+          assert.match(err.message, /thay thế hoặc kết thúc/);
+          return true;
+        },
+      );
     });
   });
 
@@ -193,26 +221,41 @@ describe("Admin Auth Service - Session Maintenance Tests", () => {
   });
 
   describe("POST /logout logic (adminAuthService.logout)", () => {
-    it("nên ném lỗi 400 nếu thiếu adminId", async () => {
+    it("nên ném lỗi 401 nếu thiếu adminId hoặc refreshToken", async () => {
       await assert.rejects(
         async () => {
-          await adminAuthService.logout(null);
+          await adminAuthService.logout(null, "rt-1");
         },
         (err) => {
-          assert.strictEqual(err.statusCode, 400);
+          assert.strictEqual(err.statusCode, 401);
+          assert.match(err.message, /Thiếu thông tin xác thực/);
+          return true;
+        },
+      );
+
+      await assert.rejects(
+        async () => {
+          await adminAuthService.logout("admin-1", "");
+        },
+        (err) => {
+          assert.strictEqual(err.statusCode, 401);
+          assert.match(err.message, /Thiếu thông tin xác thực/);
           return true;
         },
       );
     });
 
-    it("nên gọi repository để xóa refresh_token (gán NULL) khi đăng xuất", async () => {
+    it("nên gọi repository với đúng adminId và refreshToken khi đăng xuất", async () => {
       let loggedOutId = null;
-      adminAuthRepository.logout = async (adminId) => {
+      let loggedOutToken = null;
+      adminAuthRepository.logout = async (adminId, refreshToken) => {
         loggedOutId = adminId;
+        loggedOutToken = refreshToken;
       };
 
-      await adminAuthService.logout("admin-to-logout-123");
+      await adminAuthService.logout("admin-to-logout-123", "rt-current-123");
       assert.strictEqual(loggedOutId, "admin-to-logout-123", "Repository logout phải được gọi với đúng ID");
+      assert.strictEqual(loggedOutToken, "rt-current-123", "Repository logout phải được gọi với đúng refreshToken");
     });
   });
 });

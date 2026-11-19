@@ -1,4 +1,6 @@
-const { test, after } = require("node:test");
+const path = require("node:path");
+require("dotenv").config({ path: path.join(__dirname, "../.env"), quiet: true });
+const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { randomBytes, createHash } = require("node:crypto");
 const express = require("express");
@@ -6,30 +8,40 @@ const mongoose = require("mongoose");
 const { UserLoginEvent, recordSuccessfulUserLogin } = require("../src/models/mongo/userLoginEvent.model");
 const { AdminActionLog } = require("../src/models/mongo/adminActionLog.model");
 const adminAudit = require("../src/middlewares/adminAudit.middleware");
+const {
+  resolveTestMongoUri,
+  connectTestMongo,
+  reconnectTestMongo,
+  cleanupTestMongo,
+} = require("./mongo_test_database");
 
 const dbName = `login_audit_test_${randomBytes(8).toString("hex")}`;
-const uri = process.env.MERCHANT_TEST_MONGO_URI || "mongodb://127.0.0.1:27017";
+const { uri, protectedNames } = resolveTestMongoUri({ fallbackLocal: true });
 let created = false;
 let sqlPool;
 
-async function connect() {
-  await mongoose.connect(uri, { dbName, serverSelectionTimeoutMS: 3000, autoCreate:false, autoIndex:false });
-  assert.equal(mongoose.connection.name, dbName);
-  assert.equal((await mongoose.connection.db.listCollections().toArray()).length, 0);
+before(async () => {
+  await connectTestMongo({
+    uri,
+    dbName,
+    serverSelectionTimeoutMS: 3000,
+    requireEmpty: true,
+    protectedNames,
+  });
   created = true;
-}
+});
 
 after(async () => {
-  if (created) {
-    assert.equal(mongoose.connection.name, dbName);
-    await mongoose.connection.db.dropDatabase();
+  await cleanupTestMongo({ uri, dbName, created, protectedNames });
+  const dbModulePath = require.resolve("../src/config/database");
+  if (sqlPool) {
+    await sqlPool.end();
+  } else if (require.cache[dbModulePath]) {
+    await require(dbModulePath).end();
   }
-  await mongoose.disconnect();
-  if (sqlPool) await sqlPool.end();
 });
 
 test("MongoDB login events aggregate by Vietnam day and exclude FAILED", async () => {
-  await connect();
   for (const userId of ["u1", "u1", "u2"]) {
     assert.ok(await recordSuccessfulUserLogin({ userId, loggedInAt: new Date("2026-11-01T00:00:00+07:00") }));
   }
@@ -96,7 +108,7 @@ test("admin GET and login audit omit secrets and preserve route template", async
     await mongoose.disconnect();
     assert.equal((await fetch(`${base}/api/v2/admin/user/u1`, {method:'PATCH'})).status, 200);
   } finally {
-    if (mongoose.connection.readyState !== 1) await mongoose.connect(uri, {dbName});
+    await reconnectTestMongo({ uri, dbName, serverSelectionTimeoutMS: 3000, protectedNames });
     await new Promise((resolve) => server.close(resolve));
   }
 });
@@ -127,7 +139,7 @@ test("login returns tokens while Mongo write is pending and tolerates write reje
     await mongoose.disconnect();
     assert.ok((await auth.verifyLoginOtp({ userId:'audit-user', phone:'0912000111', otp:'123456' })).token.access_token);
   } finally {
-    if (mongoose.connection.readyState !== 1) await mongoose.connect(uri, {dbName});
+    await reconnectTestMongo({ uri, dbName, serverSelectionTimeoutMS: 3000, protectedNames });
     release?.(null);
     repo.findUserByPhone = original.find;
     repo.updateRefeshToken = original.save;
@@ -154,7 +166,7 @@ test("stats HTTP distinguishes an empty period from disconnected MongoDB", async
     assert.equal((await fetch(url)).status, 503);
     assert.equal(await recordSuccessfulUserLogin({userId:'offline-user'}), null);
   } finally {
-    await mongoose.connect(uri, {dbName, serverSelectionTimeoutMS:3000});
+    await reconnectTestMongo({ uri, dbName, serverSelectionTimeoutMS: 3000, protectedNames });
     await new Promise(resolve => server.close(resolve));
   }
 });

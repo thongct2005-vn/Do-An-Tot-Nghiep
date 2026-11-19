@@ -194,26 +194,9 @@ async function growth(input, { db = pool } = {}) {
   return { accounts, transactions, period: f.period, previous_period: { start: previous.toISOString(), end_exclusive: f.startIso } };
 }
 
-async function exportReport(input) {
-  const data = await report(input, { allMerchants: true });
-  const ExcelJS = require('exceljs');
-  const book = new ExcelJS.Workbook();
-  const summary = book.addWorksheet('Tong hop');
-  summary.addRows([
-    ['Báo cáo phí Merchant đã khấu trừ'], ['Từ ngày', data.period.start_date], ['Đến ngày', data.period.end_date],
-    ['Múi giờ', data.period.timezone], ['Merchant', data.filters.merchant_id || 'Tất cả'], ['Loại giao dịch', data.filters.transaction_type],
-    ['Phí Merchant', data.overview.revenue], ['Giá trị giao dịch', data.overview.gross], ['Số giao dịch', data.overview.transactions],
-  ]);
-  for (const [name, rows, fields] of [
-    ['Merchant', data.merchants, ['merchant_id','merchant_name','revenue','gross','transactions']],
-    ['Theo thoi gian', data.timeseries, ['bucket','revenue','gross','transactions']],
-    ['Theo loai', data.breakdown, ['type','revenue','gross','transactions']],
-  ]) {
-    const sheet = book.addWorksheet(name); sheet.addRow(fields);
-    for (const row of rows) sheet.addRow(fields.map(k => row[k]));
-    sheet.getRow(1).font = { bold: true }; sheet.columns.forEach(c => { c.width = 25; });
-  }
-  return book.xlsx.writeBuffer();
+async function exportReport(input, adminId) {
+  const { buffer } = await require('./financialReport.service').exportFinancialReport(input, adminId);
+  return buffer;
 }
 
 async function logins(input) {

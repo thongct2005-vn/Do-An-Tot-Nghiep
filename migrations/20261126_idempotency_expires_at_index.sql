@@ -1,11 +1,7 @@
 -- Migration: Đánh index theo expires_at để job dọn idempotency_keys quá hạn chạy nhanh, không full-scan.
--- Additive & idempotent: an toàn chạy lại nhiều lần.
+-- IMPORTANT: CREATE INDEX CONCURRENTLY không được chạy trong BEGIN ... COMMIT transaction block.
+-- Thực thi ngoài transaction block (autocommit) hoặc qua backend/scripts/run_concurrent_index_migration.js.
 
-BEGIN;
-
-CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_idempotency_keys_expires_at
   ON public.idempotency_keys (expires_at)
   WHERE expires_at IS NOT NULL;
-
-COMMIT;
-

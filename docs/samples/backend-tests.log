@@ -1,0 +1,98 @@
+▶ Admin Dashboard Hybrid Rollup Repository Tests
+  ✔ computeHybridWindow chia chính xác khoảng [start, split) cho rollup và [split, next) cho transactions (2.0754ms)
+  ✔ reconcileDirtyHours đối soát lại các giờ dirty dưới pg_advisory_xact_lock khi có PENDING -> FAILED ở quá khứ (0.8328ms)
+  ✔ kỳ Năm nay (Hybrid rollup + today tail) dùng DATE_TRUNC không sort rời rạc và trả kết quả chuẩn qua service (4.2791ms)
+  ✔ an toàn fallback về raw transactions nếu bảng dashboard_rollup_state chưa tồn tại (42P01) (0.6467ms)
+  ✔ getPostpaidRevenueSummary fallback về 0 khi bảng fee_ledger_entries chưa tồn tại (42P01) (0.4204ms)
+✔ Admin Dashboard Hybrid Rollup Repository Tests (10.0197ms)
+Kết nối database thành công!
+Kết nối database thành công!
+✔ Dashboard overview postpaid_revenue aggregates collected POSTPAID_SERVICE_FEE and POSTPAID_LATE_FEE accurately (4941.6902ms)
+▶ Admin Dashboard Service Tests
+  ✔ getOverview trả về mặc định tháng hiện tại, 5 KPI, doanh thu Ví trả sau và phân bổ trạng thái 4 loại giao dịch (4.719ms)
+  ✔ getOverview chuẩn hóa postpaid_revenue về 0 khi kỳ trống hoặc repository trả rỗng (0.5248ms)
+  ✔ getCashflow và getTransactionVolume trả cùng danh sách bucket đã zero-fill (01/11..14/11) (9.7251ms)
+✔ Admin Dashboard Service Tests (16.7667ms)
+Kết nối database thành công!
+Kết nối database thành công!
+✔ detailed Excel accepts 5000 rows and rejects 5001 without truncation (2058.2369ms)
+Kết nối database thành công!
+✔ report logins reuse actual Mongo events and Vietnam date bounds (1225.2409ms)
+Kết nối database thành công!
+▶ fee reporting SQL, authenticated API, growth and Excel
+  ✔ ledger revenue and GMV are separate; zero-fee transaction counts, no fee join duplicates (142.8673ms)
+  ✔ Vietnam buckets include end-of-day, exclude next midnight and fill empty intervals (735.0908ms)
+  ✔ Gateway cohort uses order_id and resolved denominator, with null for pending-only (148.6344ms)
+  ✔ growth excludes admin/system/pending and handles previous zero (112.1113ms)
+  ✔ all report APIs enforce ADMIN session and validate filters (379.9348ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+  ✔ more than 100 merchants aggregate in DB; pagination does not truncate Excel (4667.1609ms)
+✔ fee reporting SQL, authenticated API, growth and Excel (7589.0199ms)
+✔ Excel integer precision is checked before conversion and summation (1.8604ms)
+Kết nối database thành công!
+▶ financial aggregates preserve scope, source fees, boundaries and comparison period
+  ✔ cashflow counts each status once and internal movement is not topup (5.1085ms)
+  ✔ fees include unlinked subscription but reject failed transaction fees (4.3786ms)
+  ✔ all time groups keep totals; empty buckets and Vietnam bounds (14.757ms)
+  ✔ merchant scope shares existing query but does not filter system data (17.2882ms)
+  ✔ unknown fee categories remain visible rather than disappearing (4.6105ms)
+  ✔ snapshot excludes a concurrent commit from every financial section (96.6691ms)
+  ✔ query failure rolls back and releases without replacing missing finance with zero (0.7699ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+  ✔ export releases snapshot before rendering, audits only completed files, and tolerates Mongo failure (2407.3863ms)
+✔ financial aggregates preserve scope, source fees, boundaries and comparison period (4889.5348ms)
+▶ reportRollup integration: parity after historical PENDING -> SUCCESS and cross-hour fee ledger updates
+  ✔ unit checks: selective dirty-hour repair and 42P01 fallback (5.0305ms)
+Kết nối database thành công!
+  ✔ works safely without report_*_hourly tables (42P01 fallback) (24.4685ms)
+  ✔ parity after historical PENDING -> SUCCESS and cross-hour fee ledger updates (248.0264ms)
+✔ reportRollup integration: parity after historical PENDING -> SUCCESS and cross-hour fee ledger updates (4532.5707ms)
+▶ Dashboard Rollup Background Job Tests
+  ✔ tick() đối soát dirty hours và cuộn rollup_until sang target cutoff, an toàn khi chạy lặp liên tiếp (8.6007ms)
+  ✔ tick() bỏ qua lần gọi chồng chéo khi đang chạy và nhả khóa an toàn nếu gặp lỗi DB (0.6729ms)
+  ✔ advanceRollupCutoff rollback giao dịch an toàn khi INSERT lỗi giữa chừng (1.1154ms)
+  ✔ tick() chạy cả advanceReportRollupCutoff song song chu kỳ nền (1.2935ms)
+✔ Dashboard Rollup Background Job Tests (17.094ms)
+Kết nối database thành công!
+✔ MongoDB login events aggregate by Vietnam day and exclude FAILED (143.4216ms)
+MongoDB audit event unavailable: admin action skipped while disconnected
+MongoDB audit event unavailable: user login write failed
+✔ admin GET and login audit omit secrets and preserve route template (360.2494ms)
+MongoDB audit event unavailable: user login skipped while disconnected
+✔ login returns tokens while Mongo write is pending and tolerates write rejection (316.1875ms)
+Kết nối database thành công!
+✔ stats HTTP distinguishes an empty period from disconnected MongoDB (152.9025ms)
+✔ OTP and TOTP auth paths persist one event each, rejected/challenge paths persist none (37.749ms)
+✔ login stats routes authorize ADMIN and agree across production/sandbox prefixes (95.8459ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+✔ charts render Vietnamese labels and escaped merchant names offline (1997.3537ms)
+✔ top ten comes from the full cohort; empty charts remain real PNGs (48.0116ms)
+ℹ tests 44
+ℹ suites 3
+ℹ pass 44
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11179.2908

@@ -318,6 +318,49 @@ const adminDashboardRepository = {
 
     return rows || [];
   },
+
+  /**
+   * Tổng hợp doanh thu thực thu Ví trả sau (phí dịch vụ + phí trễ hạn) từ fee_ledger_entries
+   * trong khoảng nửa mở [startInstant, nextDayInstant).
+   */
+  async getPostpaidRevenueSummary(startInstant, nextDayInstant) {
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT
+          COALESCE(SUM(l.amount), 0)::bigint AS total_revenue,
+          COALESCE(SUM(l.amount) FILTER (WHERE l.fee_type = 'POSTPAID_SERVICE_FEE'), 0)::bigint AS service_fee_revenue,
+          COALESCE(SUM(l.amount) FILTER (WHERE l.fee_type = 'POSTPAID_LATE_FEE'), 0)::bigint AS late_fee_revenue,
+          COUNT(DISTINCT l.transaction_id)::int AS fee_tx_count
+        FROM public.fee_ledger_entries l
+        JOIN public.transactions t ON t.id = l.transaction_id
+        WHERE l.fee_type IN ('POSTPAID_SERVICE_FEE', 'POSTPAID_LATE_FEE')
+          AND UPPER(t.status::text) IN ('SUCCESS', 'COMPLETED')
+          AND l.created_at >= $1
+          AND l.created_at < $2
+        `,
+        [startInstant, nextDayInstant],
+      );
+
+      const row = rows[0];
+      return {
+        total_revenue: Number(row?.total_revenue || 0),
+        service_fee_revenue: Number(row?.service_fee_revenue || 0),
+        late_fee_revenue: Number(row?.late_fee_revenue || 0),
+        fee_tx_count: Number(row?.fee_tx_count || 0),
+      };
+    } catch (err) {
+      if (err && err.code === "42P01") {
+        return {
+          total_revenue: 0,
+          service_fee_revenue: 0,
+          late_fee_revenue: 0,
+          fee_tx_count: 0,
+        };
+      }
+      throw err;
+    }
+  },
 };
 
 module.exports = adminDashboardRepository;

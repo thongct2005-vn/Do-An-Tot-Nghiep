@@ -1,0 +1,74 @@
+﻿[
+    {
+        "pictures":  2,
+        "name":  "01_Tong_quan",
+        "columns":  12,
+        "print_area":  "$A$1:$L$50",
+        "paper_size":  9,
+        "rows":  50
+    },
+    {
+        "pictures":  0,
+        "name":  "02_Dong_tien",
+        "columns":  7,
+        "print_area":  "$A$1:$G$20",
+        "paper_size":  9,
+        "rows":  20
+    },
+    {
+        "pictures":  0,
+        "name":  "03_Doanh_thu_phi",
+        "columns":  6,
+        "print_area":  "$A$1:$F$18",
+        "paper_size":  9,
+        "rows":  18
+    },
+    {
+        "pictures":  0,
+        "name":  "04_Theo_thoi_gian",
+        "columns":  10,
+        "print_area":  "$A$1:$J$48",
+        "paper_size":  9,
+        "rows":  48
+    },
+    {
+        "pictures":  0,
+        "name":  "05_Merchant",
+        "columns":  8,
+        "print_area":  "$A$1:$H$115",
+        "paper_size":  9,
+        "rows":  115
+    },
+    {
+        "pictures":  0,
+        "name":  "06_Cong_thanh_toan",
+        "columns":  6,
+        "print_area":  "$A$1:$F$18",
+        "paper_size":  9,
+        "rows":  18
+    },
+    {
+        "pictures":  0,
+        "name":  "07_Van_hanh",
+        "columns":  6,
+        "print_area":  "$A$1:$F$19",
+        "paper_size":  9,
+        "rows":  19
+    },
+    {
+        "pictures":  0,
+        "name":  "08_Doi_soat",
+        "columns":  8,
+        "print_area":  "$A$1:$H$27",
+        "paper_size":  9,
+        "rows":  27
+    },
+    {
+        "pictures":  0,
+        "name":  "09_Thuyet_minh",
+        "columns":  2,
+        "print_area":  "$A$1:$B$27",
+        "paper_size":  9,
+        "rows":  27
+    }
+]

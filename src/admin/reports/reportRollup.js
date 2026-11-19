@@ -118,6 +118,7 @@ async function reconcileReportDirtyHours(db = pool) {
               AND l.fee_type = 'QR_FEE'
               AND t.status IN ('SUCCESS', 'COMPLETED')
               AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
+              AND COALESCE(t.fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'
             GROUP BY 1, 2, 3
             ON CONFLICT (bucket_hour, merchant_id, transaction_type) DO UPDATE SET
               fee_amount = EXCLUDED.fee_amount,
@@ -157,6 +158,7 @@ async function reconcileReportDirtyHours(db = pool) {
               AND t.created_at < $2
               AND t.status IN ('SUCCESS', 'COMPLETED')
               AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
+              AND COALESCE(t.fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'
             GROUP BY 1, 2, 3
             ON CONFLICT (bucket_hour, merchant_id, transaction_type) DO UPDATE SET
               tx_count = EXCLUDED.tx_count,
@@ -328,6 +330,7 @@ async function advanceReportRollupCutoff(db = pool) {
         WHERE l.fee_type = 'QR_FEE'
           AND t.status IN ('SUCCESS', 'COMPLETED')
           AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
+          AND COALESCE(t.fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'
           AND l.created_at >= $1
           AND l.created_at < $2
         GROUP BY 1, 2, 3
@@ -360,6 +363,7 @@ async function advanceReportRollupCutoff(db = pool) {
         JOIN public.users u ON u.id = t.destination_user_id AND u.role = 'MERCHANT'
         WHERE t.status IN ('SUCCESS', 'COMPLETED')
           AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
+          AND COALESCE(t.fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'
           AND t.created_at >= $1
           AND t.created_at < $2
         GROUP BY 1, 2, 3
@@ -478,6 +482,7 @@ function buildFeeEventCtes(addParam, filters, hybrid) {
     const conds = [
       `l.fee_type = 'QR_FEE'`,
       `t.status IN ('SUCCESS', 'COMPLETED')`,
+      `COALESCE(t.fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'`,
       filters.type
         ? `t.transaction_type = ${addParam(filters.type)}`
         : `t.transaction_type IN ('PAYMENT', 'TRANSFER')`,
@@ -535,6 +540,7 @@ function buildTxEventCtes(addParam, filters, hybrid) {
     const e = addParam(filters.nextDayInstant);
     const conds = [
       `t.status IN ('SUCCESS', 'COMPLETED')`,
+      `COALESCE(t.fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'`,
       filters.type
         ? `t.transaction_type = ${addParam(filters.type)}`
         : `t.transaction_type IN ('PAYMENT', 'TRANSFER')`,

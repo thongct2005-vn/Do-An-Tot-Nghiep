@@ -239,10 +239,11 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
       const qrGross=(await pool.query("SELECT sum(amount)::bigint n FROM transactions WHERE status='SUCCESS' AND transaction_type='PAYMENT'")).rows[0].n;
       assert.equal(dash.body.data.kpis.total_qr_payment,Number(qrGross));
       // The Dashboard fee card reads this same reports endpoint independently of its five cashflow KPIs.
-      const buf=await require('../src/admin/reports/reports.service').exportReport(Object.fromEntries(query));
+      const buf=await require('../src/admin/reports/reports.service').exportReport(Object.fromEntries(query),admin);
       const book=new (require('exceljs').Workbook)();await book.xlsx.load(buf);
-      assert.equal(book.getWorksheet('Tong hop').getCell('B7').value,Number(sql.revenue));
-      assert.equal(book.getWorksheet('Tong hop').getCell('B8').value,Number(volume.gross));
+      assert.equal(book.getWorksheet('01_Tong_quan').getCell('I14').value,Number(sql.revenue));
+      let exportedGross;book.getWorksheet('05_Merchant').eachRow(row=>{if(row.getCell(1).value==='TỔNG') exportedGross=row.getCell(5).value.result;});
+      assert.equal(exportedGross,Number(volume.gross));
       const empty=await request('/reports/overview?start_date=2025-01-01&end_date=2025-01-01',{token:adminTokens.accessToken});
       assert.deepEqual(empty.body.data.overview,{revenue:0,gross:0,transactions:0});
     });

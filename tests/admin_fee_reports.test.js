@@ -85,6 +85,7 @@ test('fee reporting SQL, authenticated API, growth and Excel', async t => {
       }
       for (const filter of ['start_date=bad','group_by=hour','merchant_id=bad','transaction_type=WITHDRAW','scope=invalid','page=0','limit=101']) {
         assert.equal((await fetch(`${url}/overview?${filter}`, {headers})).status,400,filter);
+        assert.equal((await fetch(`${url}/export?${filter}`, {headers})).status,400,filter);
       }
       assert.equal((await fetch(`${url}/overview?${new URLSearchParams(range)}`, {headers})).status,200);
 
@@ -112,11 +113,18 @@ test('fee reporting SQL, authenticated API, growth and Excel', async t => {
       await pool.query("INSERT INTO transactions(id,transaction_type,destination_user_id,amount,status,created_at) SELECT 'bulk-'||id,'PAYMENT',id,1000,'SUCCESS','2026-11-01' FROM users WHERE full_name LIKE 'Large %'");
       const r = await reports.report({ ...range, limit:'1',page:'2' });
       assert.equal(r.merchants.length,1); assert.equal(r.total_merchants,107); assert.equal(r.overview.transactions,110);
-      const exported = await fetch(`${url}/export?${new URLSearchParams({...range,limit:'1',page:'2'})}`, {headers});
+      const exported = await fetch(`${url}/export?${new URLSearchParams({...range,limit:'20',page:'2',admin_name:'FAKE'})}`, {headers});
       assert.equal(exported.status,200);
       const book = new (require('exceljs').Workbook)(); await book.xlsx.load(Buffer.from(await exported.arrayBuffer()));
-      assert.equal(book.getWorksheet('Merchant').rowCount,108);
-      assert.equal(book.getWorksheet('Tong hop').getCell('B7').value,r.overview.revenue);
+      assert.equal(book.worksheets.length,9);
+      const merchants=book.getWorksheet('05_Merchant');
+      const rows=[]; merchants.eachRow(row=>{if(typeof row.getCell(1).value==='number') rows.push(row);});
+      assert.equal(rows.length,107);
+      assert.equal(book.getWorksheet('01_Tong_quan').getCell('I14').value,r.overview.revenue);
+      assert.equal(exported.headers.get('cache-control'),'no-store');
+      assert.match(exported.headers.get('content-type'),/spreadsheetml.sheet/);
+      assert.match(exported.headers.get('content-disposition'),/Bao_cao_tai_chinh_vi_dien_tu_20261031_20261101.xlsx/);
+      assert.equal(book.creator,'Admin');
       let text=''; book.eachSheet(s => s.eachRow(row => {text+=JSON.stringify(row.values);}));
       assert.ok(!text.includes('private-secret') && !text.includes('private-api') && !text.includes(tokens.accessToken));
       const f = reports.filters(range);

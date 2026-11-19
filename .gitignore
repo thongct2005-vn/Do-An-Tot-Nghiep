@@ -25,6 +25,8 @@ tests/*
 !tests/admin_fee_report_logins.test.js
 !tests/mongo_login_admin_audit.test.js
 !tests/admin_fee_export_limit.test.js
+!tests/admin_financial_report.test.js
+!tests/report_charts.test.js
 !tests/fixtures/
 tests/fixtures/*
 !tests/fixtures/merchant_fee_reference.json

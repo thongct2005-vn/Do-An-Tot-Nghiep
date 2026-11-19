@@ -20,9 +20,9 @@ router.get('/logins', async (req, res, next) => {
 });
 router.get('/export', async (req, res, next) => {
   try {
-    const buffer = await service.exportReport(req.query);
+    const { buffer, fileName } = await require('./financialReport.service').exportFinancialReport(req.query, req.user.user_id);
     res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.set('Content-Disposition', 'attachment; filename="merchant-fee-report.xlsx"');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"`);
     res.set('Cache-Control', 'no-store');
     res.send(Buffer.from(buffer));
   } catch (e) { next(e); }

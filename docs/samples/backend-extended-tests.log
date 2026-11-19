@@ -1,0 +1,346 @@
+▶ Admin Dashboard Hybrid Rollup Repository Tests
+  ✔ computeHybridWindow chia chính xác khoảng [start, split) cho rollup và [split, next) cho transactions (3.8111ms)
+  ✔ reconcileDirtyHours đối soát lại các giờ dirty dưới pg_advisory_xact_lock khi có PENDING -> FAILED ở quá khứ (1.0165ms)
+  ✔ kỳ Năm nay (Hybrid rollup + today tail) dùng DATE_TRUNC không sort rời rạc và trả kết quả chuẩn qua service (6.2445ms)
+  ✔ an toàn fallback về raw transactions nếu bảng dashboard_rollup_state chưa tồn tại (42P01) (5.051ms)
+  ✔ getPostpaidRevenueSummary fallback về 0 khi bảng fee_ledger_entries chưa tồn tại (42P01) (0.659ms)
+✔ Admin Dashboard Hybrid Rollup Repository Tests (19.3483ms)
+Kết nối database thành công!
+Kết nối database thành công!
+✔ Dashboard overview postpaid_revenue aggregates collected POSTPAID_SERVICE_FEE and POSTPAID_LATE_FEE accurately (4098.4856ms)
+▶ Admin Dashboard Service Tests
+  ✔ getOverview trả về mặc định tháng hiện tại, 5 KPI, doanh thu Ví trả sau và phân bổ trạng thái 4 loại giao dịch (17.1512ms)
+  ✔ getOverview chuẩn hóa postpaid_revenue về 0 khi kỳ trống hoặc repository trả rỗng (0.9175ms)
+  ✔ getCashflow và getTransactionVolume trả cùng danh sách bucket đã zero-fill (01/11..14/11) (2.1642ms)
+✔ Admin Dashboard Service Tests (22.0258ms)
+Kết nối database thành công!
+Kết nối database thành công!
+✔ detailed Excel accepts 5000 rows and rejects 5001 without truncation (1641.8241ms)
+Kết nối database thành công!
+✔ report logins reuse actual Mongo events and Vietnam date bounds (722.0664ms)
+Kết nối database thành công!
+▶ fee reporting SQL, authenticated API, growth and Excel
+  ✔ ledger revenue and GMV are separate; zero-fee transaction counts, no fee join duplicates (187.7273ms)
+  ✔ Vietnam buckets include end-of-day, exclude next midnight and fill empty intervals (492.2139ms)
+  ✔ Gateway cohort uses order_id and resolved denominator, with null for pending-only (92.5472ms)
+  ✔ growth excludes admin/system/pending and handles previous zero (185.3359ms)
+  ✔ all report APIs enforce ADMIN session and validate filters (253.3428ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+  ✔ more than 100 merchants aggregate in DB; pagination does not truncate Excel (4526.8728ms)
+✔ fee reporting SQL, authenticated API, growth and Excel (7122.6253ms)
+✔ Excel integer precision is checked before conversion and summation (2.3155ms)
+Kết nối database thành công!
+▶ financial aggregates preserve scope, source fees, boundaries and comparison period
+  ✔ cashflow counts each status once and internal movement is not topup (4.9624ms)
+  ✔ fees include unlinked subscription but reject failed transaction fees (4.5428ms)
+  ✔ all time groups keep totals; empty buckets and Vietnam bounds (14.6371ms)
+  ✔ merchant scope shares existing query but does not filter system data (16.3685ms)
+  ✔ unknown fee categories remain visible rather than disappearing (11.1231ms)
+  ✔ snapshot excludes a concurrent commit from every financial section (90.7964ms)
+  ✔ query failure rolls back and releases without replacing missing finance with zero (0.6839ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+  ✔ export releases snapshot before rendering, audits only completed files, and tolerates Mongo failure (3036.1759ms)
+✔ financial aggregates preserve scope, source fees, boundaries and comparison period (4268.0499ms)
+▶ reportRollup integration: parity after historical PENDING -> SUCCESS and cross-hour fee ledger updates
+  ✔ unit checks: selective dirty-hour repair and 42P01 fallback (5.3058ms)
+Kết nối database thành công!
+  ✔ works safely without report_*_hourly tables (42P01 fallback) (30.7978ms)
+  ✔ parity after historical PENDING -> SUCCESS and cross-hour fee ledger updates (249.1116ms)
+✔ reportRollup integration: parity after historical PENDING -> SUCCESS and cross-hour fee ledger updates (4030.2213ms)
+▶ Dashboard Rollup Background Job Tests
+  ✔ tick() đối soát dirty hours và cuộn rollup_until sang target cutoff, an toàn khi chạy lặp liên tiếp (12.2688ms)
+  ✔ tick() bỏ qua lần gọi chồng chéo khi đang chạy và nhả khóa an toàn nếu gặp lỗi DB (2.0708ms)
+  ✔ advanceRollupCutoff rollback giao dịch an toàn khi INSERT lỗi giữa chừng (2.1097ms)
+  ✔ tick() chạy cả advanceReportRollupCutoff song song chu kỳ nền (9.0314ms)
+✔ Dashboard Rollup Background Job Tests (27.7612ms)
+Kết nối database thành công!
+Kết nối database thành công!
+▶ Merchant fee HTTP and PostgreSQL settlement
+  ✖ Admin preview equals calculator, preserves outbound and withdraw, denies non-admin (91.7347ms)
+[admin-fee] SYSTEM_FEE_CONFIG_UPDATED key=MERCHANT_FEE_CONFIG actor=admin:52335d78-8b43-4088-837c-fbbfbb0926e6 rate_bps=150 withdraw_fee_bps=50
+  ✖ Admin validates tier order/rates and audits concurrent updates atomically (20.1463ms)
+  ✖ App dynamic QR snapshots Merchant only and ignores client fees (31.3495ms)
+  ✖ Gateway snapshot, items and audit are atomic; invalid/missing config fails closed (9.466ms)
+  ✖ stale RAM config does not affect QR, direct transfer or preview (5.697ms)
+[admin-fee] SYSTEM_FEE_CONFIG_UPDATED key=MERCHANT_FEE_CONFIG actor=admin:52335d78-8b43-4088-837c-fbbfbb0926e6 rate_bps=200 withdraw_fee_bps=50
+  ✖ Admin update leaves pending snapshot unchanged; retry and concurrent payment collect once (17.4008ms)
+  ✖ legacy and invalid snapshots reject without moving money (6.4144ms)
+  ✖ direct transfer uses same inbound fee, separate sender fee and unique idempotency (39.7214ms)
+  ✖ zero fee succeeds with no fee ledger entry (63.971ms)
+  ✖ fault at each persistence step rolls back balances, ledger, request and outboxes (39.2051ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+  ✔ Admin policy to QR settlement to Dashboard, report and Excel reconcile against SQL (4696.8397ms)
+✖ Merchant fee HTTP and PostgreSQL settlement (7291.6868ms)
+✔ MongoDB login events aggregate by Vietnam day and exclude FAILED (149.222ms)
+MongoDB audit event unavailable: admin action skipped while disconnected
+MongoDB audit event unavailable: user login write failed
+✔ admin GET and login audit omit secrets and preserve route template (300.0295ms)
+MongoDB audit event unavailable: user login skipped while disconnected
+✔ login returns tokens while Mongo write is pending and tolerates write rejection (217.4863ms)
+Kết nối database thành công!
+✔ stats HTTP distinguishes an empty period from disconnected MongoDB (155.6429ms)
+✔ OTP and TOTP auth paths persist one event each, rejected/challenge paths persist none (19.3715ms)
+✔ login stats routes authorize ADMIN and agree across production/sandbox prefixes (50.9448ms)
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+
+Fontconfig error: No writable cache directories
+	C:/Users/Admin/AppData/Local/fontconfig/cache
+	C:/Users/Admin/.cache/fontconfig
+✔ charts render Vietnamese labels and escaped merchant names offline (1438.2442ms)
+✔ top ten comes from the full cohort; empty charts remain real PNGs (26.7661ms)
+ℹ tests 56
+ℹ suites 3
+ℹ pass 45
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11108.9874
+
+✖ failing tests:
+
+test at tests\merchant_fee_flow.test.js:65:13
+✖ Admin preview equals calculator, preserves outbound and withdraw, denies non-admin (91.7347ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  3600 !== 3000
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:74:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:65:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3600,
+    expected: 3000,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:81:13
+✖ Admin validates tier order/rates and audits concurrent updates atomically (20.1463ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  200 !== 400
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:85:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:81:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 200,
+    expected: 400,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:112:13
+✖ App dynamic QR snapshots Merchant only and ignores client fees (31.3495ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - '6000'
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:118:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:112:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: '6000',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:123:13
+✖ Gateway snapshot, items and audit are atomic; invalid/missing config fails closed (9.466ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - '6000'
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:126:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:123:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: '6000',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:141:13
+✖ stale RAM config does not affect QR, direct transfer or preview (5.697ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - '10000'
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:145:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:141:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: '10000',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:153:13
+✖ Admin update leaves pending snapshot unchanged; retry and concurrent payment collect once (17.4008ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - '10000'
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:158:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:153:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: '10000',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:175:13
+✖ legacy and invalid snapshots reject without moving money (6.4144ms)
+  error: column "merchant_fee_amount_snapshot" of relation "payment_requests" does not exist
+      at D:\KH23_CNTT_HK6_DATN_CODE\backend\node_modules\pg-pool\index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:177:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:175:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    length: 159,
+    severity: 'ERROR',
+    code: '42703',
+    detail: undefined,
+    hint: undefined,
+    position: '29',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'analyze.c',
+    line: '2536',
+    routine: 'transformUpdateTargetList'
+  }
+
+test at tests\merchant_fee_flow.test.js:186:13
+✖ direct transfer uses same inbound fee, separate sender fee and unique idempotency (39.7214ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '10000' !== '6000'
+  
+      at TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:190:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:186:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '10000',
+    expected: '6000',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\merchant_fee_flow.test.js:198:13
+✖ zero fee succeeds with no fee ledger entry (63.971ms)
+  Error: Tài khoản chưa xác thực danh tính
+      at httpError (D:\KH23_CNTT_HK6_DATN_CODE\backend\src\utils\httpError.js:2:15)
+      at assertKyc (D:\KH23_CNTT_HK6_DATN_CODE\backend\src\modules\kyc\kyc.guard.js:11:22)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Object.processQRPayment (D:\KH23_CNTT_HK6_DATN_CODE\backend\src\modules\transaction\transaction.repository.js:991:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:200:32)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:198:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    statusCode: 403
+  }
+
+test at tests\merchant_fee_flow.test.js:208:13
+✖ fault at each persistence step rolls back balances, ledger, request and outboxes (39.2051ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /fee test fault/. Input:
+  
+  'Error: Tài khoản chưa xác thực danh tính'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:220:15)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:208:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Tài khoản chưa xác thực danh tính
+        at httpError (D:\KH23_CNTT_HK6_DATN_CODE\backend\src\utils\httpError.js:2:15)
+        at assertKyc (D:\KH23_CNTT_HK6_DATN_CODE\backend\src\modules\kyc\kyc.guard.js:11:22)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Object.processQRPayment (D:\KH23_CNTT_HK6_DATN_CODE\backend\src\modules\transaction\transaction.repository.js:991:7)
+        at async waitForActual (node:assert:615:5)
+        at async strict.rejects (node:assert:738:25)
+        at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:220:15)
+        at async Test.run (node:internal/test_runner/test:1409:7)
+        at async TestContext.<anonymous> (D:\KH23_CNTT_HK6_DATN_CODE\backend\tests\merchant_fee_flow.test.js:208:5)
+        at async Test.run (node:internal/test_runner/test:1409:7),
+    expected: /fee test fault/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

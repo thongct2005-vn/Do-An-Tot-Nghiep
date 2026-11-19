@@ -1,20 +1,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
+const path = require('node:path');
 const { randomBytes } = require('node:crypto');
-const mongoose = require('mongoose');
+const {
+  resolveTestMongoUri,
+  connectTestMongo,
+  cleanupTestMongo,
+} = require('./mongo_test_database');
 
 test('report logins reuse actual Mongo events and Vietnam date bounds', async () => {
-  assert.equal(process.env.NODE_ENV,'test');
-  const source = require('dotenv').parse(fs.readFileSync('.env'));
-  const uri = process.env.MERCHANT_TEST_MONGO_URI || source.MONGODB_URI;
+  assert.equal(process.env.NODE_ENV, 'test');
+  require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
+  const { uri, protectedNames } = resolveTestMongoUri();
   assert.ok(uri, 'MONGODB_URI or MERCHANT_TEST_MONGO_URI required for integration acceptance');
   const name = `merchant_test_login_${randomBytes(10).toString('hex')}`;
   let created = false;
   try {
-    await mongoose.connect(uri, { dbName:name, serverSelectionTimeoutMS:7000 });
-    assert.equal(mongoose.connection.db.databaseName,name);
-    assert.equal((await mongoose.connection.db.listCollections().toArray()).length,0,'Never reuse an existing DB');
+    await connectTestMongo({ uri, dbName: name, serverSelectionTimeoutMS: 7000, protectedNames });
     created = true;
     const {recordSuccessfulUserLogin,UserLoginEvent} = require('../src/models/mongo/userLoginEvent.model');
     for (const at of ['2026-10-31T00:00:00+07:00','2026-10-31T12:00:00+07:00','2026-10-31T23:59:59.999+07:00']) {
@@ -26,10 +28,15 @@ test('report logins reuse actual Mongo events and Vietnam date bounds', async ()
     const r=await service.logins({start_date:'2026-10-31',end_date:'2026-10-31'});
     assert.deepEqual(r.summary,{total_logins:3,unique_users:1});
     assert.equal(r.buckets.reduce((n,b)=>n+b.total_logins,0),3);
+    await recordSuccessfulUserLogin({userId:'one-user',loggedInAt:new Date('2026-11-01T12:00:00+07:00')});
+    const {attachLogins}=require('../src/admin/reports/financialReport.service');
+    const dto=await attachLogins({}, {start_date:'2026-10-31',end_date:'2026-11-01'},service.logins);
+    assert.equal(dto.logins.available,true);
+    assert.deepEqual(dto.logins.summary,{total_logins:5,unique_users:2});
+    assert.ok(dto.logins.read_completed_at>=dto.logins.read_started_at);
     assert.deepEqual((await service.logins({start_date:'2025-01-01',end_date:'2025-01-01'})).summary,{total_logins:0,unique_users:0});
   } finally {
-    if(created){assert.match(mongoose.connection.db.databaseName,/^merchant_test_login_[a-f0-9]{20}$/);await mongoose.connection.db.dropDatabase();}
-    await mongoose.disconnect();
+    await cleanupTestMongo({ uri, dbName: name, created, protectedNames });
     await require('../src/config/database').end();
   }
 });

@@ -1,4 +1,7 @@
+const crypto = require("crypto");
 const adminTransactionRepository = require("./transaction.repository");
+const adminUserService = require("../user/user.service");
+const adminUserRepository = require("../user/user.repository");
 const { httpError } = require("../../utils/httpError");
 const { uuidv7 } = require("uuidv7");
 const {
@@ -10,6 +13,111 @@ const {
   getCurrentMonthBoundsInVietnam,
   getMondayOfDateStr,
 } = require("../../utils/dateRange");
+
+const ADMIN_REVERSE_REQUEST_PATH =
+  "POST /api/v2/admin/transactions/:id/reverse";
+
+function sanitizeReversalResponseData(raw) {
+  if (!raw || typeof raw !== "object") return raw;
+  const copy = { ...raw };
+  delete copy.admin_password;
+  return copy;
+}
+
+function evaluateReversalEligibility({ tx, alreadyReversed, reversalInfo }) {
+  if (!tx) {
+    return { eligible: false, code: "NOT_FOUND", reason: "Không tìm thấy giao dịch" };
+  }
+  if (tx.transaction_type !== "TRANSFER") {
+    return {
+      eligible: false,
+      code: "REVERSAL_UNSUPPORTED_TYPE",
+      reason: "Chỉ hỗ trợ hoàn tiền cho giao dịch chuyển tiền P2P (TRANSFER)",
+    };
+  }
+  if (tx.status !== "SUCCESS") {
+    return {
+      eligible: false,
+      code: "REVERSAL_TX_NOT_SUCCESS",
+      reason: "Chỉ được hoàn tiền giao dịch ở trạng thái Thành công (SUCCESS)",
+    };
+  }
+  if (tx.linked_bank_account_id) {
+    return {
+      eligible: false,
+      code: "REVERSAL_BANK_LINKED_NOT_ALLOWED",
+      reason: "Không hỗ trợ hoàn tiền giao dịch có liên kết tài khoản ngân hàng",
+    };
+  }
+  if (Number(tx.merchant_fee || 0) > 0) {
+    return {
+      eligible: false,
+      code: "REVERSAL_MERCHANT_FEE_NOT_ALLOWED",
+      reason: "Không hỗ trợ hoàn tiền giao dịch phát sinh phí Merchant",
+    };
+  }
+  if (
+    tx.fee_rate_snapshot?.operation_type === "REVERSAL" ||
+    reversalInfo?.direction === "IS_REVERSAL"
+  ) {
+    return {
+      eligible: false,
+      code: "REVERSAL_CANNOT_REVERSE_REVERSAL",
+      reason: "Không thể hoàn tiền đối với giao dịch bù trừ hoàn tiền",
+    };
+  }
+  if (alreadyReversed || reversalInfo?.direction === "ORIGINAL_REVERSED") {
+    return {
+      eligible: false,
+      code: "TRANSACTION_ALREADY_REVERSED",
+      reason: "Giao dịch này đã được hoàn tiền trước đó",
+    };
+  }
+  if (
+    !tx.source_user_id ||
+    !tx.destination_user_id ||
+    String(tx.source_user_id) === String(tx.destination_user_id)
+  ) {
+    return {
+      eligible: false,
+      code: "REVERSAL_INVALID_WALLETS",
+      reason: "Giao dịch không có cặp ví nguồn và ví đích hợp lệ khác nhau",
+    };
+  }
+  if (
+    (tx.source_user_role && tx.source_user_role !== "USER") ||
+    (tx.destination_user_role && tx.destination_user_role !== "USER")
+  ) {
+    return {
+      eligible: false,
+      code: "REVERSAL_USER_WALLETS_ONLY",
+      reason: "Chỉ hỗ trợ hoàn tiền giao dịch P2P giữa hai tài khoản người dùng (USER)",
+    };
+  }
+  if (
+    (tx.source_user_status && tx.source_user_status !== "ACTIVE") ||
+    (tx.destination_user_status && tx.destination_user_status !== "ACTIVE")
+  ) {
+    return {
+      eligible: false,
+      code: "REVERSAL_ACCOUNT_NOT_ACTIVE",
+      reason:
+        "Cả ví người gửi cũ và ví người nhận cũ đều phải đang ở trạng thái hoạt động (ACTIVE)",
+    };
+  }
+  if (
+    tx.destination_user_balance !== undefined &&
+    tx.destination_user_balance !== null &&
+    Number(tx.destination_user_balance) < Number(tx.amount || 0)
+  ) {
+    return {
+      eligible: false,
+      code: "REVERSAL_INSUFFICIENT_BALANCE",
+      reason: "Ví người nhận cũ hiện không đủ số dư để thực hiện hoàn tiền toàn bộ",
+    };
+  }
+  return { eligible: true, code: null, reason: null };
+}
 
 const VALID_TRANSACTION_TYPES = [
   "ALL",
@@ -434,10 +542,12 @@ const adminTransactionService = {
         : null,
       initiated_by: {
         role: t.initiator_role,
+        action: t.initiator_role === "ADMIN" ? t.admin_action || null : null,
         admin_name:
           t.initiator_role === "ADMIN" ? t.admin_name || "Quản trị viên" : null,
         audit_verified: t.initiator_role === "ADMIN",
       },
+      operation_type: t.fee_rate_snapshot?.operation_type || null,
       created_at: t.created_at,
       };
     });
@@ -512,9 +622,54 @@ const adminTransactionService = {
           reason: t.admin_reason,
           authorization_reference: t.admin_auth_ref || null,
           execution_mode: t.admin_execution_mode || null,
+          original_transaction_id: t.admin_original_transaction_id || null,
+          dispute_id: t.admin_dispute_id || null,
           executed_at: t.admin_executed_at,
         }
       : null;
+
+    let reversalInfo = null;
+    if (t.admin_action === "ADMIN_OP_REVERSAL" && t.admin_original_transaction_id) {
+      reversalInfo = {
+        direction: "IS_REVERSAL",
+        related_transaction_id: String(t.admin_original_transaction_id),
+        original_transaction_id: String(t.admin_original_transaction_id),
+        reversal_transaction_id: String(t.id),
+        reason: t.admin_reason || "",
+        dispute_id: t.admin_dispute_id || null,
+        reversed_at: t.admin_executed_at,
+        admin: t.admin_id
+          ? {
+              id: String(t.admin_id),
+              full_name: t.admin_name || "Quản trị viên",
+              email: t.admin_email || "",
+            }
+          : null,
+      };
+    } else if (t.reversal_audit_id && t.reversal_tx_id) {
+      reversalInfo = {
+        direction: "ORIGINAL_REVERSED",
+        related_transaction_id: String(t.reversal_tx_id),
+        original_transaction_id: String(t.id),
+        reversal_transaction_id: String(t.reversal_tx_id),
+        reason: t.reversal_reason || "",
+        dispute_id: t.reversal_dispute_id || null,
+        reversed_at: t.reversed_at,
+        admin: t.reversal_admin_id
+          ? {
+              id: String(t.reversal_admin_id),
+              full_name: t.reversal_admin_name || "Quản trị viên",
+              email: t.reversal_admin_email || "",
+            }
+          : null,
+      };
+    }
+
+    const reversalEligibility = evaluateReversalEligibility({
+      tx: t,
+      alreadyReversed: Boolean(t.reversal_audit_id),
+      reversalInfo,
+    });
 
     // Phân tích integrity_checks và anomalies
     const { integrity_checks, anomalies } = calculateIntegrityAndAnomalies(t);
@@ -603,6 +758,8 @@ const adminTransactionService = {
       idempotency_key: t.idempotency_key,
       created_at: t.created_at,
       admin_intervention: adminIntervention,
+      reversal_info: reversalInfo,
+      reversal_eligibility: reversalEligibility,
       integrity_checks,
       anomalies,
       dispute: disputeData,
@@ -1106,6 +1263,160 @@ const adminTransactionService = {
     );
 
     return { buffer, fileName, totalRows: rows.length };
+  },
+
+  computeAdminReversalRequestHash({ adminId, transactionId, reason }) {
+    const canonicalPayload = JSON.stringify({
+      actor_id: String(adminId),
+      operation: "ADMIN_OP_REVERSAL",
+      transaction_id: String(transactionId),
+      reason: String(reason),
+    });
+    return crypto.createHash("sha256").update(canonicalPayload).digest("hex");
+  },
+
+  async reverseTransaction({
+    transactionId,
+    adminId,
+    reason,
+    adminPassword,
+    idempotencyKey,
+  }) {
+    if (!adminId) {
+      throw httpError(401, "Thiếu định danh quản trị viên");
+    }
+
+    if (
+      typeof idempotencyKey !== "string" ||
+      idempotencyKey.trim().length === 0 ||
+      idempotencyKey.trim().length > 100
+    ) {
+      throw httpError(
+        400,
+        "Header Idempotency-Key là bắt buộc và tối đa 100 ký tự"
+      );
+    }
+    const cleanIdempotencyKey = idempotencyKey.trim();
+
+    if (!transactionId || String(transactionId).trim() === "") {
+      throw httpError(400, "Thiếu định danh giao dịch cần hoàn tiền");
+    }
+    const cleanTxId = String(transactionId).trim();
+
+    if (typeof reason !== "string") {
+      throw httpError(
+        400,
+        "Lý do hoàn tiền (reason) là bắt buộc, từ 5 đến 500 ký tự"
+      );
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw httpError(
+        400,
+        "Lý do hoàn tiền (reason) phải có độ dài từ 5 đến 500 ký tự"
+      );
+    }
+
+    // Xác thực lại mật khẩu Admin trước khi giữ bất kỳ khóa DB nào.
+    await adminUserService.verifyAdminStepUpPassword({
+      adminId,
+      adminPassword,
+    });
+
+    const requestHash = this.computeAdminReversalRequestHash({
+      adminId,
+      transactionId: cleanTxId,
+      reason: cleanReason,
+    });
+
+    const inserted = await adminUserRepository.tryInsertIdempotencyKey({
+      idempotencyKey: cleanIdempotencyKey,
+      actorId: adminId,
+      actorType: "ADMIN",
+      requestPath: ADMIN_REVERSE_REQUEST_PATH,
+      requestHash,
+    });
+
+    if (!inserted) {
+      const existingKey = await adminUserRepository.getIdempotencyKey(
+        cleanIdempotencyKey
+      );
+      if (!existingKey) {
+        throw httpError(409, "Yêu cầu hoàn tiền đang được xử lý");
+      }
+
+      if (
+        String(existingKey.actor_id) !== String(adminId) ||
+        existingKey.request_path !== ADMIN_REVERSE_REQUEST_PATH ||
+        existingKey.request_hash !== requestHash
+      ) {
+        throw httpError(
+          422,
+          "Mã Idempotency-Key đã được sử dụng với dữ liệu hoàn tiền khác"
+        );
+      }
+
+      if (existingKey.status === "SUCCESS" && existingKey.response_body) {
+        return {
+          replayed: true,
+          data: sanitizeReversalResponseData(existingKey.response_body),
+          notificationContext: null,
+        };
+      }
+
+      const reclaimed = await adminUserRepository.reclaimIdempotencyKey({
+        idempotencyKey: cleanIdempotencyKey,
+        actorId: adminId,
+        requestPath: ADMIN_REVERSE_REQUEST_PATH,
+        requestHash,
+      });
+
+      if (!reclaimed) {
+        const latestKey = await adminUserRepository.getIdempotencyKey(
+          cleanIdempotencyKey
+        );
+        if (
+          latestKey &&
+          latestKey.status === "SUCCESS" &&
+          latestKey.response_body &&
+          latestKey.request_hash === requestHash
+        ) {
+          return {
+            replayed: true,
+            data: sanitizeReversalResponseData(latestKey.response_body),
+            notificationContext: null,
+          };
+        }
+        throw httpError(
+          409,
+          "Yêu cầu hoàn tiền đang được xử lý, vui lòng không gửi trùng lặp"
+        );
+      }
+    }
+
+    try {
+      const txResult = await adminTransactionRepository.executeReversalWithHistory({
+        transactionId: cleanTxId,
+        adminId,
+        reason: cleanReason,
+        idempotencyKey: cleanIdempotencyKey,
+        requestHash,
+        requestPath: ADMIN_REVERSE_REQUEST_PATH,
+      });
+
+      return {
+        replayed: Boolean(txResult.replayed),
+        data: sanitizeReversalResponseData(txResult.responseBody),
+        notificationContext: txResult.notificationContext || null,
+      };
+    } catch (e) {
+      try {
+        await adminUserRepository.markIdempotencyKeyFailed(cleanIdempotencyKey);
+      } catch (markErr) {
+        console.error("markIdempotencyKeyFailed error:", markErr.message);
+      }
+      throw e;
+    }
   },
 };
 

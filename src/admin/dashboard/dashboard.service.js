@@ -14,17 +14,21 @@ const CANONICAL_TX_TYPES = [
 const adminDashboardService = {
   /**
    * GET /api/v2/admin/dashboard/overview
-   * Trả về 5 chỉ số KPI và phân bổ trạng thái giao dịch theo 4 loại trong kỳ.
+   * Trả về 5 chỉ số KPI dòng tiền, doanh thu thực thu Ví trả sau và phân bổ trạng thái giao dịch theo 4 loại trong kỳ.
    */
   async getOverview({ start_date, end_date, now } = {}) {
     const range = resolveAdminDateRange(start_date, end_date, { now });
 
-    const [kpiRow, statusRows] = await Promise.all([
+    const [kpiRow, statusRows, postpaidRow] = await Promise.all([
       adminDashboardRepository.getKpiSummary(
         range.startInstant,
         range.nextDayInstant,
       ),
       adminDashboardRepository.getStatusDistributionByType(
+        range.startInstant,
+        range.nextDayInstant,
+      ),
+      adminDashboardRepository.getPostpaidRevenueSummary(
         range.startInstant,
         range.nextDayInstant,
       ),
@@ -35,6 +39,13 @@ const adminDashboardService = {
     const totalWithdraw = Number(kpiRow?.total_withdraw || 0);
     const netCashflow = totalTopup - totalWithdraw;
     const totalQrPayment = Number(kpiRow?.total_qr_payment || 0);
+
+    const serviceFeeRevenue = Number(postpaidRow?.service_fee_revenue || 0);
+    const lateFeeRevenue = Number(postpaidRow?.late_fee_revenue || 0);
+    const totalPostpaidRevenue = Number(
+      postpaidRow?.total_revenue ?? serviceFeeRevenue + lateFeeRevenue,
+    );
+    const postpaidFeeTxCount = Number(postpaidRow?.fee_tx_count || 0);
 
     const statusByType = new Map();
     for (const row of statusRows || []) {
@@ -80,6 +91,12 @@ const adminDashboardService = {
         total_withdraw: totalWithdraw,
         net_cashflow: netCashflow,
         total_qr_payment: totalQrPayment,
+      },
+      postpaid_revenue: {
+        total_revenue: totalPostpaidRevenue,
+        service_fee_revenue: serviceFeeRevenue,
+        late_fee_revenue: lateFeeRevenue,
+        fee_tx_count: postpaidFeeTxCount,
       },
       status_distribution: statusDistribution,
     };

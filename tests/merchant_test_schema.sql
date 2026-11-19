@@ -33,9 +33,13 @@ CREATE TABLE admin_user_change_history (
     'MERCHANT_CREDENTIALS_REVOKED', 'MERCHANT_CREDENTIALS_REISSUED',
     'MERCHANT_FEE_CONFIG_UPDATED', 'SYSTEM_FEE_CONFIG_UPDATED',
     'USER_SESSIONS_REVOKED', 'USER_QR_REGENERATED', 'ADMIN_OP_P2P', 'ADMIN_OP_TOPUP',
-    'ADMIN_OP_WITHDRAW', 'DISPUTE_OPENED', 'DISPUTE_UPDATED', 'DISPUTE_RESOLVED'
+    'ADMIN_OP_WITHDRAW', 'ADMIN_OP_REVERSAL', 'DISPUTE_OPENED', 'DISPUTE_UPDATED', 'DISPUTE_RESOLVED'
   ))
 );
+CREATE UNIQUE INDEX uk_admin_reversal_original_tx
+  ON admin_user_change_history ((new_values->>'original_transaction_id'))
+  WHERE action = 'ADMIN_OP_REVERSAL'
+    AND (new_values->>'original_transaction_id') IS NOT NULL;
 CREATE TABLE payment_requests (
   id uuid PRIMARY KEY, destination_user_id uuid REFERENCES users(id),
   reference_code varchar, transaction_id varchar, status varchar DEFAULT 'PENDING', created_at timestamptz DEFAULT NOW(),

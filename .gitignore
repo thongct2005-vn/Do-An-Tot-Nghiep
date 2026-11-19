@@ -27,14 +27,6 @@ tests/*
 !tests/admin_fee_export_limit.test.js
 !tests/admin_financial_report.test.js
 !tests/report_charts.test.js
-!tests/admin_dashboard_hybrid.test.js
-!tests/admin_dashboard_postpaid_revenue.test.js
-!tests/admin_dashboard_service.test.js
-!tests/admin_report_hybrid.test.js
-!tests/admin_transaction_perf.test.js
-!tests/dashboard_rollup_job.test.js
-!tests/analytics_v2_verification.test.js
-!tests/app_merchant_v2_coexistence.test.js
 !tests/fixtures/
 tests/fixtures/*
 !tests/fixtures/merchant_fee_reference.json

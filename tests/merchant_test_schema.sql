@@ -48,24 +48,16 @@ CREATE TABLE payment_requests (
   updated_at timestamptz DEFAULT NOW(), credentials_revision bigint
 );
 CREATE UNIQUE INDEX payment_requests_merchant_order_uk ON payment_requests(destination_user_id, order_id);
-CREATE INDEX idx_pr_gateway_created_cohort
-  ON payment_requests (created_at, destination_user_id)
-  INCLUDE (status)
-  WHERE order_id IS NOT NULL;
 CREATE TABLE audit_outbox (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_type varchar NOT NULL, payload jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT NOW(), published_at timestamptz, retry_count integer NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_audit_outbox_tx_id
-  ON audit_outbox ((payload->>'transaction_id'))
-  WHERE (payload->>'transaction_id') IS NOT NULL;
 CREATE TABLE idempotency_keys (
   idempotency_key varchar PRIMARY KEY, actor_id uuid, actor_type varchar, request_path text, request_hash text,
   status varchar DEFAULT 'PENDING', response_body jsonb, response_status_code integer,
   created_at timestamptz DEFAULT NOW(),
   expires_at timestamptz DEFAULT NOW() + interval '7 days'
 );
-CREATE INDEX idx_idempotency_keys_expires_at ON idempotency_keys (expires_at);
 CREATE TABLE webhook_deliveries (
   id uuid PRIMARY KEY, payment_request_id uuid REFERENCES payment_requests(id),
   merchant_id uuid REFERENCES users(id), event_type varchar, payload jsonb,

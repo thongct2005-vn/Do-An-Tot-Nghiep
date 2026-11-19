@@ -1,5 +1,4 @@
 const pool = require("../../config/database");
-const { handleMissingRollupRelation } = require("../analyticsStorage");
 const {
   ensureRollupConsistent,
   computeHybridWindow,
@@ -79,10 +78,6 @@ async function queryHybridWithFallback(startInstant, nextDayInstant, rollupUntil
     return await exec(rollupUntil);
   } catch (err) {
     if (err && err.code === "42P01" && rollupUntil) {
-      handleMissingRollupRelation(err, {
-        domain: "dashboard",
-        relation: "dashboard_tx_hourly",
-      });
       return await exec(null);
     }
     throw err;

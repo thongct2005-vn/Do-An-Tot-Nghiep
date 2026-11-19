@@ -86,6 +86,12 @@ test('financial aggregates preserve scope, source fees, boundaries and compariso
       assert.equal(data.merchant.overview.revenue,3000);
       assert.equal(data.merchant.overview.transactions,1);
       assert.equal(sum(data.fees.filter(r=>r.eligible),'revenue'),12600);
+      const split=new Date('2026-11-01T00:00:00+07:00');
+      const fallbackMerchant=await repo.merchantReport(db,f,split);
+      assert.equal(fallbackMerchant.overview.revenue,9100);
+      const rawFeeSeries=await repo.merchantFeeSeries(db,f,null);
+      const fallbackFeeSeries=await repo.merchantFeeSeries(db,f,split);
+      assert.deepEqual(fallbackFeeSeries,rawFeeSeries);
     });
     await t.test('unknown fee categories remain visible rather than disappearing', async () => {
       await db.query('ALTER TABLE fee_ledger_entries DROP CONSTRAINT fee_ledger_entries_fee_type_check');
@@ -93,6 +99,50 @@ test('financial aggregates preserve scope, source fees, boundaries and compariso
       const rows=await repo.fees(db,f);
       assert.equal(rows.find(r=>r.category==='FUTURE_FEE').revenue,50);
       assert.equal(sum(rows.filter(r=>r.eligible),'revenue'),12650);
+    });
+    await t.test('hybrid QR_FEE ledger proof reuses rollup when clean and falls back when ineligible QR_FEE exists', async () => {
+      await db.query(`
+        CREATE TABLE public.report_merchant_fee_hourly (
+          bucket_hour TIMESTAMPTZ NOT NULL,
+          merchant_id UUID NOT NULL,
+          transaction_type TEXT NOT NULL,
+          fee_amount NUMERIC(22, 0) NOT NULL DEFAULT 0,
+          fee_tx_count BIGINT NOT NULL DEFAULT 0,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (bucket_hour, merchant_id, transaction_type)
+        )
+      `);
+      try {
+        await db.query(`
+          INSERT INTO public.report_merchant_fee_hourly (bucket_hour, merchant_id, transaction_type, fee_amount, fee_tx_count)
+          SELECT date_trunc('hour', l.created_at), u.id, t.transaction_type::text, SUM(l.amount), COUNT(*)
+          FROM public.fee_ledger_entries l
+          JOIN public.transactions t ON t.id = l.transaction_id
+          JOIN public.users u ON u.id = t.destination_user_id AND u.role = 'MERCHANT'
+          WHERE l.fee_type = 'QR_FEE' AND t.status IN ('SUCCESS', 'COMPLETED')
+            AND t.transaction_type IN ('PAYMENT', 'TRANSFER')
+          GROUP BY 1, 2, 3
+        `);
+        const baseline = await repo.readFinancialData(db, f);
+        // Split at 2026-11-01T00:00:00+07:00: [10-31, 11-01) has only 1 eligible QR_FEE (100 VND), so proof passes!
+        const cleanSplit = new Date('2026-11-01T00:00:00+07:00');
+        assert.equal(await repo.verifyQrFeeRollupWindow(db, f.startInstant, cleanSplit), true);
+        const hybridClean = await repo.readFinancialData(db, f, { rollupUntil: cleanSplit });
+        assert.deepEqual(hybridClean.fees, baseline.fees);
+        assert.deepEqual(hybridClean.system_series, baseline.system_series);
+        assert.deepEqual(hybridClean.controls, baseline.controls);
+        assert.deepEqual(hybridClean.merchant_fee_series, baseline.merchant_fee_series);
+
+        // Split at 2026-11-02T00:00:00+07:00: includes the 70 VND failed transaction QR_FEE on 11-01, so proof detects mismatch and falls back!
+        const dirtySplit = new Date('2026-11-02T00:00:00+07:00');
+        assert.equal(await repo.verifyQrFeeRollupWindow(db, f.startInstant, dirtySplit), false);
+        const hybridFallback = await repo.readFinancialData(db, f, { rollupUntil: dirtySplit });
+        assert.deepEqual(hybridFallback.fees, baseline.fees);
+        assert.deepEqual(hybridFallback.system_series, baseline.system_series);
+        assert.deepEqual(hybridFallback.controls, baseline.controls);
+      } finally {
+        await db.query('DROP TABLE public.report_merchant_fee_hourly');
+      }
     });
     await t.test('snapshot excludes a concurrent commit from every financial section', async () => {
       const { Pool }=require('pg');

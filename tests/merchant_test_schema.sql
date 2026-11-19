@@ -166,6 +166,7 @@ CREATE TABLE postpaid_entries (
 CREATE INDEX idx_postpaid_entries_user_time ON postpaid_entries (user_id, created_at DESC);
 CREATE INDEX idx_postpaid_entries_tx ON postpaid_entries (tx_id) WHERE tx_id IS NOT NULL;
 CREATE INDEX idx_postpaid_entries_ref_tx ON postpaid_entries (ref_tx_id) WHERE ref_tx_id IS NOT NULL;
+CREATE INDEX idx_postpaid_entries_user_purchase_stmt ON postpaid_entries (user_id, created_at DESC, id DESC) WHERE action IN ('PURCHASE', 'STATEMENT_CLOSE');
 CREATE UNIQUE INDEX uk_postpaid_statement_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'STATEMENT_CLOSE';
 CREATE UNIQUE INDEX uk_postpaid_service_fee_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'SERVICE_FEE';
 CREATE UNIQUE INDEX uk_postpaid_late_fee_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'LATE_FEE';

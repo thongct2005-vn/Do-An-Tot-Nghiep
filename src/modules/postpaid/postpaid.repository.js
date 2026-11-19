@@ -2243,14 +2243,16 @@ const postpaidRepository = {
                   pw.used_amount,
                   pw.service_fee_amount,
                   pw.late_fee_amount,
-                  (
-                    SELECT COUNT(*)::int
+                  EXISTS (
+                    SELECT 1
                       FROM postpaid_entries pe
                      WHERE pe.user_id = pw.user_id
                        AND pe.action = $7
-                  ) AS lifetime_purchase_count,
-                  (
-                    SELECT COUNT(*)::int
+                    OFFSET $9::int
+                     LIMIT 1
+                  ) AS exceeds_free_service_fee_txs,
+                  EXISTS (
+                    SELECT 1
                       FROM postpaid_entries pe
                      WHERE pe.user_id = pw.user_id
                        AND pe.action = $7
@@ -2264,7 +2266,7 @@ const postpaidRepository = {
                               OR (st.created_at = pe.created_at AND st.id >= pe.id)
                             )
                        )
-                  ) AS cycle_purchase_count
+                  ) AS has_cycle_purchase
              FROM postpaid_wallets pw
             WHERE pw.status IN ($3, $4, $5)
               AND (pw.current_cycle_month IS DISTINCT FROM $1)
@@ -2288,12 +2290,14 @@ const postpaidRepository = {
                             )
                        )
                   )
-                  AND (
-                    SELECT COUNT(*)
+                  AND EXISTS (
+                    SELECT 1
                       FROM postpaid_entries pe
                      WHERE pe.user_id = pw.user_id
                        AND pe.action = $7
-                  ) > $9::int
+                    OFFSET $9::int
+                     LIMIT 1
+                  )
                 )
               )
             ORDER BY pw.user_id ASC
@@ -2322,15 +2326,15 @@ const postpaidRepository = {
           const usedBefore = Number(row.used_amount);
           const oldServiceFee = Number(row.service_fee_amount);
           const oldLateFee = Number(row.late_fee_amount);
-          const lifetimePurchases = Number(row.lifetime_purchase_count || 0);
-          const cyclePurchases = Number(row.cycle_purchase_count || 0);
+          const exceedsFreeTxs = Boolean(row.exceeds_free_service_fee_txs);
+          const hasCyclePurchase = Boolean(row.has_cycle_purchase);
 
           // Bắt buộc trừ service_fee_amount & late_fee_amount khỏi used_amount để billed_amount chỉ giữ phần gốc
           const newBilled = Math.max(0, usedBefore - oldServiceFee - oldLateFee);
           const qualifiesServiceFee =
             config.monthly_service_fee > 0 &&
-            cyclePurchases > 0 &&
-            lifetimePurchases > config.free_service_fee_tx_count;
+            hasCyclePurchase &&
+            exceedsFreeTxs;
 
           if (newBilled <= 0 && !qualifiesServiceFee) continue;
 

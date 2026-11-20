@@ -16,6 +16,7 @@ const {
   getVnMonthMeta,
 } = require("../../../fee/feeCalculator");
 
+//Xoá
 const FEE_PLANS = ["PER_TRANSACTION"];
 
 const PLAN_NAMES = {

@@ -2,6 +2,7 @@ const { successResponse } = require("../../utils/apiResponse");
 const adminUserService = require("./user.service");
 const socketUtil = require("../../utils/socket");
 const firebaseNotification = require("../../utils/firebaseNotification");
+const { resolveRequestBase, sendKycImageFile } = require("../../utils/kycImage");
 
 const adminUserController = {
   async getStats(req, res, next) {
@@ -59,13 +60,33 @@ const adminUserController = {
   async getUserDetail(req, res, next) {
     try {
       const { id } = req.params;
-      const result = await adminUserService.getUserDetail(id);
+      const { origin, routePrefix } = resolveRequestBase(
+        req,
+        "/api/v2/admin/user",
+      );
+      const result = await adminUserService.getUserDetail(id, {
+        origin,
+        routePrefix,
+      });
       return successResponse(
         res,
         200,
         "Lấy chi tiết người dùng thành công",
         result
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getUserKycImage(req, res, next) {
+    try {
+      const { id, side } = req.params;
+      const filePath = await adminUserService.getUserKycImagePath({
+        userId: id,
+        side,
+      });
+      return sendKycImageFile({ res, next, filePath });
     } catch (e) {
       next(e);
     }

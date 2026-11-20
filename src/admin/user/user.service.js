@@ -9,6 +9,11 @@ const { isValidPhone, isValidEmail } = require("../../utils/validators");
 const { maskPhone } = require("../../utils/mask");
 const { clearFailure } = require("../../utils/risk");
 const {
+  resolveKycSideSpec,
+  buildAdminKycImageUrl,
+  resolveSafeKycFilePath,
+} = require("../../utils/kycImage");
+const {
   resolveAdminDateRange,
   generateTimeBuckets,
   getMondayOfDateStr,
@@ -192,7 +197,7 @@ const adminUserService = {
     };
   },
 
-  async getUserDetail(userId) {
+  async getUserDetail(userId, { origin = "", routePrefix = "/api/v2/admin/user" } = {}) {
     if (!userId) {
       throw httpError(400, "Thiếu định danh người dùng");
     }
@@ -230,9 +235,27 @@ const adminUserService = {
           dob: user.kyc.dob,
           gender: user.kyc.gender,
           address: user.kyc.address,
-          front_image_url: user.kyc.front_image_url,
-          back_image_url: user.kyc.back_image_url,
-          face_image_url: user.kyc.face_image_url,
+          front_image_url: buildAdminKycImageUrl({
+            storedValue: user.kyc.front_image_url,
+            origin,
+            routePrefix,
+            entityId: user.id,
+            side: "front",
+          }),
+          back_image_url: buildAdminKycImageUrl({
+            storedValue: user.kyc.back_image_url,
+            origin,
+            routePrefix,
+            entityId: user.id,
+            side: "back",
+          }),
+          face_image_url: buildAdminKycImageUrl({
+            storedValue: user.kyc.face_image_url,
+            origin,
+            routePrefix,
+            entityId: user.id,
+            side: "face",
+          }),
           face_match_score: user.kyc.face_match_score,
           status: user.kyc.status,
         }
@@ -1224,6 +1247,22 @@ const adminUserService = {
       user,
       audit: result.audit,
     };
+  },
+
+  async getUserKycImagePath({ userId, side }) {
+    const trimmedId = String(userId ?? "").trim();
+    if (!UUID_REGEX.test(trimmedId)) {
+      throw httpError(400, "Định danh người dùng không hợp lệ");
+    }
+    const spec = resolveKycSideSpec(side);
+    const kycRow = await adminUserRepository.getUserKycImages(trimmedId);
+    if (!kycRow) {
+      throw httpError(404, "Không tìm thấy người dùng");
+    }
+    return resolveSafeKycFilePath({
+      storedPath: kycRow[spec.column],
+      side,
+    });
   },
 
   async executeAdminWithdraw(params) {

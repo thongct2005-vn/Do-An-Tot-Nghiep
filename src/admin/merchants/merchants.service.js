@@ -5,6 +5,11 @@ const { parseProfilePatch } = require("./merchants.profile");
 const { parseStatusPatch } = require("./merchants.status");
 const { parseCreateMerchantPayload } = require("./merchants.create");
 const socket = require("../../utils/socket");
+const {
+  resolveKycSideSpec,
+  buildAdminKycImageUrl,
+  resolveSafeKycFilePath,
+} = require("../../utils/kycImage");
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -171,7 +176,7 @@ const adminMerchantsService = {
     };
   },
 
-  async getMerchantDetail(merchantId) {
+  async getMerchantDetail(merchantId, { origin = "", routePrefix = "/api/v2/admin/merchants" } = {}) {
     if (!merchantId || !UUID_REGEX.test(String(merchantId).trim())) {
       throw httpError(400, "Định danh đối tác merchant không hợp lệ");
     }
@@ -232,9 +237,27 @@ const adminMerchantsService = {
       created_at: merchant.created_at,
       updated_at: merchant.updated_at,
       kyc_documents: {
-        front_image_url: merchant.front_image_url || null,
-        back_image_url: merchant.back_image_url || null,
-        face_image_url: merchant.face_image_url || null,
+        front_image_url: buildAdminKycImageUrl({
+          storedValue: merchant.front_image_url,
+          origin,
+          routePrefix,
+          entityId: merchant.id,
+          side: "front",
+        }),
+        back_image_url: buildAdminKycImageUrl({
+          storedValue: merchant.back_image_url,
+          origin,
+          routePrefix,
+          entityId: merchant.id,
+          side: "back",
+        }),
+        face_image_url: buildAdminKycImageUrl({
+          storedValue: merchant.face_image_url,
+          origin,
+          routePrefix,
+          entityId: merchant.id,
+          side: "face",
+        }),
         face_match_score: merchant.face_match_score ?? null,
       },
       owner: {
@@ -294,6 +317,22 @@ const adminMerchantsService = {
         mom_growth_percent: momGrowthPercent,
       },
     };
+  },
+
+  async getMerchantKycImagePath({ merchantId, side }) {
+    const trimmedId = String(merchantId ?? "").trim();
+    if (!UUID_REGEX.test(trimmedId)) {
+      throw httpError(400, "Định danh đối tác merchant không hợp lệ");
+    }
+    const spec = resolveKycSideSpec(side);
+    const row = await adminMerchantsRepository.getMerchantKycImages(trimmedId);
+    if (!row) {
+      throw httpError(404, "Không tìm thấy đối tác merchant");
+    }
+    return resolveSafeKycFilePath({
+      storedPath: row[spec.column],
+      side,
+    });
   },
 };
 

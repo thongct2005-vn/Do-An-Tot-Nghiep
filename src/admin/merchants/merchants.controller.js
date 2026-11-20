@@ -1,6 +1,7 @@
 const { successResponse } = require("../../utils/apiResponse");
 const adminMerchantsService = require("./merchants.service");
 const adminMerchantFeeService = require("./merchantFee.service");
+const { resolveRequestBase, sendKycImageFile } = require("../../utils/kycImage");
 
 const adminMerchantsController = {
   async createMerchant(req, res, next) {
@@ -85,13 +86,33 @@ const adminMerchantsController = {
   async getMerchantDetail(req, res, next) {
     try {
       const { id } = req.params;
-      const result = await adminMerchantsService.getMerchantDetail(id);
+      const { origin, routePrefix } = resolveRequestBase(
+        req,
+        "/api/v2/admin/merchants",
+      );
+      const result = await adminMerchantsService.getMerchantDetail(id, {
+        origin,
+        routePrefix,
+      });
       return successResponse(
         res,
         200,
         "Lấy thông tin chi tiết đối tác merchant thành công",
         result
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async getMerchantKycImage(req, res, next) {
+    try {
+      const { id, side } = req.params;
+      const filePath = await adminMerchantsService.getMerchantKycImagePath({
+        merchantId: id,
+        side,
+      });
+      return sendKycImageFile({ res, next, filePath });
     } catch (e) {
       next(e);
     }

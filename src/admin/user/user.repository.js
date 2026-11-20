@@ -1505,6 +1505,29 @@ const adminUserRepository = {
       client.release();
     }
   },
+
+  async getUserKycImages(userId) {
+    const result = await pool.query(
+      `
+      SELECT
+        u.id,
+        k.front_image_url,
+        k.back_image_url,
+        k.face_image_url
+      FROM users u
+      LEFT JOIN LATERAL (
+        SELECT front_image_url, back_image_url, face_image_url
+        FROM user_kyc
+        WHERE user_id = u.id
+        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+        LIMIT 1
+      ) k ON true
+      WHERE u.id = $1 AND u.role IN ('USER', 'MERCHANT')
+      `,
+      [userId],
+    );
+    return result.rows[0] || null;
+  },
 };
 
 module.exports = adminUserRepository;

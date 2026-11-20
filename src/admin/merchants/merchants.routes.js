@@ -18,6 +18,7 @@ router.get("/fee-config/history", adminMerchantsController.getFeeConfigHistory);
 router.get("/", adminMerchantsController.getMerchants);
 router.post("/", adminMerchantsController.createMerchant);
 router.get("/:id/fee-config", adminMerchantsController.getMerchantFeeConfig);
+router.get("/:id/kyc/:side", adminMerchantsController.getMerchantKycImage);
 router.get("/:id", adminMerchantsController.getMerchantDetail);
 router.patch("/:id/status", adminMerchantsController.updateMerchantStatus);
 router.patch("/:id/profile", adminMerchantsController.updateMerchantProfile);

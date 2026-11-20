@@ -676,6 +676,23 @@ const adminMerchantsRepository = {
 
     return merchant;
   },
+
+  async getMerchantKycImages(merchantId) {
+    const result = await pool.query(
+      `
+      SELECT
+        u.id,
+        k.front_image_url,
+        k.back_image_url,
+        k.face_image_url
+      FROM users u
+      ${KYC_LATERAL_JOIN}
+      WHERE u.id = $1 AND u.role = 'MERCHANT'
+      `,
+      [merchantId],
+    );
+    return result.rows[0] || null;
+  },
 };
 
 module.exports = adminMerchantsRepository;

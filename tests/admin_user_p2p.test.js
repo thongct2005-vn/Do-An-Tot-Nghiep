@@ -479,9 +479,6 @@ describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Sce
             transfer_max_fee: null,
             withdraw_fee_bps: 50,
             withdraw_free_quota_per_month: 50000000,
-            monthly_plan_enabled: false,
-            monthly_plan_fee: 0,
-            monthly_grace_days: 7,
             tiers: [
               { from_amount: 0, rate_bps: 100 },
               { from_amount: 50000000, rate_bps: 80 },

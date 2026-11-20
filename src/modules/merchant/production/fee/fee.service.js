@@ -6,7 +6,6 @@ const merchantFeeRepository = require("./fee.repository");
 const {
   VN_OFFSET_MS,
   FEE_TYPES,
-  MONTHLY_STATUS,
   normalizeSystemFeeConfig,
   mergeEffectiveFeeConfig,
   pickEffectiveSchedule,
@@ -21,7 +20,6 @@ const FEE_PLANS = ["PER_TRANSACTION"];
 
 const PLAN_NAMES = {
   PER_TRANSACTION: "Thu phí theo từng giao dịch (lũy tiến)",
-  MONTHLY: "Trả phí theo tháng (ngừng áp dụng)",
 };
 
 function formatVnDateOnly(dateInput) {
@@ -60,12 +58,6 @@ function normalizeRequestedPlan(rawPlan, { defaultPlan = null } = {}) {
     );
   }
   const normalized = rawPlan.trim().toUpperCase();
-  if (normalized === "MONTHLY") {
-    throw httpError(
-      400,
-      "Gói thu phí theo tháng đã ngừng áp dụng, hệ thống hiện chỉ dùng biểu phí theo từng giao dịch",
-    );
-  }
   if (!FEE_PLANS.includes(normalized)) {
     throw httpError(
       400,
@@ -164,15 +156,12 @@ function formatScheduleSummary(scheduleRow, systemConfig) {
     withdraw_fee_bps: merged.withdraw_fee_bps,
     withdraw_fee_percent: merged.withdraw_fee_percent,
     withdraw_free_quota_per_month: merged.withdraw_free_quota_per_month,
-    monthly_plan_enabled: merged.monthly_plan_enabled,
-    monthly_plan_fee: merged.monthly_plan_fee,
     tiers: merged.tiers || [],
     reason: scheduleRow.reason || null,
   };
 }
 
 function buildStatusResponse({
-  setting,
   merchantUser,
   feeConfig,
   systemConfig = null,
@@ -180,73 +169,22 @@ function buildStatusResponse({
   withdrawQuota = null,
   monthlyQrGross = 0,
   nowMs = Date.now(),
-  action = null,
 }) {
   const vnMeta = getVnMonthMeta(nowMs);
-  const currentPlan = setting?.fee_plan || "PER_TRANSACTION";
-  const pendingPlan = setting?.pending_fee_plan || null;
-  const hasPendingChange = Boolean(pendingPlan && pendingPlan !== currentPlan);
-
-  const expiresAtDateObj = setting?.expires_at ? new Date(setting.expires_at) : null;
-  const effectiveFrom = hasPendingChange
-    ? (expiresAtDateObj || vnMeta.nextMonthStart).toISOString()
-    : null;
-  const effectiveFromDate = hasPendingChange
-    ? formatVnDateOnly(effectiveFrom)
-    : null;
-
-  const monthlyStatus =
-    setting?.monthly_status ||
-    (currentPlan === "MONTHLY"
-      ? MONTHLY_STATUS.ACTIVE
-      : hasPendingChange && pendingPlan === "MONTHLY"
-        ? MONTHLY_STATUS.PENDING_ACTIVATE
-        : MONTHLY_STATUS.INACTIVE);
-
-  const currentLabel =
-    monthlyStatus === MONTHLY_STATUS.PAST_DUE
-      ? `Đang áp dụng: ${PLAN_NAMES[currentPlan]} (Quá hạn thanh toán phí tháng)`
-      : `Đang áp dụng: ${PLAN_NAMES[currentPlan]}`;
-  const nextMonthLabel = hasPendingChange
-    ? `Áp dụng từ tháng sau (${effectiveFromDate}): ${PLAN_NAMES[pendingPlan]}`
-    : null;
-
+  const currentPlan = "PER_TRANSACTION";
+  const currentLabel = `Đang áp dụng: ${PLAN_NAMES[currentPlan]}`;
   const walletBalance = Number(merchantUser?.balance ?? 0);
-  const monthlyFee = feeConfig.monthly_plan_fee;
-  const sufficientBalanceForNextPlan =
-    pendingPlan === "MONTHLY" ? walletBalance >= monthlyFee : true;
 
-  const graceUntilIso = setting?.grace_until
-    ? new Date(setting.grace_until).toISOString()
-    : null;
-
-  const payload = {
+  return {
     current_plan: currentPlan,
     current_plan_name: PLAN_NAMES[currentPlan],
-    pending_plan: hasPendingChange ? pendingPlan : null,
-    pending_plan_name: hasPendingChange ? PLAN_NAMES[pendingPlan] : null,
-    has_pending_change: hasPendingChange,
-    monthly_plan_enabled: Boolean(
-      setting?.monthly_plan_enabled ?? (currentPlan === "MONTHLY"),
-    ),
-    monthly_status: monthlyStatus,
-    grace_until: graceUntilIso,
-    grace_until_date: formatVnDateOnly(graceUntilIso),
-    overdue_month_key: setting?.overdue_month_key || null,
-    overdue_amount: Number(setting?.overdue_amount ?? 0),
     current_month: vnMeta.currentMonth,
     current_month_end_date: vnMeta.currentMonthEndDate,
     next_month: vnMeta.nextMonth,
-    effective_from: effectiveFrom,
-    effective_from_date: effectiveFromDate,
-    expires_at: expiresAtDateObj ? expiresAtDateObj.toISOString() : null,
-    expires_at_date: formatVnDateOnly(expiresAtDateObj),
     display: {
       current_label: currentLabel,
-      next_month_label: nextMonthLabel,
     },
     wallet_balance: walletBalance,
-    sufficient_balance_for_next_plan: sufficientBalanceForNextPlan,
     effective_fee_config: {
       source: feeConfig.source || "SYSTEM_DEFAULT",
       schedule_id: feeConfig.schedule_id || null,
@@ -265,9 +203,6 @@ function buildStatusResponse({
       withdraw_fee_bps: feeConfig.withdraw_fee_bps,
       withdraw_fee_percent: feeConfig.withdraw_fee_percent,
       withdraw_free_quota_per_month: feeConfig.withdraw_free_quota_per_month,
-      monthly_plan_enabled: false,
-      monthly_plan_fee: feeConfig.monthly_plan_fee,
-      monthly_grace_days: feeConfig.monthly_grace_days,
       tiers: buildFormattedTiers(feeConfig),
     },
     monthly_qr_gross_amount: Number(monthlyQrGross || 0),
@@ -275,23 +210,13 @@ function buildStatusResponse({
       ? formatScheduleSummary(upcomingSchedule, systemConfig || feeConfig)
       : null,
     withdraw_quota: withdrawQuota,
-    available_plans: formatPlanList(
-      feeConfig,
-      currentPlan,
-      hasPendingChange ? pendingPlan : null,
-    ),
+    available_plans: formatPlanList(feeConfig, currentPlan, null),
   };
-
-  if (action) {
-    payload.action = action;
-  }
-  return payload;
 }
 
 const merchantFeeService = {
   FEE_PLANS,
   PLAN_NAMES,
-  MONTHLY_STATUS,
   FEE_TYPES,
   getVnMonthMeta,
   normalizeRequestedPlan,
@@ -300,9 +225,7 @@ const merchantFeeService = {
    * Wrapper tương thích ngược: tính phí 1 giao dịch QR theo config đã truyền vào.
    */
   calculatePerTransactionFee(amount, feeConfig) {
-    return calculatePerTransactionFeeDetails(amount, feeConfig, {
-      monthlyPlanActive: false,
-    }).fee_amount;
+    return calculatePerTransactionFeeDetails(amount, feeConfig).fee_amount;
   },
 
   async getSystemFeeConfig(role = "MERCHANT", db = pool) {
@@ -394,7 +317,7 @@ const merchantFeeService = {
     client,
     { merchantUserId, feePlan },
   ) {
-    // Đăng ký mới luôn áp dụng biểu phí PER_TRANSACTION (gói tháng đã ngừng áp dụng)
+    // Đăng ký mới luôn áp dụng biểu phí PER_TRANSACTION
     if (feePlan !== undefined && feePlan !== null && String(feePlan).trim() !== "") {
       normalizeRequestedPlan(feePlan, { defaultPlan: "PER_TRANSACTION" });
     }
@@ -405,20 +328,12 @@ const merchantFeeService = {
       payload: {
         merchant_user_id: merchantUserId,
         fee_plan: targetPlan,
-        monthly_plan_enabled: false,
       },
     });
 
     return {
       merchant_user_id: merchantUserId,
       fee_plan: targetPlan,
-      pending_fee_plan: null,
-      expires_at: null,
-      monthly_plan_enabled: false,
-      monthly_status: MONTHLY_STATUS.INACTIVE,
-      grace_until: null,
-      overdue_month_key: null,
-      overdue_amount: 0,
     };
   },
 
@@ -455,7 +370,6 @@ const merchantFeeService = {
     });
 
     return buildStatusResponse({
-      setting: null,
       merchantUser,
       feeConfig: effectiveConfig,
       systemConfig,
@@ -472,41 +386,6 @@ const merchantFeeService = {
       },
       nowMs,
     });
-  },
-
-  async selectFeePlan(
-    merchantUserId,
-    { feePlan: rawFeePlan } = {},
-  ) {
-    if (!merchantUserId) {
-      throw httpError(400, "Thiếu thông tin merchant");
-    }
-
-    const targetPlan = normalizeRequestedPlan(rawFeePlan);
-    const merchantUser = await merchantFeeRepository.getMerchantUser(
-      pool,
-      merchantUserId,
-    );
-    assertActiveMerchantRow(merchantUser);
-
-    throw httpError(
-      400,
-      `Bạn đang áp dụng gói ${PLAN_NAMES[targetPlan]} rồi`,
-    );
-  },
-
-  async cancelPendingFeePlan(merchantUserId) {
-    if (!merchantUserId) {
-      throw httpError(400, "Thiếu thông tin merchant");
-    }
-
-    const merchantUser = await merchantFeeRepository.getMerchantUser(
-      pool,
-      merchantUserId,
-    );
-    assertActiveMerchantRow(merchantUser);
-
-    throw httpError(400, "Hiện không có lịch đổi gói thu phí nào để hủy");
   },
 
   /**
@@ -532,7 +411,7 @@ const merchantFeeService = {
           free_threshold_amount: 0,
           tiers: [],
         },
-        { monthlyPlanActive: false, alreadyMonthlyGross: 0 },
+        { alreadyMonthlyGross: 0 },
       );
     }
 
@@ -550,8 +429,6 @@ const merchantFeeService = {
     const alreadyMonthlyGross = Number(usage?.qr_gross_amount ?? 0);
 
     const details = calculatePerTransactionFeeDetails(amount, effectiveConfig, {
-      monthlyPlanActive: false,
-      monthlyStatus: MONTHLY_STATUS.INACTIVE,
       alreadyMonthlyGross,
       role: "MERCHANT",
       feeType: FEE_TYPES.QR_FEE,
@@ -699,8 +576,6 @@ const merchantFeeService = {
       destinationRole,
       recipientEffectiveConfig,
       recipientMonthlyGross,
-      monthlyPlanActive: false,
-      monthlyStatus: MONTHLY_STATUS.INACTIVE,
     });
 
     return {

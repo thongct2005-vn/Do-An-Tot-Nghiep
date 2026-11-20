@@ -51,17 +51,8 @@ const FEE_TYPES = Object.freeze({
   QR_FEE: "QR_FEE",                     // Phí nhận tiền qua mã QR của merchant
   USER_FEE: "USER_FEE",                 // Phí dịch vụ hoặc phí chuyển tiền người gửi trả
   WITHDRAW_FEE: "WITHDRAW_FEE",         // Phí rút tiền về ngân hàng
-  MONTHLY_PLAN_FEE: "MONTHLY_PLAN_FEE", // Phí duy trì gói cước theo tháng
   POSTPAID_LATE_FEE: "POSTPAID_LATE_FEE", // Phí phạt quá hạn Ví trả sau
   POSTPAID_SERVICE_FEE: "POSTPAID_SERVICE_FEE", // Phí quản lý dịch vụ Ví trả sau hàng tháng
-});
-
-// Danh mục các trạng thái gói thu phí theo tháng của merchant
-const MONTHLY_STATUS = Object.freeze({
-  INACTIVE: "INACTIVE",                 // Không kích hoạt gói tháng (áp dụng phí từng giao dịch)
-  ACTIVE: "ACTIVE",                     // Đang kích hoạt gói tháng
-  PENDING_ACTIVATE: "PENDING_ACTIVATE", // Chờ kích hoạt
-  PAST_DUE: "PAST_DUE",                 // Quá hạn thanh toán gói tháng (trong thời gian ân hạn)
 });
 
 /**
@@ -434,60 +425,19 @@ function normalizeSystemFeeConfig(raw, role = "MERCHANT") {
       }
     }
   }
-  const legacyMonthly =
-    src.MONTHLY && typeof src.MONTHLY === "object" ? src.MONTHLY : {};
 
   const perTx = extractPerTransactionFeeFields(src);
   const transfer = extractTransferFeeFields(src);
   const withdraw = extractWithdrawFeeFields(src);
 
-  const isMerchant = normalizedRole !== "USER";
-  let monthlyPlanEnabled = false;
-  if (src.monthly_plan_enabled !== undefined) {
-    if (typeof src.monthly_plan_enabled !== "boolean") {
-      throw httpError(
-        500,
-        "Cấu hình trạng thái gói thu phí tháng trong biểu phí hệ thống không hợp lệ",
-      );
-    }
-    monthlyPlanEnabled = src.monthly_plan_enabled;
-  } else if (isMerchant) {
-    throw httpError(
-      500,
-      "Thiếu cấu hình trạng thái gói thu phí tháng trong biểu phí hệ thống",
-    );
-  }
-
-  const rawMonthlyFee =
-    src.monthly_plan_fee !== undefined
-      ? src.monthly_plan_fee
-      : legacyMonthly.monthly_fee;
-  const monthlyPlanFee =
-    rawMonthlyFee !== undefined || isMerchant
-      ? requireDbNonNegativeInt(rawMonthlyFee, "mức phí gói tháng")
-      : 0;
-
-  const monthlyGraceDays =
-    src.monthly_grace_days !== undefined || isMerchant
-      ? requireDbNonNegativeInt(src.monthly_grace_days, "số ngày ân hạn gói tháng", {
-        max: 31,
-      })
-      : 0;
-
   return {
     ...perTx,
     ...transfer,
     ...withdraw,
-    monthly_plan_enabled: monthlyPlanEnabled,
-    monthly_plan_fee: monthlyPlanFee,
-    monthly_grace_days: monthlyGraceDays,
     PER_TRANSACTION: {
       percent_bps: perTx.rate_bps,
       min_fee: perTx.min_fee,
       max_fee: perTx.max_fee,
-    },
-    MONTHLY: {
-      monthly_fee: monthlyPlanFee,
     },
   };
 }
@@ -637,37 +587,6 @@ function validateFeeConfigInput(
           input.withdraw_free_quota_per_month,
           "Hạn mức rút tiền miễn phí mỗi tháng",
         );
-  }
-
-  if (input.monthly_plan_enabled !== undefined) {
-    if (input.monthly_plan_enabled === null && isOverride) {
-      normalized.monthly_plan_enabled = null;
-    } else if (typeof input.monthly_plan_enabled === "boolean") {
-      normalized.monthly_plan_enabled = input.monthly_plan_enabled;
-    } else {
-      throw httpError(
-        400,
-        "Trạng thái bật/tắt gói thu phí tháng chỉ chấp nhận giá trị đúng hoặc sai",
-      );
-    }
-  }
-
-  if (input.monthly_plan_fee !== undefined) {
-    normalized.monthly_plan_fee =
-      input.monthly_plan_fee === null && isOverride
-        ? null
-        : parseStrictNonNegativeInt(input.monthly_plan_fee, "Mức phí gói tháng");
-  }
-
-  if (input.monthly_grace_days !== undefined) {
-    const graceDays = parseStrictNonNegativeInt(
-      input.monthly_grace_days,
-      "Số ngày ân hạn gói tháng",
-    );
-    if (graceDays > 31) {
-      throw httpError(400, "Số ngày ân hạn gói tháng không được vượt quá 31 ngày");
-    }
-    normalized.monthly_grace_days = graceDays;
   }
 
   if (input.tiers !== undefined) {
@@ -826,16 +745,6 @@ function mergeEffectiveFeeConfig(systemConfig, scheduleOverride = null, role = "
       scheduleOverride.withdraw_free_quota_per_month !== undefined
       ? Number(scheduleOverride.withdraw_free_quota_per_month)
       : base.withdraw_free_quota_per_month;
-  const monthlyPlanEnabled =
-    scheduleOverride.monthly_plan_enabled !== null &&
-      scheduleOverride.monthly_plan_enabled !== undefined
-      ? Boolean(scheduleOverride.monthly_plan_enabled)
-      : base.monthly_plan_enabled;
-  const monthlyPlanFee =
-    scheduleOverride.monthly_plan_fee !== null &&
-      scheduleOverride.monthly_plan_fee !== undefined
-      ? Number(scheduleOverride.monthly_plan_fee)
-      : base.monthly_plan_fee;
 
   const hasExplicitTiersOverride =
     Array.isArray(scheduleOverride.tiers) && scheduleOverride.tiers.length > 0;
@@ -862,17 +771,11 @@ function mergeEffectiveFeeConfig(systemConfig, scheduleOverride = null, role = "
     withdraw_fee_bps: withdrawFeeBps,
     withdraw_fee_percent: Number((withdrawFeeBps / 100).toFixed(2)),
     withdraw_free_quota_per_month: withdrawFreeQuotaPerMonth,
-    monthly_plan_enabled: monthlyPlanEnabled,
-    monthly_plan_fee: monthlyPlanFee,
-    monthly_grace_days: base.monthly_grace_days,
     tiers,
     PER_TRANSACTION: {
       percent_bps: rateBps,
       min_fee: minFee,
       max_fee: maxFee,
-    },
-    MONTHLY: {
-      monthly_fee: monthlyPlanFee,
     },
     source: "MERCHANT_SCHEDULE",
     schedule_id: scheduleOverride.id || null,
@@ -1095,8 +998,6 @@ function calculatePerTransactionFeeDetails(
   amount,
   effectiveConfig,
   {
-    monthlyPlanActive = false,
-    monthlyStatus = MONTHLY_STATUS.INACTIVE,
     alreadyMonthlyGross = 0,
     role = "MERCHANT",
     feeType = FEE_TYPES.QR_FEE,
@@ -1130,31 +1031,7 @@ function calculatePerTransactionFeeDetails(
     }
     : {};
 
-  // TRƯỜNG HỢP A: Miễn phí vì đang áp dụng gói tháng hoặc đang trong ân hạn
-  if (monthlyPlanActive) {
-    const exemptReason =
-      monthlyStatus === MONTHLY_STATUS.PAST_DUE
-        ? "MONTHLY_PLAN_GRACE_PERIOD"
-        : "MONTHLY_PLAN_ACTIVE";
-    return {
-      amount: validAmount,
-      fee_amount: 0,
-      net_amount: validAmount,
-      exempt_reason: exemptReason,
-      raw_fee: 0,
-      clamped_to_min: false,
-      clamped_to_max: false,
-      clamped_to_amount: false,
-      fee_rate_snapshot: {
-        fee_type: feeType,
-        monthly_status: monthlyStatus,
-        exempt_reason: exemptReason,
-        ...scheduleMeta,
-      },
-    };
-  }
-
-  // TRƯỜNG HỢP B: Miễn phí nếu số tiền giao dịch nhỏ hơn ngưỡng miễn phí (nếu được cấu hình > 0)
+  // TRƯỜNG HỢP A: Miễn phí nếu số tiền giao dịch nhỏ hơn ngưỡng miễn phí (nếu được cấu hình > 0)
   if (cfg.free_threshold_amount > 0 && validAmount < cfg.free_threshold_amount) {
     return {
       amount: validAmount,
@@ -1178,7 +1055,7 @@ function calculatePerTransactionFeeDetails(
     };
   }
 
-  // TRƯỜNG HỢP C: Tính phí bậc thang thông thường
+  // TRƯỜNG HỢP B: Tính phí bậc thang thông thường
   // 1. Tính phí thô theo các bậc thang doanh số
   const prog = calculateProgressiveRawFee(validAmount, validGrossBefore, cfg);
   let clampedFee = prog.rawFee;
@@ -1216,7 +1093,7 @@ function calculatePerTransactionFeeDetails(
     /**
      * fee_rate_snapshot: Ảnh chụp biểu phí tại đúng thời điểm giao dịch thành công.
      * Dùng để lưu vết đối soát và hiển thị trên Web/App:
-     * - fee_type: Loại phí ('QR_FEE', 'WITHDRAW_FEE', 'USER_FEE', 'MONTHLY_PLAN_FEE').
+     * - fee_type: Loại phí ('QR_FEE', 'WITHDRAW_FEE', 'USER_FEE').
      * - rate_percent: % phí hiệu dụng (nếu bắc cầu nhiều bậc thì là % bình quân gia quyền của cả đơn, ví dụ 0.87%).
      * - min_fee, max_fee: Ngưỡng sàn/trần phí áp dụng.
      * - tier_breakdown: Chi tiết từng khúc tiền rơi vào bậc nào (from_amount, to_amount, slice_amount, rate_percent).
@@ -1259,7 +1136,6 @@ function calculateMerchantTransferFeeDetails(amount, effectiveConfig) {
     tiers: [],
   };
   return calculatePerTransactionFeeDetails(amount, transferConfig, {
-    monthlyPlanActive: false,
     alreadyMonthlyGross: 0,
     role: "MERCHANT",
     feeType: FEE_TYPES.USER_FEE,
@@ -1338,7 +1214,7 @@ function calculateWithdrawFeeDetails(
 /**
  * Hàm tính toán xem trước (preview) phí giao dịch thống nhất cho App Flutter, Web Merchant và Admin CLI (--dry-run).
  * Hỗ trợ tất cả các loại giao dịch:
- * - PAYMENT / QR_PAYMENT: Phí người nhận (Merchant) chịu theo bậc doanh số tháng hoặc gói cước tháng.
+ * - PAYMENT / QR_PAYMENT: Phí người nhận (Merchant) chịu theo bậc doanh số tháng.
  * - WITHDRAW: Phí người rút (Sender) chịu nếu vượt hạn mức rút miễn phí tích lũy trong tháng.
  * - TRANSFER / P2P:
  *   + Người gửi (Merchant hoặc User) chịu phí chuyển (nếu có cấu hình).
@@ -1355,8 +1231,6 @@ function calculateWithdrawFeeDetails(
  * @param {string} [params.destinationRole=null] - Vai trò của người nhận trong chuyển tiền P2P
  * @param {object} [params.recipientEffectiveConfig=null] - Cấu hình biểu phí của người nhận (nếu nhận là Merchant)
  * @param {number} [params.recipientMonthlyGross=0] - Doanh số tích lũy tháng của người nhận (nếu nhận là Merchant)
- * @param {boolean} [params.monthlyPlanActive=false] - Trạng thái kích hoạt gói tháng của Merchant
- * @param {string} [params.monthlyStatus=MONTHLY_STATUS.INACTIVE] - Trạng thái chi tiết gói tháng
  * @returns {object} Chi tiết kết quả preview gồm: transaction_type, amount, fee_amount, fee_payer, net_amount, total_debit_from_payer, total_receive_by_merchant, exempt_reason, fee_rate_snapshot, withdraw_quota
  */
 function previewFeeCalculation({
@@ -1369,8 +1243,6 @@ function previewFeeCalculation({
   destinationRole = null,
   recipientEffectiveConfig = null,
   recipientMonthlyGross = 0,
-  monthlyPlanActive = false,
-  monthlyStatus = MONTHLY_STATUS.INACTIVE,
 }) {
   const txType = String(transactionType || "").trim().toUpperCase();
   const normalizedRole = String(role || "USER").trim().toUpperCase();
@@ -1378,8 +1250,6 @@ function previewFeeCalculation({
 
   if (txType === "PAYMENT" || txType === "QR_PAYMENT") {
     const details = calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
-      monthlyPlanActive,
-      monthlyStatus,
       alreadyMonthlyGross,
       role: "MERCHANT",
     });
@@ -1427,7 +1297,6 @@ function previewFeeCalculation({
       normalizedRole === "MERCHANT"
         ? calculateMerchantTransferFeeDetails(validAmount, effectiveConfig)
         : calculatePerTransactionFeeDetails(validAmount, effectiveConfig, {
-          monthlyPlanActive: false,
           role: "USER",
           feeType: FEE_TYPES.USER_FEE,
           feePlan: "USER_TRANSFER",
@@ -1443,7 +1312,6 @@ function previewFeeCalculation({
         validAmount,
         recipientEffectiveConfig,
         {
-          monthlyPlanActive: false,
           alreadyMonthlyGross: recipientMonthlyGross,
           role: "MERCHANT",
           feeType: FEE_TYPES.QR_FEE,
@@ -1570,7 +1438,6 @@ module.exports = {
   assertSystemFeeWalletConfigured,
   VN_OFFSET_MS,
   FEE_TYPES,
-  MONTHLY_STATUS,
   assertPositiveIntegerAmount,
   parseStrictNonNegativeInt,
   percentToBpsStrict,

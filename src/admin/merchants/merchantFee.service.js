@@ -62,14 +62,12 @@ function simulateFeeSamples({
       role,
       amount,
       effectiveConfig: oldConfig,
-      monthlyPlanActive: false,
     });
     const newQr = previewFeeCalculation({
       transactionType: "PAYMENT",
       role,
       amount,
       effectiveConfig: newConfig,
-      monthlyPlanActive: false,
     });
     const oldWithdraw = previewFeeCalculation({
       transactionType: "WITHDRAW",
@@ -134,9 +132,6 @@ function buildPersistableSystemConfig(merged) {
     transfer_max_fee: merged.transfer_max_fee ?? null,
     withdraw_fee_bps: merged.withdraw_fee_bps,
     withdraw_free_quota_per_month: merged.withdraw_free_quota_per_month,
-    monthly_plan_enabled: merged.monthly_plan_enabled,
-    monthly_plan_fee: merged.monthly_plan_fee,
-    monthly_grace_days: merged.monthly_grace_days,
     tiers: Array.isArray(merged.tiers) ? merged.tiers : [],
   };
 }
@@ -178,18 +173,6 @@ function mergeSystemUpdate(currentRaw, validated, role) {
       validated.withdraw_free_quota_per_month !== undefined
         ? validated.withdraw_free_quota_per_month
         : current.withdraw_free_quota_per_month,
-    monthly_plan_enabled:
-      validated.monthly_plan_enabled !== undefined
-        ? validated.monthly_plan_enabled
-        : current.monthly_plan_enabled,
-    monthly_plan_fee:
-      validated.monthly_plan_fee !== undefined
-        ? validated.monthly_plan_fee
-        : current.monthly_plan_fee,
-    monthly_grace_days:
-      validated.monthly_grace_days !== undefined
-        ? validated.monthly_grace_days
-        : current.monthly_grace_days,
     tiers: validated.tiers !== undefined ? validated.tiers : current.tiers,
   };
 
@@ -444,11 +427,6 @@ const adminMerchantFeeService = {
       plan_setting: {
         merchant_user_id: merchantId,
         fee_plan: "PER_TRANSACTION",
-        pending_fee_plan: null,
-        expires_at: null,
-        monthly_plan_enabled: false,
-        monthly_status: "INACTIVE",
-        overdue_amount: 0,
       },
       system_default_config: systemConfig,
       effective_config: effectiveConfig,

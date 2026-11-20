@@ -394,7 +394,6 @@ const TransactionRepository = {
         sourceUser.role === "MERCHANT"
           ? calculateMerchantTransferFeeDetails(amountNum, senderCfg)
           : calculatePerTransactionFeeDetails(amountNum, senderCfg, {
-            monthlyPlanActive: false,
             role: "USER",
             feeType: FEE_TYPES.USER_FEE,
             feePlan: "TRANSFER",

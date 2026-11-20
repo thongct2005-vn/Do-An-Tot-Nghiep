@@ -24,6 +24,60 @@ function sanitizeReversalResponseData(raw) {
   return copy;
 }
 
+function evaluatePostpaidRefundEligibility({ tx, postpaidSummary }) {
+  const originalAmount = Number(tx?.amount || 0);
+  if (!postpaidSummary) {
+    return {
+      is_postpaid_payment: false,
+      buyer_user_id: null,
+      buyer_name: null,
+      buyer_phone: null,
+      original_amount: originalAmount,
+      refunded_amount: 0,
+      remaining_refundable: 0,
+      refund_count: 0,
+      eligible: false,
+      code: "NOT_POSTPAID_PAYMENT",
+      reason: "Giao dịch không sử dụng nguồn Ví trả sau",
+    };
+  }
+
+  const refundedAmount = Number(postpaidSummary.refunded_total || 0);
+  const remainingRefundable = Math.max(0, originalAmount - refundedAmount);
+
+  let eligible = true;
+  let code = null;
+  let reason = null;
+
+  if (tx.status !== "SUCCESS" || tx.transaction_type !== "PAYMENT") {
+    eligible = false;
+    code = "POSTPAID_REFUND_UNSUPPORTED_TX";
+    reason = "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán đã thành công";
+  } else if (remainingRefundable <= 0) {
+    eligible = false;
+    code = "POSTPAID_ALREADY_FULLY_REFUNDED";
+    reason = "Giao dịch Ví trả sau này đã được hoàn đủ trước đó";
+  } else if (!tx.destination_user_id) {
+    eligible = false;
+    code = "POSTPAID_MISSING_MERCHANT";
+    reason = "Giao dịch gốc không có tài khoản cửa hàng nhận tiền";
+  }
+
+  return {
+    is_postpaid_payment: true,
+    buyer_user_id: String(postpaidSummary.buyer_user_id),
+    buyer_name: postpaidSummary.buyer_name || null,
+    buyer_phone: postpaidSummary.buyer_phone || null,
+    original_amount: originalAmount,
+    refunded_amount: refundedAmount,
+    remaining_refundable: remainingRefundable,
+    refund_count: Number(postpaidSummary.refund_count || 0),
+    eligible,
+    code,
+    reason,
+  };
+}
+
 function evaluateReversalEligibility({ tx, alreadyReversed, reversalInfo }) {
   if (!tx) {
     return { eligible: false, code: "NOT_FOUND", reason: "Không tìm thấy giao dịch" };
@@ -581,6 +635,11 @@ const adminTransactionService = {
       throw httpError(404, "Không tìm thấy giao dịch");
     }
 
+    const postpaidSummary =
+      t.transaction_type === "PAYMENT"
+        ? await adminTransactionRepository.getPostpaidRefundSummaryByTxId(cleanId)
+        : null;
+
     const amount = Number(t.amount || 0);
     const fee = Number(t.fee || 0);
     const merchantFee = Number(t.merchant_fee || 0);
@@ -669,6 +728,10 @@ const adminTransactionService = {
       tx: t,
       alreadyReversed: Boolean(t.reversal_audit_id),
       reversalInfo,
+    });
+    const postpaidRefund = evaluatePostpaidRefundEligibility({
+      tx: t,
+      postpaidSummary,
     });
 
     // Phân tích integrity_checks và anomalies
@@ -760,6 +823,7 @@ const adminTransactionService = {
       admin_intervention: adminIntervention,
       reversal_info: reversalInfo,
       reversal_eligibility: reversalEligibility,
+      postpaid_refund: postpaidRefund,
       integrity_checks,
       anomalies,
       dispute: disputeData,

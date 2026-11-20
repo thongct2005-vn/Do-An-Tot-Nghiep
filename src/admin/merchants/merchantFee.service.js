@@ -467,6 +467,7 @@ const adminMerchantFeeService = {
   async getFeeConfigHistory({
     merchantId = null,
     action = null,
+    key = null,
     limit = 50,
     offset = 0,
   } = {}) {
@@ -489,20 +490,45 @@ const adminMerchantFeeService = {
       actionFilter = [normalized];
     }
 
-    const res = await pool.query(
-      `SELECT ach.id, ach.admin_id, ach.user_id AS target_user_id, ach.action,
-              ach.reason, ach.old_values, ach.new_values, ach.created_at,
-              au.full_name AS admin_name, au.email AS admin_email,
-              tu.full_name AS target_name, tu.role AS target_role
-         FROM admin_user_change_history ach
-         LEFT JOIN users au ON au.id = ach.admin_id
-         LEFT JOIN users tu ON tu.id = ach.user_id
+    const allowedKeys = ["MERCHANT_FEE_CONFIG", "USER_FEE_CONFIG"];
+    let keyFilter = null;
+    if (key !== null && key !== undefined && String(key).trim() !== "") {
+      const normalizedKey = String(key).trim().toUpperCase();
+      if (!allowedKeys.includes(normalizedKey)) {
+        throw httpError(400, "Khóa cấu hình biểu phí không hợp lệ");
+      }
+      keyFilter = normalizedKey;
+    }
+
+    const filterParams = [actionFilter, merchantId || null, keyFilter];
+    const whereClause = `
         WHERE ach.action = ANY($1::text[])
           AND ($2::uuid IS NULL OR ach.user_id = $2::uuid)
-        ORDER BY ach.created_at DESC
-        LIMIT $3 OFFSET $4`,
-      [actionFilter, merchantId || null, safeLimit, safeOffset],
-    );
+          AND ($3::text IS NULL OR (ach.new_values->>'key') = $3::text)
+    `;
+
+    const [countRes, res] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS total_items
+           FROM admin_user_change_history ach
+          ${whereClause}`,
+        filterParams,
+      ),
+      pool.query(
+        `SELECT ach.id, ach.admin_id, ach.user_id AS target_user_id, ach.action,
+                ach.reason, ach.old_values, ach.new_values, ach.created_at,
+                au.full_name AS admin_name, au.email AS admin_email,
+                tu.full_name AS target_name, tu.role AS target_role
+           FROM admin_user_change_history ach
+           LEFT JOIN users au ON au.id = ach.admin_id
+           LEFT JOIN users tu ON tu.id = ach.user_id
+          ${whereClause}
+          ORDER BY ach.created_at DESC
+          LIMIT $4 OFFSET $5`,
+        [...filterParams, safeLimit, safeOffset],
+      ),
+    ]);
+    const totalItems = Number(countRes.rows[0]?.total_items || 0);
 
     const items = res.rows.map((r) => ({
       id: r.id,
@@ -526,7 +552,17 @@ const adminMerchantFeeService = {
       created_at: r.created_at,
     }));
 
-    return { items, limit: safeLimit, offset: safeOffset };
+    return {
+      items,
+      limit: safeLimit,
+      offset: safeOffset,
+      total_items: totalItems,
+      pagination: {
+        total_items: totalItems,
+        limit: safeLimit,
+        offset: safeOffset,
+      },
+    };
   },
 };
 

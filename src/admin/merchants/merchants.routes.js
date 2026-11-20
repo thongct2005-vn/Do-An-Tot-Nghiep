@@ -14,6 +14,7 @@ router.get("/fee-config/default", adminMerchantsController.getDefaultFeeConfig);
 router.post("/fee-config/default/preview", adminMerchantsController.previewDefaultFeeConfig);
 router.put("/fee-config/default", adminMerchantsController.updateDefaultFeeConfig);
 router.get("/fee-config/history", adminMerchantsController.getFeeConfigHistory);
+router.get("/export", adminMerchantsController.exportMerchants);
 
 router.get("/", adminMerchantsController.getMerchants);
 router.post("/", adminMerchantsController.createMerchant);

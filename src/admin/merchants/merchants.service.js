@@ -44,6 +44,12 @@ function maskApiKey(apiKey) {
 
 const bcrypt = require("bcrypt");
 const mailerModule = require("../../utils/mailer");
+const pool = require("../../config/database");
+const { getPositiveIntConfig } = require("../../utils/limits/limitsDb");
+const {
+  buildMerchantsAdminXlsx,
+  buildMerchantExportFileName,
+} = require("./merchants.export");
 
 const adminMerchantsService = {
   async createMerchant({ adminId, body, mailer }) {
@@ -174,6 +180,62 @@ const adminMerchantsService = {
         limit: limitNum,
       },
     };
+  },
+
+  async exportMerchants({ query = {}, currentUser } = {}) {
+    const options = parseMerchantQuery(query);
+    const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS", pool);
+    const rows = await adminMerchantsRepository.getMerchantsForExport({
+      ...options,
+      limit: exportMaxRows + 1,
+    });
+
+    if (rows.length > exportMaxRows) {
+      const err = httpError(
+        422,
+        `Số lượng đối tác Merchant thỏa mãn vượt quá giới hạn xuất (${exportMaxRows.toLocaleString("vi-VN")} bản ghi). Vui lòng thu hẹp điều kiện lọc.`
+      );
+      err.code = "EXPORT_LIMIT_EXCEEDED";
+      throw err;
+    }
+
+    if (rows.length === 0) {
+      const err = httpError(
+        404,
+        "Không có dữ liệu đối tác Merchant phù hợp với bộ lọc đã chọn."
+      );
+      err.code = "NO_DATA_FOUND";
+      throw err;
+    }
+
+    const formattedRows = rows.map((item) => ({
+      ...item,
+      merchant_code: formatMerchantCode(item.id),
+      store_name: item.full_name,
+      owner_name: item.owner_name || item.full_name,
+    }));
+
+    const summaryParts = [];
+    if (options.tab !== "ALL") summaryParts.push(`Tab: ${options.tab}`);
+    if (options.approvalStatus !== "ALL") summaryParts.push(`eKYC: ${options.approvalStatus}`);
+    if (options.status !== "ALL") summaryParts.push(`Trạng thái: ${options.status}`);
+    if (options.apiStatus !== "ALL") summaryParts.push(`API: ${options.apiStatus}`);
+    if (query.start_date || query.end_date) {
+      summaryParts.push(`Ngày: ${query.start_date || "..."} -> ${query.end_date || "..."}`);
+    } else if (query.period && query.period !== "ALL") {
+      summaryParts.push(`Kỳ: ${query.period}`);
+    }
+    if (options.search) summaryParts.push(`Từ khóa: "${options.search}"`);
+
+    const adminName =
+      currentUser?.full_name || currentUser?.email || "Quản trị viên";
+    const buffer = await buildMerchantsAdminXlsx({
+      rows: formattedRows,
+      adminName,
+      filterSummary: summaryParts.join(" | "),
+    });
+    const fileName = buildMerchantExportFileName(query.start_date, query.end_date);
+    return { buffer, fileName, totalRows: formattedRows.length };
   },
 
   async getMerchantDetail(merchantId, { origin = "", routePrefix = "/api/v2/admin/merchants" } = {}) {

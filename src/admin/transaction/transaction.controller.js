@@ -2,6 +2,10 @@ const { successResponse } = require("../../utils/apiResponse");
 const { httpError } = require("../../utils/httpError");
 const adminTransactionService = require("./transaction.service");
 const { sendXlsxResponse } = require("./transaction.export");
+const {
+  buildTransactionReceiptPdf,
+  sendReceiptPdfResponse,
+} = require("./transaction.receipt");
 const postpaidService = require("../../modules/postpaid/postpaid.service");
 const socketUtil = require("../../utils/socket");
 const firebaseNotification = require("../../utils/firebaseNotification");
@@ -91,6 +95,19 @@ const adminTransactionController = {
         "Lấy chi tiết giao dịch thành công",
         result
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async exportTransactionReceiptPdf(req, res, next) {
+    try {
+      const { id } = req.params;
+      const detail = await adminTransactionService.getTransactionDetail(id);
+      const adminName =
+        req.user?.full_name || req.user?.email || "Quản trị viên";
+      const buffer = await buildTransactionReceiptPdf({ detail, adminName });
+      return sendReceiptPdfResponse(res, { buffer, txId: detail.id });
     } catch (e) {
       next(e);
     }

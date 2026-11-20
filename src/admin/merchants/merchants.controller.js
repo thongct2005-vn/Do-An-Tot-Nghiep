@@ -1,6 +1,7 @@
 const { successResponse } = require("../../utils/apiResponse");
 const adminMerchantsService = require("./merchants.service");
 const adminMerchantFeeService = require("./merchantFee.service");
+const { sendXlsxResponse } = require("../transaction/transaction.export");
 const { resolveRequestBase, sendKycImageFile } = require("../../utils/kycImage");
 
 const adminMerchantsController = {
@@ -205,6 +206,7 @@ const adminMerchantsController = {
       const result = await adminMerchantFeeService.getFeeConfigHistory({
         merchantId: req.query?.merchant_id || null,
         action: req.query?.action || null,
+        key: req.query?.key || null,
         limit: req.query?.limit,
         offset: req.query?.offset,
       });
@@ -214,6 +216,18 @@ const adminMerchantsController = {
         "Lấy lịch sử thay đổi biểu phí thành công",
         result
       );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async exportMerchants(req, res, next) {
+    try {
+      const { buffer, fileName } = await adminMerchantsService.exportMerchants({
+        query: req.query,
+        currentUser: req.user,
+      });
+      return sendXlsxResponse(res, { buffer, fileName });
     } catch (e) {
       next(e);
     }

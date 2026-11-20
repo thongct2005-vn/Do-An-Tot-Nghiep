@@ -58,6 +58,93 @@ const API_STATUS_EXPR = `
   END
 `;
 
+function buildMerchantFilterClause({
+  search,
+  tab,
+  approvalStatus,
+  status,
+  apiStatus,
+  startDate,
+  endDate,
+}) {
+  const conditions = ["u.role = 'MERCHANT'"];
+  const params = [];
+
+  if (tab && tab !== "ALL") {
+    if (tab === "LINKED") {
+      conditions.push(LINKED_EXPR);
+    } else if (tab === "PENDING") {
+      conditions.push(PENDING_EXPR);
+    } else if (tab === "UNCONFIGURED") {
+      conditions.push(UNCONFIGURED_EXPR);
+    } else if (tab === "SUSPENDED") {
+      conditions.push(SUSPENDED_EXPR);
+    }
+  }
+
+  if (approvalStatus && approvalStatus !== "ALL") {
+    params.push(approvalStatus);
+    conditions.push(`${APPROVAL_STATUS_EXPR} = $${params.length}`);
+  }
+
+  if (status && status !== "ALL") {
+    if (status === "SUSPENDED" || status === "BLOCKED") {
+      conditions.push(`u.status IN ('SUSPENDED', 'BLOCKED')`);
+    } else if (status === "ACTIVE") {
+      conditions.push(`u.status = 'ACTIVE'`);
+    } else if (status === "PENDING_ACTIVATION") {
+      conditions.push(`${APPROVAL_STATUS_EXPR} = 'PENDING'`);
+    } else if (status === "DISABLED") {
+      conditions.push(`${APPROVAL_STATUS_EXPR} = 'REJECTED'`);
+    } else {
+      params.push(status);
+      conditions.push(`${OPERATIONAL_STATUS_EXPR} = $${params.length}`);
+    }
+  }
+
+  if (apiStatus && apiStatus !== "ALL") {
+    params.push(apiStatus);
+    conditions.push(`${API_STATUS_EXPR} = $${params.length}`);
+  }
+
+  if (startDate) {
+    params.push(startDate);
+    conditions.push(`u.created_at >= $${params.length}`);
+  }
+
+  if (endDate) {
+    params.push(endDate);
+    conditions.push(`u.created_at < $${params.length}`);
+  }
+
+  if (search && search.trim() !== "") {
+    const cleanSearch = search.trim();
+    params.push(`%${cleanSearch}%`);
+    const idx = params.length;
+    conditions.push(
+      `(
+        u.full_name ILIKE $${idx}
+        OR u.phone LIKE $${idx}
+        OR COALESCE(u.email, '') ILIKE $${idx}
+        OR COALESCE(k.tax_code, '') ILIKE $${idx}
+        OR u.id::TEXT ILIKE $${idx}
+        OR ('MER-' || UPPER(RIGHT(REPLACE(u.id::TEXT, '-', ''), 5))) ILIKE $${idx}
+      )`
+    );
+  }
+
+  const whereClause = conditions.join(" AND ");
+  const needKycInFilter = Boolean(
+    tab === "PENDING" ||
+      (approvalStatus && approvalStatus !== "ALL") ||
+      status === "PENDING_ACTIVATION" ||
+      status === "DISABLED" ||
+      (search && search.trim() !== "")
+  );
+
+  return { whereClause, params, needKycInFilter };
+}
+
 const adminMerchantsRepository = {
   async createMerchant({ adminId, values, reason, passwordHash }) {
     if (!passwordHash) {
@@ -346,86 +433,15 @@ const adminMerchantsRepository = {
     limit = 10,
     offset = 0,
   }, db = pool) {
-    const conditions = ["u.role = 'MERCHANT'"];
-    const params = [];
-
-    if (tab && tab !== "ALL") {
-      if (tab === "LINKED") {
-        conditions.push(
-          LINKED_EXPR
-        );
-      } else if (tab === "PENDING") {
-        conditions.push(PENDING_EXPR);
-      } else if (tab === "UNCONFIGURED") {
-        conditions.push(
-          UNCONFIGURED_EXPR
-        );
-      } else if (tab === "SUSPENDED") {
-        conditions.push(SUSPENDED_EXPR);
-      }
-    }
-
-    if (approvalStatus && approvalStatus !== "ALL") {
-      params.push(approvalStatus);
-      conditions.push(`${APPROVAL_STATUS_EXPR} = $${params.length}`);
-    }
-
-    if (status && status !== "ALL") {
-      if (status === "SUSPENDED" || status === "BLOCKED") {
-        conditions.push(`u.status IN ('SUSPENDED', 'BLOCKED')`);
-      } else if (status === "ACTIVE") {
-        conditions.push(
-          `u.status = 'ACTIVE'`
-        );
-      } else if (status === "PENDING_ACTIVATION") {
-        conditions.push(`${APPROVAL_STATUS_EXPR} = 'PENDING'`);
-      } else if (status === "DISABLED") {
-        conditions.push(`${APPROVAL_STATUS_EXPR} = 'REJECTED'`);
-      } else {
-        params.push(status);
-        conditions.push(`${OPERATIONAL_STATUS_EXPR} = $${params.length}`);
-      }
-    }
-
-    if (apiStatus && apiStatus !== "ALL") {
-      params.push(apiStatus);
-      conditions.push(`${API_STATUS_EXPR} = $${params.length}`);
-    }
-
-    if (startDate) {
-      params.push(startDate);
-      conditions.push(`u.created_at >= $${params.length}`);
-    }
-
-    if (endDate) {
-      params.push(endDate);
-      conditions.push(`u.created_at < $${params.length}`);
-    }
-
-    if (search && search.trim() !== "") {
-      const cleanSearch = search.trim();
-      params.push(`%${cleanSearch}%`);
-      const idx = params.length;
-      conditions.push(
-        `(
-          u.full_name ILIKE $${idx}
-          OR u.phone LIKE $${idx}
-          OR COALESCE(u.email, '') ILIKE $${idx}
-          OR COALESCE(k.tax_code, '') ILIKE $${idx}
-          OR u.id::TEXT ILIKE $${idx}
-          OR ('MER-' || UPPER(RIGHT(REPLACE(u.id::TEXT, '-', ''), 5))) ILIKE $${idx}
-        )`
-      );
-    }
-
-    const whereClause = conditions.join(" AND ");
-    const needKycInFilter = Boolean(
-      tab === "PENDING" ||
-        (approvalStatus && approvalStatus !== "ALL") ||
-        status === "PENDING_ACTIVATION" ||
-        status === "DISABLED" ||
-        (search && search.trim() !== ""),
-    );
+    const { whereClause, params, needKycInFilter } = buildMerchantFilterClause({
+      search,
+      tab,
+      approvalStatus,
+      status,
+      apiStatus,
+      startDate,
+      endDate,
+    });
 
     const countResult = await db.query(
       `
@@ -504,6 +520,63 @@ const adminMerchantsRepository = {
       total,
       items: itemsResult.rows,
     };
+  },
+
+  async getMerchantsForExport({
+    search,
+    tab,
+    approvalStatus,
+    status,
+    apiStatus,
+    startDate,
+    endDate,
+    limit,
+  }, db = pool) {
+    const { whereClause, params } = buildMerchantFilterClause({
+      search,
+      tab,
+      approvalStatus,
+      status,
+      apiStatus,
+      startDate,
+      endDate,
+    });
+    const queryParams = [...params, limit];
+    const limitIdx = queryParams.length;
+    const result = await db.query(
+      `
+      SELECT
+        u.id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.balance,
+        u.status AS raw_user_status,
+        u.call_back_url,
+        u.created_at,
+        u.updated_at,
+        k.tax_code,
+        k.address,
+        lb.account_holder_name AS owner_name,
+        ${APPROVAL_STATUS_EXPR} AS approval_status,
+        ${OPERATIONAL_STATUS_EXPR} AS operational_status,
+        ${API_STATUS_EXPR} AS api_status
+      FROM users u
+      ${KYC_LATERAL_JOIN}
+      LEFT JOIN LATERAL (
+        SELECT l.account_holder_name
+        FROM linked_bank_accounts l
+        WHERE l.user_id = u.id
+        ORDER BY l.is_default DESC, l.created_at DESC
+        LIMIT 1
+      ) lb ON true
+      WHERE ${whereClause}
+      ORDER BY u.created_at DESC, u.id DESC
+      LIMIT $${limitIdx}
+      `,
+      queryParams,
+    );
+    return result.rows;
   },
 
   async getMerchantDetail(merchantId, { now } = {}) {

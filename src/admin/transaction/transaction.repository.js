@@ -399,6 +399,39 @@ const adminTransactionRepository = {
     return result.rows;
   },
 
+  async getPostpaidRefundSummaryByTxId(txId) {
+    const res = await pool.query(
+      `
+      SELECT
+        pe.user_id AS buyer_user_id,
+        u.full_name AS buyer_name,
+        u.phone AS buyer_phone,
+        pw.status AS buyer_wallet_status,
+        pe.amount AS purchase_amount,
+        pe.cycle_month,
+        pe.created_at AS purchased_at,
+        COALESCE(ref.refunded_total, 0)::bigint AS refunded_total,
+        COALESCE(ref.refund_count, 0)::int AS refund_count
+      FROM postpaid_entries pe
+      LEFT JOIN users u ON u.id = pe.user_id
+      LEFT JOIN postpaid_wallets pw ON pw.user_id = pe.user_id
+      LEFT JOIN (
+        SELECT
+          ref_tx_id,
+          SUM(amount)::bigint AS refunded_total,
+          COUNT(*)::int AS refund_count
+        FROM postpaid_entries
+        WHERE ref_tx_id = $1 AND action = 'REFUND'
+        GROUP BY ref_tx_id
+      ) ref ON ref.ref_tx_id = pe.tx_id
+      WHERE pe.tx_id = $1 AND pe.action = 'PURCHASE'
+      LIMIT 1
+      `,
+      [String(txId)]
+    );
+    return res.rows[0] || null;
+  },
+
   async getTransactionDetailById(id) {
     const query = `
       SELECT 

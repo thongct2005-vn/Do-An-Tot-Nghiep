@@ -10,6 +10,7 @@ router.use(requireCurrentAdminSession);
 
 router.get("/export", adminTransactionController.exportTransactions);
 router.get("/", adminTransactionController.getTransactions);
+router.get("/:id/receipt.pdf", adminTransactionController.exportTransactionReceiptPdf);
 router.get("/:id", adminTransactionController.getTransactionDetail);
 
 router.post("/:id/disputes", adminTransactionController.openDispute);

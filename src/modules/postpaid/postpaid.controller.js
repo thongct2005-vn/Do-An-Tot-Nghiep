@@ -1,6 +1,7 @@
 const { successResponse } = require("../../utils/apiResponse");
 const { emitToUser } = require("../../utils/socket");
 const { sendPushNotification } = require("../../utils/firebaseNotification");
+const { removeUploadedProofFiles } = require("../../utils/postpaidProofImage");
 const postpaidService = require("./postpaid.service");
 
 const postpaidController = {
@@ -167,6 +168,43 @@ const postpaidController = {
         200,
         "Thanh toán dư nợ Ví trả sau thành công",
         result,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async submitUnlockRequest(req, res, next) {
+    const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+    try {
+      const { user_id: userId } = req.user;
+      const { user_note: userNote = "" } = req.body || {};
+      const data = await postpaidService.createUnlockRequest({
+        userId,
+        userNote,
+        proofFiles: uploadedFiles,
+      });
+      return successResponse(
+        res,
+        201,
+        "Đã gửi yêu cầu mở khóa Ví trả sau kèm ảnh chứng minh thu nhập",
+        data,
+      );
+    } catch (e) {
+      await removeUploadedProofFiles(uploadedFiles);
+      next(e);
+    }
+  },
+
+  async getLatestUnlockRequest(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const data = await postpaidService.getLatestUnlockRequest(userId);
+      return successResponse(
+        res,
+        200,
+        "Lấy trạng thái yêu cầu mở khóa Ví trả sau thành công",
+        data,
       );
     } catch (e) {
       next(e);

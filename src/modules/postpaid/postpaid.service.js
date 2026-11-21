@@ -185,6 +185,34 @@ const postpaidService = {
       idempotencyKey,
     });
   },
+
+  async createUnlockRequest({ userId, userNote = "", proofFiles = [] }) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    const safeFiles = Array.isArray(proofFiles) ? proofFiles : [];
+    if (safeFiles.length < 1 || safeFiles.length > 3) {
+      throw httpError(400, "Vui lòng gửi từ 1 đến 3 ảnh chứng minh thu nhập");
+    }
+    const proofFileNames = safeFiles
+      .map((f) => (f && typeof f.filename === "string" ? f.filename.trim() : ""))
+      .filter(Boolean);
+    if (proofFileNames.length !== safeFiles.length) {
+      throw httpError(400, "Tệp ảnh chứng minh thu nhập không hợp lệ");
+    }
+    return postpaidRepository.createUnlockRequest({
+      userId,
+      userNote,
+      proofFileNames,
+    });
+  },
+
+  async getLatestUnlockRequest(userId) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin người dùng");
+    }
+    return postpaidRepository.getLatestUnlockRequest(userId);
+  },
 };
 
 module.exports = postpaidService;

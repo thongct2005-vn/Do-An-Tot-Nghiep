@@ -4,6 +4,7 @@ const authMiddleware = require("../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
 const { transactionLimiter } = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
+const { uploadPostpaidProofImages } = require("../../middlewares/upload.middleware");
 const postpaidController = require("./postpaid.controller");
 
 const moneyRisk = riskGuard("TRANSACTION");
@@ -44,6 +45,19 @@ router.post(
   authMiddleware.requirePinToken("POSTPAID_REPAY"),
   idempotencyMiddleware.checkIdempotencyKey,
   postpaidController.repay,
+);
+
+router.post(
+  "/unlock-requests",
+  authMiddleware.verifyAccessToken,
+  uploadPostpaidProofImages,
+  postpaidController.submitUnlockRequest,
+);
+
+router.get(
+  "/unlock-requests/latest",
+  authMiddleware.verifyAccessToken,
+  postpaidController.getLatestUnlockRequest,
 );
 
 module.exports = router;

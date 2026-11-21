@@ -31,7 +31,9 @@ CREATE TABLE admin_user_change_history (
     'USER_CREATED', 'MERCHANT_CREATED', 'MERCHANT_BLOCKED', 'MERCHANT_UNBLOCKED',
     'MERCHANT_CREDENTIALS_ISSUED', 'MERCHANT_CREDENTIALS_ROTATED',
     'MERCHANT_CREDENTIALS_REVOKED', 'MERCHANT_CREDENTIALS_REISSUED',
-    'MERCHANT_FEE_CONFIG_UPDATED', 'SYSTEM_FEE_CONFIG_UPDATED',
+    'MERCHANT_FEE_CONFIG_UPDATED', 'SYSTEM_FEE_CONFIG_UPDATED', 'SYSTEM_CONFIG_UPDATED',
+    'POSTPAID_WALLET_FROZEN', 'POSTPAID_WALLET_UNFROZEN', 'POSTPAID_LIMIT_ADJUSTED',
+    'POSTPAID_UNLOCK_APPROVED', 'POSTPAID_UNLOCK_REJECTED',
     'USER_SESSIONS_REVOKED', 'USER_QR_REGENERATED', 'ADMIN_OP_P2P', 'ADMIN_OP_TOPUP',
     'ADMIN_OP_WITHDRAW', 'ADMIN_OP_REVERSAL', 'DISPUTE_OPENED', 'DISPUTE_UPDATED', 'DISPUTE_RESOLVED'
   ))
@@ -124,6 +126,13 @@ CREATE TABLE postpaid_wallets (
   current_cycle_month varchar(7),
   due_date date,
   last_reminder_month varchar(7),
+  overdue_count integer NOT NULL DEFAULT 0 CHECK (overdue_count >= 0),
+  lock_reason varchar(30) CHECK (lock_reason IS NULL OR lock_reason IN ('USER_FREEZE', 'ADMIN_FREEZE', 'OVERDUE_REPEAT')),
+  last_overdue_counted_cycle varchar(7),
+  overdue_cycle_month varchar(7),
+  overdue_cycle_due_date date,
+  overdue_cycle_principal bigint NOT NULL DEFAULT 0 CHECK (overdue_cycle_principal >= 0),
+  last_limit_adjusted_cycle varchar(7),
   activated_at timestamptz NOT NULL DEFAULT NOW(),
   updated_at timestamptz NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_postpaid_debt_bounds
@@ -164,6 +173,7 @@ CREATE TABLE postpaid_entries (
   used_before bigint NOT NULL CHECK (used_before >= 0),
   used_after bigint NOT NULL CHECK (used_after >= 0),
   cycle_month varchar(7),
+  late_fee_tier smallint CHECK (late_fee_tier IS NULL OR (late_fee_tier BETWEEN 1 AND 4)),
   note text,
   created_at timestamptz NOT NULL DEFAULT NOW()
 );
@@ -171,9 +181,28 @@ CREATE INDEX idx_postpaid_entries_user_time ON postpaid_entries (user_id, create
 CREATE INDEX idx_postpaid_entries_tx ON postpaid_entries (tx_id) WHERE tx_id IS NOT NULL;
 CREATE INDEX idx_postpaid_entries_ref_tx ON postpaid_entries (ref_tx_id) WHERE ref_tx_id IS NOT NULL;
 CREATE INDEX idx_postpaid_entries_user_purchase_stmt ON postpaid_entries (user_id, created_at DESC, id DESC) WHERE action IN ('PURCHASE', 'STATEMENT_CLOSE');
+CREATE INDEX idx_postpaid_entries_created_action ON postpaid_entries (created_at DESC, id DESC);
 CREATE UNIQUE INDEX uk_postpaid_statement_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'STATEMENT_CLOSE';
 CREATE UNIQUE INDEX uk_postpaid_service_fee_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'SERVICE_FEE';
-CREATE UNIQUE INDEX uk_postpaid_late_fee_cycle ON postpaid_entries (user_id, cycle_month) WHERE action = 'LATE_FEE';
+CREATE UNIQUE INDEX uk_postpaid_late_fee_cycle_tier ON postpaid_entries (user_id, cycle_month, late_fee_tier) WHERE action = 'LATE_FEE';
+CREATE TABLE postpaid_unlock_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  status varchar(20) NOT NULL DEFAULT 'PENDING'
+    CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  user_note text,
+  proof_image_paths jsonb NOT NULL DEFAULT '[]'::jsonb,
+  overdue_count_snapshot integer NOT NULL DEFAULT 0 CHECK (overdue_count_snapshot >= 0),
+  credit_limit_snapshot bigint NOT NULL CHECK (credit_limit_snapshot >= 0),
+  reviewed_by uuid REFERENCES users(id) ON DELETE RESTRICT,
+  admin_note text,
+  reviewed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT NOW(),
+  updated_at timestamptz NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX uk_postpaid_unlock_pending_user ON postpaid_unlock_requests (user_id) WHERE status = 'PENDING';
+CREATE INDEX idx_postpaid_unlock_requests_status_created ON postpaid_unlock_requests (status, created_at DESC);
+CREATE INDEX idx_postpaid_unlock_requests_user_created ON postpaid_unlock_requests (user_id, created_at DESC);
 INSERT INTO users (id, role, full_name, email, phone, status, balance)
 VALUES
   ('00000000-0000-7000-8000-000000000001', 'SYSTEM', 'SYSTEM_FEE_WALLET', 'system_fee_wallet@system.internal', 'SYS_FEE_01', 'ACTIVE', 0),
@@ -186,7 +215,7 @@ INSERT INTO system_configs (key, value, description) VALUES
   ('RISK_THRESHOLDS', '{"DEFAULT":{"challenge":40,"block":70},"LOGIN":{"challenge":40,"block":70},"REGISTER":{"challenge":35,"block":60},"SEND_OTP":{"challenge":30,"block":55},"OTP":{"challenge":35,"block":60},"FORGOT":{"challenge":35,"block":60},"TRANSACTION":{"challenge":35,"block":65}}'::jsonb, 'Default risk guard thresholds'),
   ('MERCHANT_FEE_CONFIG', '{"rate_bps":100,"min_fee":200,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":50,"withdraw_free_quota_per_month":50000000,"tiers":[{"from_amount":0,"rate_bps":100},{"from_amount":50000000,"rate_bps":80},{"from_amount":200000000,"rate_bps":60}]}'::jsonb, 'Default merchant fee config'),
   ('USER_FEE_CONFIG', '{"rate_bps":0,"min_fee":0,"max_fee":null,"free_threshold_amount":0,"transfer_fee_bps":0,"transfer_min_fee":0,"transfer_max_fee":null,"withdraw_fee_bps":0,"withdraw_free_quota_per_month":0,"tiers":[]}'::jsonb, 'Default user fee config'),
-  ('POSTPAID_CONFIG', '{"enabled":true,"default_credit_limit":2000000,"min_account_days":1,"billing_day":20,"due_day":5,"late_fee_bps":200,"min_late_fee":10000,"monthly_service_fee":20000,"free_service_fee_tx_count":1}'::jsonb, 'Default postpaid wallet config'),
+  ('POSTPAID_CONFIG', '{"enabled":true,"default_credit_limit":2000000,"min_account_days":1,"billing_day":20,"due_day":5,"late_fee_tier1_bps":525,"late_fee_tier2_bps":1050,"late_fee_tier3_bps":1575,"late_fee_tier4_bps":2100,"monthly_service_fee":20000,"free_service_fee_tx_count":1}'::jsonb, 'Default postpaid wallet config'),
   ('POSTPAID_REMINDER_CONFIG', '{"enabled":true,"reminder_day":1,"reminder_hour":8,"templates":{"PAST_DUE":{"title":"Ví trả sau đang quá hạn thanh toán","body":"Ví trả sau của bạn còn dư nợ {{used_amount}} ({{overdue_detail}}). Vui lòng thanh toán để mở lại chi tiêu."},"BILLED":{"title":"Nhắc thanh toán dư nợ Ví trả sau","body":"Bạn còn dư nợ {{statement_debt}}{{cycle_part}} cần thanh toán{{due_part}}{{unbilled_part}}."},"UNBILLED":{"title":"Thông báo dư nợ Ví trả sau","body":"Ví trả sau của bạn hiện còn dư nợ {{used_amount}} chưa thanh toán. Bạn có thể thanh toán bất kỳ lúc nào trên ứng dụng."}}}'::jsonb, 'Default postpaid monthly debt reminder config'),
   ('POSTPAID_STATUS', '{"INACTIVE":"Chưa kích hoạt","ACTIVE":"Đang hoạt động","PAST_DUE":"Quá hạn thanh toán","FROZEN":"Đang tạm khóa"}'::jsonb, 'Postpaid wallet statuses'),
   ('POSTPAID_ENTRY_ACTIONS', '{"PURCHASE":"Thanh toán QR bằng Ví trả sau","REPAY_PRINCIPAL":"Trả nợ gốc Ví trả sau","REPAY_SERVICE_FEE":"Thanh toán phí dịch vụ Ví trả sau","REPAY_LATE_FEE":"Thanh toán phí trễ hạn","SERVICE_FEE":"Phí dịch vụ Ví trả sau hàng tháng","LATE_FEE":"Phí trễ hạn kỳ sao kê","REFUND":"Hoàn tiền giao dịch Ví trả sau","STATEMENT_CLOSE":"Chốt sao kê kỳ","LIMIT_ADJUST":"Điều chỉnh hạn mức"}'::jsonb, 'Postpaid entry action types'),

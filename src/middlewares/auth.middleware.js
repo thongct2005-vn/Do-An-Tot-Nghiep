@@ -27,16 +27,13 @@ function createFirstLoginChangeTokenVerifier(expectedPurpose) {
         req.headers["x-otp-token"] ||
         bearerToken;
       if (!token) {
-        throw httpError(401, "Thiếu token đổi mật khẩu lần đầu");
+        throw httpError(401, "Thiếu mã phiên đổi mật khẩu lần đầu");
       }
       let payload;
       try {
         payload = tokenUtil.verifyOtpToken(token, expectedPurpose);
-      } catch (_) {
-        throw httpError(
-          401,
-          "Phiên đổi mật khẩu lần đầu không hợp lệ hoặc đã hết hạn",
-        );
+      } catch (e) {
+        return handleTokenError(e, next, "first_login_change");
       }
       req.firstLoginUser = payload;
       req.otpUser = payload;
@@ -54,7 +51,7 @@ const authMiddleware = {
       const accessToken = authHeader && authHeader.split(" ")[1];
       if (!accessToken) {
         const err = new Error(
-          "Thiếu thông tin xác thực, vui lòng đăng nhập lại",
+          "Thiếu thông tin phiên đăng nhập, vui lòng đăng nhập lại",
         );
         err.statusCode = 401;
         throw err;
@@ -64,7 +61,7 @@ const authMiddleware = {
       req.user = decoded;
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "access_session");
     }
   },
 
@@ -72,7 +69,7 @@ const authMiddleware = {
     try {
       const { refresh_token } = req.body;
       if (!refresh_token) {
-        const err = new Error("Thiếu thông tin xác thực");
+        const err = new Error("Thiếu mã làm mới phiên đăng nhập");
         err.statusCode = 401;
         throw err;
       }
@@ -81,7 +78,7 @@ const authMiddleware = {
       req.user = decoded;
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "refresh_session");
     }
   },
 
@@ -98,14 +95,14 @@ const authMiddleware = {
     try {
       const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
-        const err = new Error("Thiếu thông tin xác thực");
+        const err = new Error("Thiếu mã phiên xác thực OTP đăng nhập");
         err.statusCode = 401;
         throw err;
       }
       req.otpUser = tokenUtil.verifyOtpToken(otpToken, "login_otp");
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "login_otp");
     }
   },
 
@@ -113,14 +110,14 @@ const authMiddleware = {
     try {
       const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
-        const err = new Error("Thiếu thông tin xác thực");
+        const err = new Error("Thiếu mã phiên xác thực OTP đăng ký");
         err.statusCode = 401;
         throw err;
       }
       req.otpUser = tokenUtil.verifyOtpToken(otpToken, "register_otp");
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "register_otp");
     }
   },
 
@@ -128,12 +125,12 @@ const authMiddleware = {
     try {
       const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
-        throw httpError(401, "Thiếu thông tin xác thực");
+        throw httpError(401, "Thiếu mã phiên khôi phục mật khẩu");
       }
       req.otpUser = tokenUtil.verifyOtpToken(otpToken, "forgot_otp");
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "forgot_otp");
     }
   },
 
@@ -141,12 +138,12 @@ const authMiddleware = {
     try {
       const otpToken = req.headers["x-otp-token"];
       if (!otpToken) {
-        throw httpError(401, "Thiếu thông tin xác thực");
+        throw httpError(401, "Thiếu mã phiên khôi phục mật khẩu");
       }
       req.otpUser = tokenUtil.verifyOtpToken(otpToken, "merchant_forgot_otp");
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "merchant_forgot_otp");
     }
   },
 
@@ -184,11 +181,22 @@ const authMiddleware = {
         );
       }
 
-      const otpPayload = tokenUtil.verifyOtpToken(
-        otpToken,
-        "merchant_forgot_otp_verified",
-      );
-      const taxCodePayload = tokenUtil.verifyTaxCodeToken(taxCodeToken);
+      let otpPayload;
+      try {
+        otpPayload = tokenUtil.verifyOtpToken(
+          otpToken,
+          "merchant_forgot_otp_verified",
+        );
+      } catch (e) {
+        return handleTokenError(e, next, "merchant_forgot_otp");
+      }
+
+      let taxCodePayload;
+      try {
+        taxCodePayload = tokenUtil.verifyTaxCodeToken(taxCodeToken);
+      } catch (e) {
+        return handleTokenError(e, next, "merchant_forgot_tax");
+      }
 
       if (
         !otpPayload.user_id ||
@@ -206,7 +214,7 @@ const authMiddleware = {
       };
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "merchant_forgot_otp");
     }
   },
 
@@ -223,7 +231,7 @@ const authMiddleware = {
       req.otpUser = payload;
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "pin_challenge");
     }
   },
 
@@ -231,27 +239,40 @@ const authMiddleware = {
     try {
       const token = req.headers["x-forgot-token"];
       if (!token) {
-        throw httpError(401, "Thiếu thông tin xác thực");
+        throw httpError(401, "Thiếu mã phiên xác thực định danh");
       }
       req.forgotUser = tokenUtil.verifyForgotKycToken(token);
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "forgot_kyc");
     }
   },
 
   // purpose: "reset_password" | "reset_pin"
   verifyResetToken(purpose) {
+    const contextKey =
+      purpose === "reset_password"
+        ? "reset_password"
+        : purpose === "reset_pin"
+          ? "reset_pin"
+          : "reset_default";
+    const missingMessage =
+      purpose === "reset_password"
+        ? "Thiếu mã phiên đặt lại mật khẩu"
+        : purpose === "reset_pin"
+          ? "Thiếu mã phiên đặt lại mã PIN"
+          : "Thiếu mã phiên đặt lại thông tin";
+
     return (req, res, next) => {
       try {
         const token = req.headers["x-reset-token"];
         if (!token) {
-          throw httpError(401, "Thiếu thông tin xác thực");
+          throw httpError(401, missingMessage);
         }
         req.resetUser = tokenUtil.verifyResetToken(token, purpose);
         next();
       } catch (e) {
-        handleTokenError(e, next);
+        handleTokenError(e, next, contextKey);
       }
     };
   },
@@ -290,8 +311,7 @@ const authMiddleware = {
         req.otpUser = payload;
         next();
       } catch (e) {
-        if (e.statusCode) return next(e);
-        next(httpError(403, "Xác thực OTP đã hết hạn, vui lòng thực hiện lại"));
+        handleTokenError(e, next, "transaction_otp");
       }
     };
   },
@@ -328,8 +348,7 @@ const authMiddleware = {
         }
         next();
       } catch (e) {
-        if (e.statusCode) return next(e);
-        next(httpError(403, "Xác thực PIN đã hết hạn, vui lòng nhập lại PIN"));
+        handleTokenError(e, next, "transaction_pin");
       }
     };
   },
@@ -350,7 +369,7 @@ const authMiddleware = {
         !Number.isInteger(ts) ||
         Math.abs(now - ts) > MERCHANT_TIMESTAMP_TOLERANCE
       ) {
-        throw httpError(401, "Request đã hết hạn hoặc thời gian không hợp lệ");
+        throw httpError(401, "Yêu cầu đã hết hạn hoặc thời gian không hợp lệ");
       }
 
       const merchant =
@@ -359,7 +378,7 @@ const authMiddleware = {
         throw httpError(401, "API Key không hợp lệ");
       }
 
-      if (merchant.credentials_revoked || !merchant.secret_key) throw httpError(403, 'Credentials đã thu hồi hoặc chưa cấu hình. Vui lòng liên hệ quản trị viên.');
+      if (merchant.credentials_revoked || !merchant.secret_key) throw httpError(403, 'Khóa tích hợp đã bị thu hồi hoặc chưa cấu hình. Vui lòng liên hệ quản trị viên.');
       const expected = computeSignature(
         merchant.secret_key,
         timestamp,
@@ -425,14 +444,14 @@ function createRefreshCookieVerifier(cookieName) {
 
       const refreshToken = getCookie(req, cookieName);
       if (!refreshToken) {
-        throw httpError(401, "Thiếu thông tin xác thực");
+        throw httpError(401, "Thiếu mã làm mới phiên đăng nhập");
       }
 
       req.user = tokenUtil.verifyRefreshToken(refreshToken);
       req.refreshToken = refreshToken;
       next();
     } catch (e) {
-      handleTokenError(e, next);
+      handleTokenError(e, next, "refresh_session");
     }
   };
 }
@@ -464,8 +483,8 @@ function verifyScopedOtpToken(purpose) {
       let payload;
       try {
         payload = tokenUtil.verifyOtpToken(otpToken, purpose);
-      } catch (_) {
-        throw httpError(403, "Phiên xác thực OTP không hợp lệ hoặc đã hết hạn");
+      } catch (e) {
+        return handleTokenError(e, next, "scoped_otp");
       }
       if (req.user && payload.user_id !== req.user.user_id) {
         throw httpError(403, "Mã xác thực OTP không hợp lệ");
@@ -478,20 +497,115 @@ function verifyScopedOtpToken(purpose) {
   };
 }
 
-function handleTokenError(e, next) {
+const TOKEN_ERROR_CONTEXTS = {
+  access_session: {
+    statusCode: 401,
+    expiredMessage: "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại",
+    invalidMessage: "Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại",
+  },
+  refresh_session: {
+    statusCode: 401,
+    expiredMessage: "Phiên làm mới đăng nhập đã hết hạn, vui lòng đăng nhập lại",
+    invalidMessage: "Phiên làm mới đăng nhập không hợp lệ, vui lòng đăng nhập lại",
+  },
+  first_login_change: {
+    statusCode: 401,
+    expiredMessage: "Phiên đổi mật khẩu lần đầu đã hết hạn, vui lòng đăng nhập lại",
+    invalidMessage: "Phiên đổi mật khẩu lần đầu không hợp lệ",
+  },
+  login_otp: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực OTP đăng nhập đã hết hạn, vui lòng đăng nhập lại",
+    invalidMessage: "Phiên xác thực OTP đăng nhập không hợp lệ",
+  },
+  register_otp: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực OTP đăng ký đã hết hạn, vui lòng thực hiện lại",
+    invalidMessage: "Phiên xác thực OTP đăng ký không hợp lệ",
+  },
+  forgot_otp: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực OTP khôi phục mật khẩu đã hết hạn, vui lòng thử lại",
+    invalidMessage: "Phiên xác thực OTP khôi phục mật khẩu không hợp lệ",
+  },
+  merchant_forgot_otp: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực OTP khôi phục mật khẩu đã hết hạn, vui lòng thử lại",
+    invalidMessage: "Phiên xác thực OTP khôi phục mật khẩu không hợp lệ",
+  },
+  merchant_forgot_tax: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực mã số thuế đã hết hạn, vui lòng thử lại",
+    invalidMessage: "Mã xác thực mã số thuế không hợp lệ",
+  },
+  pin_challenge: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực bổ sung đã hết hạn, vui lòng thử lại",
+    invalidMessage: "Mã phiên xác thực bổ sung không hợp lệ",
+  },
+  forgot_kyc: {
+    statusCode: 401,
+    expiredMessage: "Phiên xác thực định danh đã hết hạn, vui lòng thực hiện lại",
+    invalidMessage: "Mã phiên xác thực định danh không hợp lệ",
+  },
+  reset_password: {
+    statusCode: 401,
+    expiredMessage: "Phiên đặt lại mật khẩu đã hết hạn, vui lòng thực hiện lại",
+    invalidMessage: "Mã phiên đặt lại mật khẩu không hợp lệ",
+  },
+  reset_pin: {
+    statusCode: 401,
+    expiredMessage: "Phiên đặt lại mã PIN đã hết hạn, vui lòng thực hiện lại",
+    invalidMessage: "Mã phiên đặt lại mã PIN không hợp lệ",
+  },
+  reset_default: {
+    statusCode: 401,
+    expiredMessage: "Phiên đặt lại thông tin đã hết hạn, vui lòng thực hiện lại",
+    invalidMessage: "Mã phiên đặt lại thông tin không hợp lệ",
+  },
+  scoped_otp: {
+    statusCode: 403,
+    expiredMessage: "Phiên xác thực OTP đã hết hạn, vui lòng thử lại",
+    invalidMessage: "Phiên xác thực OTP không hợp lệ",
+  },
+  transaction_otp: {
+    statusCode: 403,
+    expiredMessage: "Phiên xác thực OTP giao dịch đã hết hạn, vui lòng thực hiện lại",
+    invalidMessage: "Mã xác thực OTP giao dịch không hợp lệ",
+  },
+  transaction_pin: {
+    statusCode: 403,
+    expiredMessage: "Phiên xác thực PIN giao dịch đã hết hạn, vui lòng nhập lại PIN",
+    invalidMessage: "Mã xác thực PIN giao dịch không hợp lệ",
+  },
+};
+
+function handleTokenError(e, next, contextKey = null) {
   if (e.statusCode) return next(e);
+  const ctx =
+    typeof contextKey === "string"
+      ? TOKEN_ERROR_CONTEXTS[contextKey]
+      : contextKey && typeof contextKey === "object"
+        ? contextKey
+        : null;
+  const statusCode = ctx?.statusCode || 401;
+
   if (e.name === "TokenExpiredError") {
-    const err = new Error("Token đã hết hạn");
-    err.statusCode = 401;
+    const err = new Error(
+      ctx?.expiredMessage || "Phiên xác thực đã hết hạn, vui lòng thực hiện lại",
+    );
+    err.statusCode = statusCode;
     return next(err);
   }
-  if (e.name === "JsonWebTokenError") {
-    const err = new Error("Token không hợp lệ");
-    err.statusCode = 401;
+  if (e.name === "JsonWebTokenError" || e.name === "NotBeforeError") {
+    const err = new Error(
+      ctx?.invalidMessage || "Mã phiên xác thực không hợp lệ",
+    );
+    err.statusCode = statusCode;
     return next(err);
   }
   console.error("Lỗi xác thực không xác định:", e);
-  const err = new Error("Lỗi xác thực");
+  const err = new Error("Lỗi xác thực hệ thống");
   err.statusCode = 500;
   next(err);
 }

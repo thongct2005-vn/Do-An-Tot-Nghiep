@@ -28,8 +28,8 @@ async function cancelPending(db, id) {
 async function assertCurrent(row, revision) {
   // Account status was checked by authentication. Preserve admitted-before-block
   // behavior; revocation/replacement is rechecked under the credential row lock.
-  if (row.credentials_revoked) throw httpError(403, 'Credentials Merchant đã thu hồi. Vui lòng cập nhật credentials.');
-  if (revision == null || String(row.credentials_revision) !== String(revision)) throw httpError(409, 'Credentials đã thay đổi. Vui lòng dùng khóa mới và tạo đơn mới.');
+  if (row.credentials_revoked) throw httpError(403, 'Khóa tích hợp của Merchant đã bị thu hồi. Vui lòng cập nhật khóa mới.');
+  if (revision == null || String(row.credentials_revision) !== String(revision)) throw httpError(409, 'Khóa tích hợp đã thay đổi. Vui lòng dùng khóa mới và tạo đơn mới.');
 }
 async function mutate({ merchantId, operation, expectedRevision, adminId, reason, selfService = false, apiKey, secretKey }) {
   const client = await pool.connect();

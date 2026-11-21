@@ -17,7 +17,7 @@ async function buildDuplicateOrderError({ merchantId, orderId }) {
   if (existing && ["SUCCESS", "PAID"].includes(existing.status)) {
     return httpError(409, "Đơn hàng này đã được thanh toán");
   }
-  if (existing?.status === 'CANCELLED') return httpError(409, 'Đơn đã bị hủy do thay đổi credentials. Vui lòng tạo order_id mới với khóa mới.');
+  if (existing?.status === 'CANCELLED') return httpError(409, 'Đơn đã bị hủy do thay đổi khóa tích hợp. Vui lòng tạo mã đơn hàng mới với khóa mới.');
   if (existing && existing.status === "PENDING" && !existing.is_expired) {
     return httpError(
       409,

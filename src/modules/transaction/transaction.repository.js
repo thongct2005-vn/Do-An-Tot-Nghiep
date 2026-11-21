@@ -1537,7 +1537,7 @@ const TransactionRepository = {
           OR (
             CASE
               WHEN pp.user_id IS NOT NULL OR (t.fee_rate_snapshot->>'funding_source') = 'POSTPAID' THEN 'POSTPAID'
-              ELSE 'MIO'
+              ELSE 'LUMAPAY'
             END
           ) = $22::text
         )

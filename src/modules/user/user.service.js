@@ -516,7 +516,7 @@ const userService = {
 
   async updateFmcToken({ userId, fcmToken }) {
     if (!userId || !fcmToken) {
-      throw httpError(400, "Thiếu thông tin để cập nhật token thông báo");
+      throw httpError(400, "Thiếu thông tin để cập nhật mã thông báo đẩy");
     }
 
     await userRepository.updateFmcToken({ userId, fcmToken });
@@ -524,7 +524,7 @@ const userService = {
 
   async getFcmToken(userId) {
     if (!userId) {
-      throw httpError(400, "Thiếu thông tin để lấy token thông báo");
+      throw httpError(400, "Thiếu thông tin để lấy mã thông báo đẩy");
     }
     const result = await userRepository.getFcmToken(userId);
     return result;

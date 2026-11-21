@@ -38,7 +38,7 @@ const initSocket = (server, corsOrigins = []) => {
   io.use(async (socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) {
-      const err = new Error("Thiếu thông tin xác thực để kết nối");
+      const err = new Error("Thiếu phiên đăng nhập để kết nối");
       err.statusCode = 401;
       return next(err);
     }
@@ -65,7 +65,11 @@ const initSocket = (server, corsOrigins = []) => {
       socket.user = decode;
       next();
     } catch (e) {
-      const err = new Error("Thông tin xác thực không hợp lệ hoặc đã hết hạn");
+      const message =
+        e?.name === "TokenExpiredError"
+          ? "Phiên đăng nhập đã hết hạn"
+          : "Phiên đăng nhập không hợp lệ";
+      const err = new Error(message);
       err.statusCode = 401;
       return next(err);
     }

@@ -17,7 +17,7 @@ const adminAuthController = {
     try {
       const { refresh_token: token } = req.body;
       const result = await adminAuthService.refreshToken(token);
-      return successResponse(res, 200, "Cấp lại token thành công", result);
+      return successResponse(res, 200, "Làm mới phiên đăng nhập thành công", result);
     } catch (e) {
       next(e);
     }

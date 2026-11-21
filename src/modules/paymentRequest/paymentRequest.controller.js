@@ -5,7 +5,7 @@ const paymentRequestController = {
     try {
       const { user_id: userId } = req.user;
       const token = await paymentRequestService.createStaticQRToken(userId);
-      return successResponse(res, 200, "Tạo Static QR thành công", token);
+      return successResponse(res, 200, "Tạo mã QR tĩnh thành công", token);
     } catch (e) {
       next(e);
     }
@@ -40,7 +40,7 @@ const paymentRequestController = {
         amount,
         description,
       });
-      return successResponse(res, 200, "Tạo mã Dynamic QR thành công", result);
+      return successResponse(res, 200, "Tạo mã QR động thành công", result);
     } catch (e) {
       next(e);
     }

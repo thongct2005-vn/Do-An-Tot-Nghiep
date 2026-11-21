@@ -14,7 +14,7 @@ const POSTPAID_PAYER_JOIN = `
          LIMIT 1
       ) pp ON true`;
 
-const FUNDING_SOURCE_SELECT = `'Ví Mio'::text AS funding_source`;
+const FUNDING_SOURCE_SELECT = `'Ví LumaPay'::text AS funding_source`;
 
 function buildMerchantExtraFilters({
   direction = null,

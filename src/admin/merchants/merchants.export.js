@@ -59,7 +59,7 @@ async function buildMerchantsAdminXlsx({
   filterSummary = "",
 }) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Mio E-Wallet System";
+  wb.creator = "LumaPay E-Wallet System";
   wb.created = new Date();
 
   const ws = wb.addWorksheet("Danh sách Merchant", {
@@ -73,7 +73,7 @@ async function buildMerchantsAdminXlsx({
 
   ws.mergeCells(1, 1, 1, lastCol);
   const titleCell = ws.getCell(1, 1);
-  titleCell.value = "DANH SÁCH ĐỐI TÁC MERCHANT - VÍ ĐIỆN TỬ MIO";
+  titleCell.value = "DANH SÁCH ĐỐI TÁC MERCHANT - VÍ ĐIỆN TỬ LUMAPAY";
   titleCell.font = { bold: true, size: 15, color: { argb: "FF1F4E79" } };
   titleCell.alignment = { vertical: "middle", horizontal: "left" };
   ws.getRow(1).height = 26;

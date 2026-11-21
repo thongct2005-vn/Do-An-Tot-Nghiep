@@ -174,7 +174,7 @@ const userController = {
       const { user_id: userId } = req.user;
       const { fcm_token: fcmToken } = req.body;
       await userService.updateFmcToken({ userId, fcmToken });
-      return successResponse(res, 200, "Cập nhật fcm token thành công");
+      return successResponse(res, 200, "Cập nhật mã thông báo đẩy thành công");
     } catch (e) {
       next(e);
     }
@@ -183,7 +183,7 @@ const userController = {
     try {
       const { user_id: userId } = req.user;
       const result = await userService.getFcmToken(userId);
-      return successResponse(res, 200, "Lấy fcm token thành công", {
+      return successResponse(res, 200, "Lấy mã thông báo đẩy thành công", {
         fcm_token: result,
       });
     } catch (e) {

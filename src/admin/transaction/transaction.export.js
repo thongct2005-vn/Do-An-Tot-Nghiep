@@ -103,7 +103,7 @@ async function buildTransactionsAdminXlsx({
   endDate = null,
 }) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Mio E-Wallet System";
+  wb.creator = "LumaPay E-Wallet System";
   wb.created = new Date();
 
   const ws = wb.addWorksheet("Báo cáo giao dịch", {
@@ -118,7 +118,7 @@ async function buildTransactionsAdminXlsx({
   // 1. Tiêu đề lớn
   ws.mergeCells(1, 1, 1, lastCol);
   const titleCell = ws.getCell(1, 1);
-  titleCell.value = "BÁO CÁO GIAO DỊCH TOÀN HỆ THỐNG - VÍ ĐIỆN TỬ MIO";
+  titleCell.value = "BÁO CÁO GIAO DỊCH TOÀN HỆ THỐNG - VÍ ĐIỆN TỬ LUMAPAY";
   titleCell.font = { bold: true, size: 16, color: { argb: "FF1F4E79" } };
   titleCell.alignment = { vertical: "middle", horizontal: "left" };
   ws.getRow(1).height = 28;

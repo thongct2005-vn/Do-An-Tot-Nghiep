@@ -115,7 +115,7 @@ async function buildTransactionReceiptPdf({
       margin: 48,
       info: {
         Title: `Biên nhận giao dịch ${detail.id}`,
-        Author: "Mio E-Wallet Admin",
+        Author: "LumaPay E-Wallet Admin",
         Subject: "Biên nhận đối soát giao dịch ví điện tử",
       },
     });
@@ -137,7 +137,7 @@ async function buildTransactionReceiptPdf({
       .font("Bold")
       .fontSize(15)
       .fillColor("#0052CC")
-      .text("MIO E-WALLET — BIÊN NHẬN ĐỐI SOÁT GIAO DỊCH", 64, 58);
+      .text("LUMAPAY E-WALLET — BIÊN NHẬN ĐỐI SOÁT GIAO DỊCH", 64, 58);
 
     doc
       .font("Regular")
@@ -280,7 +280,7 @@ async function buildTransactionReceiptPdf({
       .fontSize(8.5)
       .fillColor("#64748B")
       .text(
-        "Tài liệu được trích xuất từ hệ thống quản trị Mio E-Wallet để phục vụ đối soát nội bộ.",
+        "Tài liệu được trích xuất từ hệ thống quản trị LumaPay E-Wallet để phục vụ đối soát nội bộ.",
         48,
         doc.y,
         { align: "center", width: doc.page.width - 96 },

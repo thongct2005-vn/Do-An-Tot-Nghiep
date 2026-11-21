@@ -132,7 +132,7 @@ const authController = {
     try {
       const { refresh_token: refreshToken } = req.body;
       const result = await authService.refreshToken(refreshToken);
-      return successResponse(res, 200, "Làm mới token thành công", result);
+      return successResponse(res, 200, "Làm mới phiên đăng nhập thành công", result);
     } catch (e) {
       next(e);
     }

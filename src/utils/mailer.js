@@ -18,7 +18,7 @@ async function sendOtpEmail({ to, otp, expiresInMinutes = 5 }) {
 
   try {
     await transporter.sendMail({
-      from: `"Mio" <${process.env.GMAIL_USER}>`,
+      from: `"LumaPay" <${process.env.GMAIL_USER}>`,
       to,
       subject: "Mã xác thực OTP của bạn",
       text: `Mã OTP của bạn là ${otp}. Mã có hiệu lực trong ${expiresInMinutes} phút. Không chia sẻ mã này với bất kỳ ai.`,
@@ -53,9 +53,9 @@ async function sendTransactionExportEmail({
 
   try {
     await transporter.sendMail({
-      from: `"Mio" <${process.env.GMAIL_USER}>`,
+      from: `"LumaPay" <${process.env.GMAIL_USER}>`,
       to,
-      subject: `Lịch sử giao dịch Mio (${period})`,
+      subject: `Lịch sử giao dịch LumaPay (${period})`,
       text: `Đính kèm là file Excel lịch sử giao dịch từ ${toVn(startDate)} đến ${toVn(endDate)} (${rowCount} giao dịch). Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.`,
       html: `
         <div style="font-family:Arial,sans-serif;max-width:480px">

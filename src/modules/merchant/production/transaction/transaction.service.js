@@ -55,7 +55,7 @@ const {
 } = require("../../../../utils/historyFilters");
 
 const MERCHANT_FUNDING_ALIAS_MAP = {
-  MIO: "MAIN_WALLET",
+  LUMAPAY: "MAIN_WALLET",
   MAIN_WALLET: "MAIN_WALLET",
   WALLET: "MAIN_WALLET",
   BANK: "BANK",
@@ -582,7 +582,7 @@ const merchantTransactionService = {
     if (normalizedStatus) filters.push(`trạng thái ${normalizedStatus}`);
     if (normalizedFundingSource) {
       filters.push(
-        `nguồn ${normalizedFundingSource === "BANK" ? "Ngân hàng liên kết" : "Ví Mio Merchant"}`,
+        `nguồn ${normalizedFundingSource === "BANK" ? "Ngân hàng liên kết" : "Ví LumaPay Merchant"}`,
       );
     }
     if (parsedMinAmount !== null || parsedMaxAmount !== null) {
@@ -767,7 +767,7 @@ const merchantTransactionService = {
       transaction_type: type,
       status: row.status,
       direction: row.direction,
-      funding_source: row.funding_source || "Ví Mio",
+      funding_source: row.funding_source || "Ví LumaPay",
       amount: Number(row.amount),
       fee: Number(row.fee),
       merchant_fee: merchantFeeNum,

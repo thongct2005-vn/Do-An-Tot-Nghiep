@@ -21,7 +21,7 @@ const paymentRequestService = {
     let newToken;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        newToken = `Mio:${generateReferenceCode(16)}`;
+        newToken = `LumaPay:${generateReferenceCode(16)}`;
         await paymentRequestRepository.setStaticQRTokenForUser({
           userId,
           newToken,
@@ -37,7 +37,10 @@ const paymentRequestService = {
 
   async getUserAndWalletByStaticQRToken({ token, requestingUserId }) {
     if (!token) {
-      throw httpError(400, "Thiếu token để lấy thông tin");
+      throw httpError(400, "Thiếu mã QR để tra cứu");
+    }
+    if (!/^(?:LumaPay|Mio):[A-Za-z0-9]{8,64}$/.test(String(token).trim())) {
+      throw httpError(404, "Mã QR không hợp lệ");
     }
     const result =
       await paymentRequestRepository.getUserAndWalletByStaticQRToken(token);
@@ -89,7 +92,10 @@ const paymentRequestService = {
 
   async getUserAndWalletByDynamicQRToken({ referenceCode, requestingUserId }) {
     if (!referenceCode) {
-      throw httpError(400, "Thiếu token để lấy thông tin");
+      throw httpError(400, "Thiếu mã QR để tra cứu");
+    }
+    if (!/^[A-Za-z0-9]{8,64}$/.test(String(referenceCode).trim())) {
+      throw httpError(404, "Mã QR không hợp lệ");
     }
 
     const result =

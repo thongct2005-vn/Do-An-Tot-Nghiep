@@ -124,7 +124,7 @@ const tokenUtil = {
   verifyOtpToken(otpToken, expectedPurpose = LOGIN_OTP_PURPOSE) {
     const payload = jwt.verify(otpToken, OTP_SECRET, { algorithms: ["HS256"] });
     if (payload.purpose !== expectedPurpose) {
-      const err = new Error("Phương thức otp không chính xác");
+      const err = new Error("Mục đích mã xác thực OTP không hợp lệ");
       err.name = "JsonWebTokenError";
       throw err;
     }
@@ -147,7 +147,7 @@ const tokenUtil = {
       algorithms: ["HS256"],
     });
     if (payload.purpose !== FORGOT_KYC_PURPOSE) {
-      const err = new Error("Mã xác thực không đúng loại");
+      const err = new Error("Mã phiên xác thực định danh không đúng loại");
       err.name = "JsonWebTokenError";
       throw err;
     }
@@ -212,7 +212,7 @@ const tokenUtil = {
       algorithms: ["HS256"],
     });
     if (payload.purpose !== expectedPurpose) {
-      const err = new Error("Mã xác thực không đúng loại");
+      const err = new Error("Mã phiên đặt lại thông tin không đúng loại");
       err.name = "JsonWebTokenError";
       throw err;
     }

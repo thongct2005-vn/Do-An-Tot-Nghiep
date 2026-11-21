@@ -117,7 +117,7 @@ const merchantAuthController = {
     try {
       const result = await merchantAuthService.refreshToken(req.refreshToken);
       setRefreshCookie(res, result.token.refresh_token);
-      return successResponse(res, 200, "Làm mới token thành công", {
+      return successResponse(res, 200, "Làm mới phiên đăng nhập thành công", {
         token: publicToken(result.token),
       });
     } catch (e) {
@@ -167,6 +167,7 @@ const merchantAuthController = {
         feePlan,
       });
       clearFailure(phone);
+      setRefreshCookie(res, result.token.refresh_token);
       return successResponse(res, 200, "Đăng ký tài khoản thành công", {
         ...result,
         token: publicToken(result.token),

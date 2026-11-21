@@ -120,7 +120,7 @@ async function buildTransactionsXlsx({ rows, startDate, endDate, filters = [] })
   }
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Mio Wallet";
+  wb.creator = "LumaPay Wallet";
   wb.created = new Date();
   const ws = wb.addWorksheet("Lịch sử giao dịch", {
     views: [{ state: "frozen", ySplit: 8 }],

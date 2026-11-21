@@ -125,7 +125,7 @@
     // Không tự động chuyển trang: người dùng phải bấm và thấy rõ tên miền sẽ tới.
     var host = data.redirect_host || new URL(target).host;
     $("redirect-note").textContent =
-      "Bạn sắp rời cổng thanh toán Mio để tới: " +
+      "Bạn sắp rời cổng thanh toán LumaPay để tới: " +
       host +
       ". Chỉ nhấn quay lại nếu bạn tin tưởng trang này.";
     $("return-link").hidden = false;

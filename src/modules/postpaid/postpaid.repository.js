@@ -1,6 +1,7 @@
 require("dotenv").config();
 const pool = require("../../config/database");
 const { httpError } = require("../../utils/httpError");
+const { BANK_FUNDING_MIN_AMOUNT } = require("../../utils/amount");
 const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
 const { assertKyc } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
@@ -398,12 +399,16 @@ function buildPostpaidInfoPayload(catalog) {
     };
   });
   const sampleAppliedFee = lateFeeTiers[0].sample_fee;
+  const minBankRepayText = formatVndDot(BANK_FUNDING_MIN_AMOUNT);
   const serviceFeeRule =
     config.monthly_service_fee > 0
       ? config.free_service_fee_tx_count > 0
-        ? `Miễn phí ${config.free_service_fee_tx_count} giao dịch đầu tiên. Từ sau lượt miễn phí, thu ${formatVndDot(config.monthly_service_fee)}/tháng vào ngày chốt sao kê nếu kỳ đó có phát sinh giao dịch (0đ nếu không dùng).`
-        : `Thu ${formatVndDot(config.monthly_service_fee)}/tháng vào ngày chốt sao kê cho kỳ có phát sinh giao dịch (0đ nếu kỳ đó không sử dụng).`
+        ? `Miễn phí dịch vụ cho ${config.free_service_fee_tx_count} giao dịch thanh toán đầu tiên (tính lũy kế). Từ giao dịch thứ ${config.free_service_fee_tx_count + 1} trở đi, thu ${formatVndDot(config.monthly_service_fee)}/tháng vào ngày chốt sao kê cho mỗi kỳ có phát sinh giao dịch mới (0đ nếu kỳ đó không sử dụng).`
+        : `Thu ${formatVndDot(config.monthly_service_fee)}/tháng vào ngày chốt sao kê cho mỗi kỳ có phát sinh giao dịch mới (0đ nếu kỳ đó không sử dụng).`
       : "Miễn phí duy trì dịch vụ Ví trả sau hàng tháng (0đ).";
+  const tierSummaryText = lateFeeTiers
+    .map((t) => `${t.label}: ${t.percent_text}%`)
+    .join(", ");
 
   return {
     source: "system_configs",
@@ -425,9 +430,9 @@ function buildPostpaidInfoPayload(catalog) {
       due_day: config.due_day,
       timezone: "Asia/Ho_Chi_Minh",
       billed_formula: "max(0, used_amount - service_fee_amount - late_fee_amount)",
-      summary: `Chốt sao kê tự động vào ngày ${config.billing_day} hàng tháng. Toàn bộ dư nợ gốc đang sử dụng được chốt thành dư nợ kỳ sao kê.`,
+      summary: `Chốt sao kê tự động từ ngày ${config.billing_day} hàng tháng (múi giờ Việt Nam). Toàn bộ dư nợ gốc đang sử dụng được chốt thành dư nợ gốc kỳ sao kê và cộng phí dịch vụ tháng nếu đủ điều kiện.`,
       due_rule: `Hạn thanh toán là ngày ${config.due_day} của tháng kế tiếp sau kỳ chốt sao kê.`,
-      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}", tạm khóa chi tiêu QR mới và áp dụng phí chậm trả theo 4 bậc ngày quá hạn. Quá hạn từ ngày thứ 5 sẽ tự động hạ hạn mức khi tất toán; từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết nợ cho tới khi gửi ảnh chứng minh thu nhập và được duyệt mở lại.`,
+      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ gốc kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}" (nếu đang khóa thì giữ nguyên trạng thái khóa), tạm khóa chi tiêu QR mới và tính phí chậm trả theo 4 bậc ngày quá hạn (chỉ thu bù chênh lệch khi sang bậc cao hơn). Quá hạn từ ngày thứ 5 trở lên có dư nợ gốc quá hạn sẽ tự động bị giảm hạn mức khi tất toán kỳ nợ; từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết dư nợ kỳ sao kê cho tới khi gửi 1–3 ảnh chứng minh thu nhập và được Quản trị viên duyệt mở lại.`,
     },
     fee_rules: {
       activation_fee: 0,
@@ -439,24 +444,26 @@ function buildPostpaidInfoPayload(catalog) {
       late_fee_tiers: lateFeeTiers,
       calculation_basis: "billed_amount + service_fee_amount",
       formula: "round((billed_amount + service_fee_amount) * tier_bps / 10000)",
-      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí chậm trả tính theo 4 bậc ngày quá hạn (${lateFeeTiers.map((t) => `${t.label}: ${t.percent_text}%`).join(", ")}) trên dư nợ kỳ sao kê chưa trả.`,
+      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí chậm trả áp dụng theo 4 bậc ngày quá hạn (${tierSummaryText}) trên tổng dư nợ kỳ sao kê chưa trả (nợ gốc đã chốt + phí dịch vụ tháng); mỗi kỳ chỉ thu bù phần chênh lệch khi bước sang bậc mới (tổng phí tối đa theo tỷ lệ bậc cao nhất).`,
       example: {
         billed_amount: sampleBilled,
         applied_fee: sampleAppliedFee,
         tier_samples: lateFeeTiers,
-        description: `Ví dụ dư nợ kỳ sao kê ${formatVndDot(sampleBilled)} quá hạn: ${lateFeeTiers.map((t) => `${t.label} = ${formatVndDot(t.sample_fee)} (${t.percent_text}%)`).join("; ")}.`,
+        description: `Ví dụ tổng dư nợ kỳ sao kê (nợ gốc đã chốt + phí dịch vụ tháng) ${formatVndDot(sampleBilled)} quá hạn: ${lateFeeTiers.map((t) => `${t.label} = ${formatVndDot(t.sample_fee)} (${t.percent_text}%)`).join("; ")} — tổng phí tối đa trong kỳ bằng mức của bậc cao nhất đạt tới.`,
       },
     },
     repayment_rules: {
       source_wallet: "MAIN_WALLET",
+      supported_funding_sources: ["MAIN_WALLET", "BANK"],
+      bank_min_amount: BANK_FUNDING_MIN_AMOUNT,
       priority_order: [
         "LATE_FEE",
         "SERVICE_FEE",
         "BILLED_PRINCIPAL",
         "UNBILLED_PRINCIPAL",
       ],
-      summary: `Thanh toán dư nợ từ Ví chính theo thứ tự ưu tiên: (1) Phí trễ hạn → (2) Phí dịch vụ tháng → (3) Dư nợ gốc đã chốt kỳ sao kê → (4) Dư nợ gốc phát sinh kỳ mới.`,
-      unlock_rule: `Lần quá hạn đầu tiên: ví đang "${pastDueLabel}" tự động trở lại "${activeLabel}" ngay khi phí trễ hạn, phí dịch vụ tháng và dư nợ kỳ sao kê đều bằng 0đ. Từ lần quá hạn thứ 2 trở đi, ví tự động khóa yêu cầu gửi ảnh chứng minh thu nhập để Quản trị viên xét duyệt mở lại.`,
+      summary: `Thanh toán dư nợ từ Ví chính hoặc tài khoản ngân hàng liên kết (tối thiểu ${minBankRepayText}/lần khi trả qua ngân hàng) theo thứ tự ưu tiên: (1) Phí trễ hạn → (2) Phí dịch vụ tháng → (3) Dư nợ gốc đã chốt kỳ sao kê → (4) Dư nợ gốc phát sinh kỳ mới.`,
+      unlock_rule: `Lần quá hạn đầu tiên: ví đang "${pastDueLabel}" tự động trở lại "${activeLabel}" ngay khi phí trễ hạn, phí dịch vụ tháng và dư nợ gốc đã chốt đều bằng 0đ (trừ trường hợp bị Quản trị viên khóa). Từ lần quá hạn thứ 2 trở đi, sau khi tất toán xong kỳ nợ, ví chuyển "${frozenLabel}" và yêu cầu gửi 1–3 ảnh chứng minh thu nhập để Quản trị viên xét duyệt mở lại.`,
     },
     activation_rules: (() => {
       const effectiveMinDays = Math.max(1, config.min_account_days);
@@ -472,7 +479,7 @@ function buildPostpaidInfoPayload(catalog) {
         min_account_days: config.min_account_days,
         min_account_hours: effectiveMinDays * 24,
         default_credit_limit: config.default_credit_limit,
-        summary: `Áp dụng cho tài khoản cá nhân đang hoạt động, đã xác thực eKYC, đã liên kết ít nhất 1 tài khoản ngân hàng và ${minAgeText}. Hạn mức mặc định ${formatVndDot(config.default_credit_limit)}.`,
+        summary: `Áp dụng cho tài khoản cá nhân đang hoạt động, đã xác thực eKYC, đã liên kết ít nhất 1 tài khoản ngân hàng đang hoạt động và ${minAgeText}. Hạn mức mặc định ${formatVndDot(config.default_credit_limit)}.`,
       };
     })(),
     status_labels: statusLabels,

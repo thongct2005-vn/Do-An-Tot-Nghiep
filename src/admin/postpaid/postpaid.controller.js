@@ -1,5 +1,6 @@
 const { successResponse } = require("../../utils/apiResponse");
 const { sendPostpaidProofImageFile } = require("../../utils/postpaidProofImage");
+const { emitToUser } = require("../../utils/socket");
 const adminPostpaidService = require("./postpaid.service");
 
 const adminPostpaidController = {
@@ -47,6 +48,11 @@ const adminPostpaidController = {
         adminId: req.user?.user_id,
         reason: body?.reason,
       });
+      emitToUser(req.params.userId, "postpaid_wallet_updated", {
+        status: data?.status || "FROZEN",
+        lockReason: data?.lock_reason || "ADMIN_FREEZE",
+        type: "POSTPAID_ADMIN_FROZEN",
+      });
       return successResponse(res, 200, "Khóa Ví trả sau thành công", data);
     } catch (e) {
       return next(e);
@@ -60,6 +66,11 @@ const adminPostpaidController = {
         userId: req.params.userId,
         adminId: req.user?.user_id,
         reason: body?.reason,
+      });
+      emitToUser(req.params.userId, "postpaid_wallet_updated", {
+        status: data?.status || "ACTIVE",
+        lockReason: data?.lock_reason ?? null,
+        type: "POSTPAID_ADMIN_UNFROZEN",
       });
       return successResponse(res, 200, "Mở khóa Ví trả sau thành công", data);
     } catch (e) {
@@ -75,6 +86,11 @@ const adminPostpaidController = {
         adminId: req.user?.user_id,
         credit_limit: body?.credit_limit,
         reason: body?.reason,
+      });
+      emitToUser(req.params.userId, "postpaid_wallet_updated", {
+        creditLimit: data?.credit_limit,
+        availableLimit: data?.available_limit,
+        type: "POSTPAID_LIMIT_ADJUSTED",
       });
       return successResponse(res, 200, "Điều chỉnh hạn mức Ví trả sau thành công", data);
     } catch (e) {
@@ -111,6 +127,16 @@ const adminPostpaidController = {
         adminId: req.user?.user_id,
         reason: body?.reason,
       });
+      if (data?.user_id) {
+        emitToUser(data.user_id, "postpaid_wallet_updated", {
+          status: data.wallet_status,
+          lockReason: data.lock_reason,
+          creditLimit: data.credit_limit,
+          requestId: data.request_id,
+          requestStatus: data.status,
+          type: "POSTPAID_UNLOCK_APPROVED",
+        });
+      }
       return successResponse(res, 200, "Duyệt yêu cầu mở khóa Ví trả sau thành công", data);
     } catch (e) {
       return next(e);
@@ -125,6 +151,16 @@ const adminPostpaidController = {
         adminId: req.user?.user_id,
         reason: body?.reason,
       });
+      if (data?.user_id) {
+        emitToUser(data.user_id, "postpaid_wallet_updated", {
+          status: data.wallet_status,
+          lockReason: data.lock_reason,
+          requestId: data.request_id,
+          requestStatus: data.status,
+          adminNote: data.admin_note,
+          type: "POSTPAID_UNLOCK_REJECTED",
+        });
+      }
       return successResponse(res, 200, "Từ chối yêu cầu mở khóa Ví trả sau thành công", data);
     } catch (e) {
       return next(e);

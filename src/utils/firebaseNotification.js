@@ -3,9 +3,14 @@ const firebaseApp = require("../config/firebase");
 const userRepository = require("../modules/user/user.repository");
 
 const sendPushNotification = async (userId, { title, body, data = {} }) => {
+  let fullName = "unknown";
   try {
     const user = await userRepository.getFcmToken(userId);
-    const { fcm_token: fcmToken, full_name: fullName } = user;
+    if (!user) {
+      return;
+    }
+    const fcmToken = user.fcm_token;
+    fullName = user.full_name || "unknown";
     if (!fcmToken) {
       return;
     }

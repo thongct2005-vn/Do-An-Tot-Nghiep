@@ -806,6 +806,7 @@ const adminPostpaidRepository = {
       await client.query("COMMIT");
       return {
         request_id: requestId,
+        user_id: reqRow.user_id,
         status: "APPROVED",
         wallet_status: "ACTIVE",
         lock_reason: null,
@@ -877,6 +878,7 @@ const adminPostpaidRepository = {
       await client.query("COMMIT");
       return {
         request_id: requestId,
+        user_id: reqRow.user_id,
         status: "REJECTED",
         wallet_status: pw.status,
         lock_reason: pw.lock_reason,

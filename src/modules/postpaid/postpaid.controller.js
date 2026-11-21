@@ -150,6 +150,16 @@ const postpaidController = {
         type: "POSTPAID_REPAY",
       });
 
+      emitToUser(userId, "postpaid_wallet_updated", {
+        usedAmount: result.usedAmountAfter,
+        availableLimit: result.availableLimitAfter,
+        creditLimit: result.creditLimitAfter,
+        status: result.postpaidStatus,
+        lockReason: result.lockReasonAfter,
+        transactionId: result.transactionId,
+        type: "POSTPAID_REPAY",
+      });
+
       const viaBankSuffix = result.bankName ? ` qua ${result.bankName}` : "";
       sendPushNotification(userId, {
         title: "Thanh toán Ví trả sau thành công",

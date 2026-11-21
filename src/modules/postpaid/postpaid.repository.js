@@ -15,6 +15,14 @@ const {
   assertValidSystemWalletRow,
   verifySystemWalletInDb,
 } = require("../../utils/systemWallet");
+const {
+  MIN_POSTPAID_CREDIT_LIMIT,
+  POSTPAID_LATE_FEE_TIERS,
+  POSTPAID_CONFIG_FIELD_LABELS,
+  parseNonNegIntConfig,
+  resolvePostpaidLateFeeTier,
+  normalizePostpaidConfig,
+} = require("./postpaidConfig");
 const { uuidv7 } = require("uuidv7");
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -83,10 +91,50 @@ function formatCycleMonthDisplay(cycleMonth) {
   return match ? `${match[2]}/${match[1]}` : raw;
 }
 
+function toYmdStr(val) {
+  if (!val) return null;
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed);
+    if (match) return match[1];
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : getVnDateMeta(parsed.getTime()).todayDateStr;
+  }
+  if (val instanceof Date && !Number.isNaN(val.getTime())) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, "0");
+    const d = String(val.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return null;
+}
+
+function diffDaysYmd(laterVal, earlierVal) {
+  const laterYmd = toYmdStr(laterVal);
+  const earlierYmd = toYmdStr(earlierVal);
+  if (!laterYmd || !earlierYmd) return 0;
+  const [ay, am, ad] = laterYmd.split("-").map(Number);
+  const [by, bm, bd] = earlierYmd.split("-").map(Number);
+  const utcA = Date.UTC(ay, am - 1, ad);
+  const utcB = Date.UTC(by, bm - 1, bd);
+  return Math.floor((utcA - utcB) / 86400000);
+}
+
 function formatVnDateFromYmd(ymd) {
-  const raw = String(ymd || "").trim();
+  const raw = toYmdStr(ymd) || String(ymd || "").trim();
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
   return match ? `${match[3]}/${match[2]}/${match[1]}` : raw;
+}
+
+function computeAutoAdjustedCreditLimit(oldCreditLimit, overduePrincipal) {
+  const safeLimit = Math.max(0, Number(oldCreditLimit) || 0);
+  const safeOverdue = Math.max(0, Number(overduePrincipal) || 0);
+  if (safeOverdue <= 0 || safeLimit <= 0) return safeLimit;
+  if (safeOverdue >= MIN_POSTPAID_CREDIT_LIMIT || safeOverdue >= safeLimit) {
+    return Math.floor(safeLimit * 0.5);
+  }
+  return safeOverdue;
 }
 
 const {
@@ -180,67 +228,6 @@ function buildMonthlyDebtReminderNotification(
       late_fee_amount: String(lateFeeAmount),
       due_date: String(row?.due_date_str || ""),
     },
-  };
-}
-
-const POSTPAID_CONFIG_FIELD_LABELS = Object.freeze({
-  default_credit_limit: "hạn mức mặc định của Ví trả sau",
-  min_account_days: "số ngày hoạt động tối thiểu để mở Ví trả sau",
-  billing_day: "ngày chốt sao kê Ví trả sau",
-  due_day: "ngày đến hạn thanh toán Ví trả sau",
-  late_fee_bps: "tỷ lệ phí trễ hạn Ví trả sau",
-  min_late_fee: "phí trễ hạn tối thiểu của Ví trả sau",
-  monthly_service_fee: "phí dịch vụ hàng tháng của Ví trả sau",
-  free_service_fee_tx_count: "số giao dịch miễn phí dịch vụ ban đầu của Ví trả sau",
-});
-
-function parseNonNegIntConfig(raw, fieldName) {
-  const label = POSTPAID_CONFIG_FIELD_LABELS[fieldName] || "tham số Ví trả sau";
-  const val = raw[fieldName];
-  const isMissingString = typeof val === "string" && val.trim() === "";
-  if (val === undefined || val === null || isMissingString) {
-    throw httpError(500, `Hệ thống chưa thiết lập ${label}`);
-  }
-  const n =
-    typeof val === "number"
-      ? val
-      : typeof val === "string" && /^-?\d+$/.test(val.trim())
-        ? Number(val.trim())
-        : NaN;
-  if (!Number.isSafeInteger(n) || n < 0) {
-    throw httpError(500, `Cấu hình ${label} trong hệ thống không hợp lệ`);
-  }
-  return n;
-}
-
-function normalizePostpaidConfig(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw httpError(500, "Cấu hình Ví trả sau trong hệ thống không hợp lệ");
-  }
-  if (raw.enabled === undefined || raw.enabled === null) {
-    throw httpError(500, "Hệ thống chưa thiết lập trạng thái bật hoặc tắt Ví trả sau");
-  }
-  if (typeof raw.enabled !== "boolean") {
-    throw httpError(500, "Cấu hình trạng thái bật hoặc tắt Ví trả sau không hợp lệ");
-  }
-  const billingDay = parseNonNegIntConfig(raw, "billing_day");
-  const dueDay = parseNonNegIntConfig(raw, "due_day");
-  if (billingDay < 1 || billingDay > 28) {
-    throw httpError(500, "Cấu hình ngày chốt sao kê Ví trả sau phải từ ngày 1 đến ngày 28");
-  }
-  if (dueDay < 1 || dueDay > 28) {
-    throw httpError(500, "Cấu hình ngày đến hạn thanh toán Ví trả sau phải từ ngày 1 đến ngày 28");
-  }
-  return {
-    enabled: raw.enabled,
-    default_credit_limit: parseNonNegIntConfig(raw, "default_credit_limit"),
-    min_account_days: parseNonNegIntConfig(raw, "min_account_days"),
-    billing_day: billingDay,
-    due_day: dueDay,
-    late_fee_bps: parseNonNegIntConfig(raw, "late_fee_bps"),
-    min_late_fee: parseNonNegIntConfig(raw, "min_late_fee"),
-    monthly_service_fee: parseNonNegIntConfig(raw, "monthly_service_fee"),
-    free_service_fee_tx_count: parseNonNegIntConfig(raw, "free_service_fee_tx_count"),
   };
 }
 
@@ -391,14 +378,26 @@ function formatPercentFromBps(bps) {
 
 function buildPostpaidInfoPayload(catalog) {
   const { config, statusLabels, entryActionLabels } = catalog;
-  const lateFeePercent = Number((config.late_fee_bps / 100).toFixed(2));
-  const lateFeePercentText = formatPercentFromBps(config.late_fee_bps);
   const pastDueLabel = statusLabels.PAST_DUE || "PAST_DUE";
   const activeLabel = statusLabels.ACTIVE || "ACTIVE";
+  const frozenLabel = statusLabels.FROZEN || "FROZEN";
 
   const sampleBilled = 1_000_000;
-  const sampleRateFee = Math.round((sampleBilled * config.late_fee_bps) / 10000);
-  const sampleAppliedFee = Math.max(config.min_late_fee, sampleRateFee);
+  const lateFeeTiers = POSTPAID_LATE_FEE_TIERS.map((tierSpec) => {
+    const bps = Number(config[tierSpec.key]);
+    return {
+      tier: tierSpec.tier,
+      key: tierSpec.key,
+      label: tierSpec.label,
+      min_days: tierSpec.minDays,
+      max_days: tierSpec.maxDays,
+      bps,
+      percent: Number((bps / 100).toFixed(2)),
+      percent_text: formatPercentFromBps(bps),
+      sample_fee: Math.round((sampleBilled * bps) / 10000),
+    };
+  });
+  const sampleAppliedFee = lateFeeTiers[0].sample_fee;
   const serviceFeeRule =
     config.monthly_service_fee > 0
       ? config.free_service_fee_tx_count > 0
@@ -414,9 +413,10 @@ function buildPostpaidInfoPayload(catalog) {
       min_account_days: config.min_account_days,
       billing_day: config.billing_day,
       due_day: config.due_day,
-      late_fee_bps: config.late_fee_bps,
-      late_fee_percent: lateFeePercent,
-      min_late_fee: config.min_late_fee,
+      late_fee_tier1_bps: config.late_fee_tier1_bps,
+      late_fee_tier2_bps: config.late_fee_tier2_bps,
+      late_fee_tier3_bps: config.late_fee_tier3_bps,
+      late_fee_tier4_bps: config.late_fee_tier4_bps,
       monthly_service_fee: config.monthly_service_fee,
       free_service_fee_tx_count: config.free_service_fee_tx_count,
     },
@@ -427,7 +427,7 @@ function buildPostpaidInfoPayload(catalog) {
       billed_formula: "max(0, used_amount - service_fee_amount - late_fee_amount)",
       summary: `Chốt sao kê tự động vào ngày ${config.billing_day} hàng tháng. Toàn bộ dư nợ gốc đang sử dụng được chốt thành dư nợ kỳ sao kê.`,
       due_rule: `Hạn thanh toán là ngày ${config.due_day} của tháng kế tiếp sau kỳ chốt sao kê.`,
-      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}", tạm khóa chi tiêu QR mới và tính phí trễ hạn.`,
+      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}", tạm khóa chi tiêu QR mới và áp dụng phí chậm trả theo 4 bậc ngày quá hạn. Quá hạn từ ngày thứ 5 sẽ tự động hạ hạn mức khi tất toán; từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết nợ cho tới khi gửi ảnh chứng minh thu nhập và được duyệt mở lại.`,
     },
     fee_rules: {
       activation_fee: 0,
@@ -436,17 +436,15 @@ function buildPostpaidInfoPayload(catalog) {
       monthly_service_fee: config.monthly_service_fee,
       free_service_fee_tx_count: config.free_service_fee_tx_count,
       service_fee_rule: serviceFeeRule,
-      late_fee_bps: config.late_fee_bps,
-      late_fee_percent: lateFeePercent,
-      min_late_fee: config.min_late_fee,
+      late_fee_tiers: lateFeeTiers,
       calculation_basis: "billed_amount + service_fee_amount",
-      formula: "max(min_late_fee, round((billed_amount + service_fee_amount) * late_fee_bps / 10000))",
-      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí trễ hạn tính ${lateFeePercentText}% trên dư nợ kỳ sao kê chưa trả (tối thiểu ${formatVndDot(config.min_late_fee)}).`,
+      formula: "round((billed_amount + service_fee_amount) * tier_bps / 10000)",
+      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí chậm trả tính theo 4 bậc ngày quá hạn (${lateFeeTiers.map((t) => `${t.label}: ${t.percent_text}%`).join(", ")}) trên dư nợ kỳ sao kê chưa trả.`,
       example: {
         billed_amount: sampleBilled,
-        rate_fee: sampleRateFee,
         applied_fee: sampleAppliedFee,
-        description: `Ví dụ: dư nợ kỳ sao kê ${formatVndDot(sampleBilled)} quá hạn → ${formatVndDot(sampleBilled)} × ${lateFeePercentText}% = ${formatVndDot(sampleRateFee)}, áp dụng tối thiểu ${formatVndDot(config.min_late_fee)} ⇒ phí trễ hạn ${formatVndDot(sampleAppliedFee)}.`,
+        tier_samples: lateFeeTiers,
+        description: `Ví dụ dư nợ kỳ sao kê ${formatVndDot(sampleBilled)} quá hạn: ${lateFeeTiers.map((t) => `${t.label} = ${formatVndDot(t.sample_fee)} (${t.percent_text}%)`).join("; ")}.`,
       },
     },
     repayment_rules: {
@@ -458,7 +456,7 @@ function buildPostpaidInfoPayload(catalog) {
         "UNBILLED_PRINCIPAL",
       ],
       summary: `Thanh toán dư nợ từ Ví chính theo thứ tự ưu tiên: (1) Phí trễ hạn → (2) Phí dịch vụ tháng → (3) Dư nợ gốc đã chốt kỳ sao kê → (4) Dư nợ gốc phát sinh kỳ mới.`,
-      unlock_rule: `Ví đang "${pastDueLabel}" tự động trở lại "${activeLabel}" ngay khi phí trễ hạn, phí dịch vụ tháng và dư nợ kỳ sao kê đều bằng 0đ.`,
+      unlock_rule: `Lần quá hạn đầu tiên: ví đang "${pastDueLabel}" tự động trở lại "${activeLabel}" ngay khi phí trễ hạn, phí dịch vụ tháng và dư nợ kỳ sao kê đều bằng 0đ. Từ lần quá hạn thứ 2 trở đi, ví tự động khóa yêu cầu gửi ảnh chứng minh thu nhập để Quản trị viên xét duyệt mở lại.`,
     },
     activation_rules: (() => {
       const effectiveMinDays = Math.max(1, config.min_account_days);
@@ -621,7 +619,7 @@ const postpaidRepository = {
   },
 
   async getWalletOverview(userId, db = pool) {
-    const [catalog, userRes, kycRes, bankRes, walletRes] = await Promise.all([
+    const [catalog, userRes, kycRes, bankRes, walletRes, latestUnlockRes] = await Promise.all([
       postpaidRepository.getSystemCatalog(db),
       db.query(
         `SELECT id, role, status, balance, created_at,
@@ -641,9 +639,19 @@ const postpaidRepository = {
       db.query(
         `SELECT user_id, status, credit_limit, used_amount, billed_amount,
                 service_fee_amount, late_fee_amount, current_cycle_month, due_date,
-                activated_at, updated_at
+                overdue_count, lock_reason, overdue_cycle_month, overdue_cycle_due_date,
+                overdue_cycle_principal, activated_at, updated_at
            FROM postpaid_wallets
           WHERE user_id = $1`,
+        [userId],
+      ),
+      db.query(
+        `SELECT id, status, user_note, proof_image_paths, overdue_count_snapshot,
+                credit_limit_snapshot, admin_note, reviewed_at, created_at, updated_at
+           FROM postpaid_unlock_requests
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
         [userId],
       ),
       postpaidRepository.verifySystemPostpaidWallet(db),
@@ -670,6 +678,11 @@ const postpaidRepository = {
       "INACTIVE",
       STATUS_CATALOG_LABEL,
     );
+    const pastDueStatus = requireCatalogCode(
+      statuses,
+      "PAST_DUE",
+      STATUS_CATALOG_LABEL,
+    );
     const isActivated = Boolean(pw && pw.status !== inactiveStatus);
 
     const creditLimit = isActivated
@@ -689,6 +702,34 @@ const postpaidRepository = {
       currentStatus,
       STATUS_CATALOG_LABEL,
     );
+    const vnToday = getVnDateMeta().todayDateStr;
+    const effectiveDueDateStr = isActivated
+      ? toYmdStr(pw.overdue_cycle_due_date || pw.due_date)
+      : null;
+    const daysOverdue =
+      isActivated &&
+      currentStatus === pastDueStatus &&
+      effectiveDueDateStr &&
+      effectiveDueDateStr < vnToday
+        ? diffDaysYmd(vnToday, effectiveDueDateStr)
+        : 0;
+    const latestReqRow = latestUnlockRes.rows[0] || null;
+    const latestUnlockRequest = latestReqRow
+      ? {
+          id: latestReqRow.id,
+          status: latestReqRow.status,
+          user_note: latestReqRow.user_note || null,
+          proof_count: Array.isArray(latestReqRow.proof_image_paths)
+            ? latestReqRow.proof_image_paths.length
+            : 0,
+          overdue_count_snapshot: Number(latestReqRow.overdue_count_snapshot || 0),
+          credit_limit_snapshot: Number(latestReqRow.credit_limit_snapshot || 0),
+          admin_note: latestReqRow.admin_note || null,
+          reviewed_at: latestReqRow.reviewed_at || null,
+          created_at: latestReqRow.created_at,
+          updated_at: latestReqRow.updated_at,
+        }
+      : null;
 
     return {
       activated: isActivated,
@@ -701,6 +742,9 @@ const postpaidRepository = {
       ineligible_reason: isActivated ? null : eligibility.ineligibleReason,
       status: currentStatus,
       status_label: currentStatusLabel,
+      lock_reason: isActivated ? pw.lock_reason || null : null,
+      overdue_count: pw ? Number(pw.overdue_count || 0) : 0,
+      days_overdue: daysOverdue,
       credit_limit: creditLimit,
       used_amount: usedAmount,
       available_limit: availableLimit,
@@ -709,9 +753,10 @@ const postpaidRepository = {
       late_fee_amount: lateFeeAmount,
       unbilled_amount: unbilledAmount,
       current_cycle_month: isActivated ? pw.current_cycle_month || null : null,
-      due_date: isActivated ? pw.due_date || null : null,
+      due_date: effectiveDueDateStr,
       activated_at: isActivated ? pw.activated_at || null : null,
       updated_at: pw?.updated_at || null,
+      latest_unlock_request: latestUnlockRequest,
       main_balance: Number(user.balance),
       config,
       status_labels: statusLabels,
@@ -774,6 +819,7 @@ const postpaidRepository = {
         await client.query(
           `UPDATE postpaid_wallets
               SET status = $2,
+                  lock_reason = NULL,
                   credit_limit = $3,
                   used_amount = 0,
                   billed_amount = 0,
@@ -781,6 +827,9 @@ const postpaidRepository = {
                   late_fee_amount = 0,
                   current_cycle_month = NULL,
                   due_date = NULL,
+                  overdue_cycle_month = NULL,
+                  overdue_cycle_due_date = NULL,
+                  overdue_cycle_principal = 0,
                   activated_at = NOW(),
                   updated_at = NOW()
             WHERE user_id = $1`,
@@ -789,9 +838,9 @@ const postpaidRepository = {
       } else {
         await client.query(
           `INSERT INTO postpaid_wallets (
-             user_id, status, credit_limit, used_amount, billed_amount, service_fee_amount, late_fee_amount
+             user_id, status, lock_reason, credit_limit, used_amount, billed_amount, service_fee_amount, late_fee_amount
            )
-           VALUES ($1, $2, $3, 0, 0, 0, 0)`,
+           VALUES ($1, $2, NULL, $3, 0, 0, 0, 0)`,
           [userId, activeStatus, config.default_credit_limit],
         );
       }
@@ -816,6 +865,7 @@ const postpaidRepository = {
   async transitionWalletLifecycle({
     userId,
     nextStatusKey,
+    nextLockReason = null,
     auditEvent,
     clearCycle = false,
     extraAuditPayload = {},
@@ -848,8 +898,8 @@ const postpaidRepository = {
       }
 
       const pwRes = await client.query(
-        `SELECT user_id, status, credit_limit, used_amount, billed_amount,
-                service_fee_amount, late_fee_amount
+        `SELECT user_id, status, lock_reason, overdue_count, credit_limit, used_amount,
+                billed_amount, service_fee_amount, late_fee_amount
            FROM postpaid_wallets
           WHERE user_id = $1
           FOR UPDATE`,
@@ -859,20 +909,23 @@ const postpaidRepository = {
       validateWallet(pw, statuses);
 
       const clearCycleClause = clearCycle
-        ? ", current_cycle_month = NULL, due_date = NULL"
+        ? ", current_cycle_month = NULL, due_date = NULL, overdue_cycle_month = NULL, overdue_cycle_due_date = NULL, overdue_cycle_principal = 0"
         : "";
       await client.query(
         `UPDATE postpaid_wallets
-            SET status = $1${clearCycleClause},
+            SET status = $1,
+                lock_reason = $2${clearCycleClause},
                 updated_at = NOW()
-          WHERE user_id = $2`,
-        [nextStatus, userId],
+          WHERE user_id = $3`,
+        [nextStatus, nextLockReason, userId],
       );
 
       await recordAudit(client, auditEvent, {
         user_id: userId,
         previous_status: pw.status,
+        previous_lock_reason: pw.lock_reason || null,
         next_status: nextStatus,
+        next_lock_reason: nextLockReason,
         ...extraAuditPayload,
       });
 
@@ -891,6 +944,7 @@ const postpaidRepository = {
     return postpaidRepository.transitionWalletLifecycle({
       userId,
       nextStatusKey: "FROZEN",
+      nextLockReason: "USER_FREEZE",
       auditEvent: "POSTPAID_FROZEN",
       validateWallet: (pw, statuses) => {
         const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
@@ -921,6 +975,7 @@ const postpaidRepository = {
     return postpaidRepository.transitionWalletLifecycle({
       userId,
       nextStatusKey: "ACTIVE",
+      nextLockReason: null,
       auditEvent: "POSTPAID_UNFROZEN",
       validateWallet: (pw, statuses) => {
         const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
@@ -936,6 +991,18 @@ const postpaidRepository = {
         if (pw.status !== frozenStatus) {
           throw httpError(400, "Chỉ có thể mở khóa khi Ví trả sau đang tạm khóa");
         }
+        if (pw.lock_reason === "OVERDUE_REPEAT") {
+          throw httpError(
+            403,
+            "Ví đang bị khóa do quá hạn từ lần thứ 2 trở lên. Vui lòng gửi yêu cầu mở khóa kèm ảnh chứng minh thu nhập để Quản trị viên xét duyệt",
+          );
+        }
+        if (pw.lock_reason === "ADMIN_FREEZE") {
+          throw httpError(
+            403,
+            "Ví trả sau đang bị Quản trị viên tạm khóa, bạn không thể tự mở khóa",
+          );
+        }
       },
     });
   },
@@ -944,13 +1011,24 @@ const postpaidRepository = {
     return postpaidRepository.transitionWalletLifecycle({
       userId,
       nextStatusKey: "INACTIVE",
+      nextLockReason: null,
       auditEvent: "POSTPAID_CLOSED",
       clearCycle: true,
       extraAuditPayload: reason ? { reason } : {},
       validateWallet: (pw, statuses) => {
         const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+        const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
         if (!pw || pw.status === inactiveStatus) {
           throw httpError(404, "Ví trả sau chưa kích hoạt hoặc đã hủy trước đó");
+        }
+        if (
+          pw.status === frozenStatus &&
+          (pw.lock_reason === "OVERDUE_REPEAT" || pw.lock_reason === "ADMIN_FREEZE")
+        ) {
+          throw httpError(
+            403,
+            "Ví đang bị khóa bởi hệ thống/Quản trị viên, không thể tự hủy ví",
+          );
         }
         if (
           Number(pw.used_amount) > 0 ||
@@ -1441,6 +1519,7 @@ const postpaidRepository = {
     idempotencyKey,
     fundingSource = "MAIN_WALLET",
     linkedBankAccountId = null,
+    nowMs = Date.now(),
   }) {
     const repayAmount = Number(amount);
     if (!Number.isSafeInteger(repayAmount) || repayAmount <= 0) {
@@ -1464,6 +1543,7 @@ const postpaidRepository = {
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
     const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+    const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
     const repayLateFeeAction = requireCatalogCode(
       entryActions,
       "REPAY_LATE_FEE",
@@ -1479,6 +1559,12 @@ const postpaidRepository = {
       "REPAY_PRINCIPAL",
       ACTION_CATALOG_LABEL,
     );
+    const limitAdjustAction = requireCatalogCode(
+      entryActions,
+      "LIMIT_ADJUST",
+      ACTION_CATALOG_LABEL,
+    );
+    const vnMeta = getVnDateMeta(nowMs);
 
     const postpaidWalletId = assertSystemPostpaidWalletConfigured();
     const { walletId: feeWalletId } = assertSystemFeeWalletConfigured();
@@ -1540,8 +1626,12 @@ const postpaidRepository = {
       }
 
       const pwRes = await client.query(
-        `SELECT user_id, status, credit_limit, used_amount, billed_amount,
-                service_fee_amount, late_fee_amount, current_cycle_month
+        `SELECT user_id, status, lock_reason, overdue_count,
+                last_overdue_counted_cycle, overdue_cycle_month,
+                overdue_cycle_due_date, overdue_cycle_principal,
+                last_limit_adjusted_cycle, credit_limit, used_amount,
+                billed_amount, service_fee_amount, late_fee_amount,
+                current_cycle_month, due_date
            FROM postpaid_wallets
           WHERE user_id = $1
           FOR UPDATE`,
@@ -1612,13 +1702,77 @@ const postpaidRepository = {
         throw httpError(500, "Lỗi toàn vẹn công thức trừ nợ Ví trả sau");
       }
 
-      const newStatus =
-        pw.status === pastDueStatus &&
-        newLateFee === 0 &&
-        newServiceFee === 0 &&
-        newBilled === 0
-          ? activeStatus
-          : pw.status;
+      const isSettlingDebtCycle =
+        newLateFee === 0 && newServiceFee === 0 && newBilled === 0;
+      const effectiveDueDateStr = toYmdStr(pw.overdue_cycle_due_date || pw.due_date);
+      const effectiveOverdueCycle =
+        pw.overdue_cycle_month || pw.current_cycle_month || vnMeta.cycleMonth;
+      const daysOverdue =
+        effectiveDueDateStr && vnMeta.todayDateStr > effectiveDueDateStr
+          ? diffDaysYmd(vnMeta.todayDateStr, effectiveDueDateStr)
+          : 0;
+      const isOverdueCycle =
+        isSettlingDebtCycle &&
+        (pw.status === pastDueStatus || daysOverdue >= 1);
+
+      let nextOverdueCount = Number(pw.overdue_count || 0);
+      let nextLastOverdueCountedCycle = pw.last_overdue_counted_cycle || null;
+      if (isOverdueCycle && nextLastOverdueCountedCycle !== effectiveOverdueCycle) {
+        nextOverdueCount += 1;
+        nextLastOverdueCountedCycle = effectiveOverdueCycle;
+      }
+
+      let nextCreditLimit = creditLimit;
+      let nextLastLimitAdjustedCycle = pw.last_limit_adjusted_cycle || null;
+      let limitAdjustmentDelta = 0;
+      const cycleOverduePrincipal =
+        Number(pw.overdue_cycle_principal || 0) > 0
+          ? Number(pw.overdue_cycle_principal)
+          : oldBilled;
+      if (
+        isOverdueCycle &&
+        daysOverdue >= 5 &&
+        nextLastLimitAdjustedCycle !== effectiveOverdueCycle &&
+        cycleOverduePrincipal > 0
+      ) {
+        const candidateLimit = computeAutoAdjustedCreditLimit(
+          creditLimit,
+          cycleOverduePrincipal,
+        );
+        if (candidateLimit < creditLimit) {
+          nextCreditLimit = candidateLimit;
+          limitAdjustmentDelta = creditLimit - candidateLimit;
+          nextLastLimitAdjustedCycle = effectiveOverdueCycle;
+        }
+      }
+
+      let newStatus = pw.status;
+      let newLockReason = pw.lock_reason || null;
+      if (isSettlingDebtCycle) {
+        if (pw.status === frozenStatus && pw.lock_reason === "ADMIN_FREEZE") {
+          newStatus = frozenStatus;
+          newLockReason = "ADMIN_FREEZE";
+        } else if (isOverdueCycle) {
+          if (nextOverdueCount >= 2) {
+            newStatus = frozenStatus;
+            newLockReason = "OVERDUE_REPEAT";
+          } else {
+            newStatus = activeStatus;
+            newLockReason = null;
+          }
+        }
+      }
+
+      const nextDueDateAfter = isSettlingDebtCycle ? null : pw.due_date;
+      const nextOverdueCycleMonthAfter = isSettlingDebtCycle
+        ? null
+        : pw.overdue_cycle_month;
+      const nextOverdueCycleDueDateAfter = isSettlingDebtCycle
+        ? null
+        : pw.overdue_cycle_due_date;
+      const nextOverdueCyclePrincipalAfter = isSettlingDebtCycle
+        ? 0
+        : Number(pw.overdue_cycle_principal || 0);
 
       const sysWallet = await lockSystemPostpaidWalletTx(
         client,
@@ -1661,17 +1815,17 @@ const postpaidRepository = {
       const repaySnapshot =
         isBankFunded || paidFeeTotal > 0
           ? {
-              funding_source: "POSTPAID",
-              postpaid_action: effectiveRepayAction,
-              ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
-              ...(paidFeeTotal > 0
-                ? {
-                    cycle_month: pw.current_cycle_month,
-                    late_fee_paid: paidLateFee,
-                    service_fee_paid: paidServiceFee,
-                  }
-                : {}),
-            }
+            funding_source: "POSTPAID",
+            postpaid_action: effectiveRepayAction,
+            ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
+            ...(paidFeeTotal > 0
+              ? {
+                cycle_month: pw.current_cycle_month,
+                late_fee_paid: paidLateFee,
+                service_fee_paid: paidServiceFee,
+              }
+              : {}),
+          }
           : null;
 
       const txInsertRes = await client.query(
@@ -1775,16 +1929,60 @@ const postpaidRepository = {
         );
       }
 
+      if (limitAdjustmentDelta > 0) {
+        await client.query(
+          `INSERT INTO postpaid_entries (
+             id, user_id, tx_id, action, amount, delta_used, used_before, used_after, cycle_month, note
+           )
+           VALUES ($1, $2, $3, $4, $5, 0, $6, $6, $7, $8)`,
+          [
+            uuidv7(),
+            userId,
+            createdTxId,
+            limitAdjustAction,
+            limitAdjustmentDelta,
+            newUsed,
+            effectiveOverdueCycle,
+            `Hệ thống tự động điều chỉnh hạn mức sau quá hạn ${daysOverdue} ngày: ${formatVndDot(creditLimit)} → ${formatVndDot(nextCreditLimit)}`,
+          ],
+        );
+      }
+
       await client.query(
         `UPDATE postpaid_wallets
             SET used_amount = $1,
                 billed_amount = $2,
                 service_fee_amount = $3,
                 late_fee_amount = $4,
-                status = $5,
+                credit_limit = $5,
+                status = $6,
+                lock_reason = $7,
+                overdue_count = $8,
+                last_overdue_counted_cycle = $9,
+                due_date = $10,
+                overdue_cycle_month = $11,
+                overdue_cycle_due_date = $12,
+                overdue_cycle_principal = $13,
+                last_limit_adjusted_cycle = $14,
                 updated_at = NOW()
-          WHERE user_id = $6`,
-        [newUsed, newBilled, newServiceFee, newLateFee, newStatus, userId],
+          WHERE user_id = $15`,
+        [
+          newUsed,
+          newBilled,
+          newServiceFee,
+          newLateFee,
+          nextCreditLimit,
+          newStatus,
+          newLockReason,
+          nextOverdueCount,
+          nextLastOverdueCountedCycle,
+          nextDueDateAfter,
+          nextOverdueCycleMonthAfter,
+          nextOverdueCycleDueDateAfter,
+          nextOverdueCyclePrincipalAfter,
+          nextLastLimitAdjustedCycle,
+          userId,
+        ],
       );
 
       await recordAudit(client, "POSTPAID_REPAY", {
@@ -1803,6 +2001,11 @@ const postpaidRepository = {
         billed_after: newBilled,
         service_fee_after: newServiceFee,
         late_fee_after: newLateFee,
+        credit_limit_before: creditLimit,
+        credit_limit_after: nextCreditLimit,
+        limit_adjusted: limitAdjustmentDelta > 0,
+        overdue_count: nextOverdueCount,
+        lock_reason_after: newLockReason,
         status_after: newStatus,
       });
 
@@ -1820,11 +2023,15 @@ const postpaidRepository = {
         fundingSource: isBankFunded ? "BANK" : "MAIN_WALLET",
         bankName: bankRow?.bank_name || null,
         usedAmountAfter: newUsed,
-        availableLimitAfter: creditLimit - newUsed,
+        creditLimitAfter: nextCreditLimit,
+        limitAdjusted: limitAdjustmentDelta > 0,
+        availableLimitAfter: Math.max(0, nextCreditLimit - newUsed),
         billedAmountAfter: newBilled,
         serviceFeeAfter: newServiceFee,
         lateFeeAfter: newLateFee,
         postpaidStatus: newStatus,
+        lockReasonAfter: newLockReason,
+        overdueCountAfter: nextOverdueCount,
       };
     } catch (e) {
       await client.query("ROLLBACK");
@@ -1959,8 +2166,8 @@ const postpaidRepository = {
       }
 
       const pwRes = await client.query(
-        `SELECT user_id, status, credit_limit, used_amount, billed_amount,
-                service_fee_amount, late_fee_amount
+        `SELECT user_id, status, lock_reason, overdue_count, credit_limit,
+                used_amount, billed_amount, service_fee_amount, late_fee_amount
            FROM postpaid_wallets
           WHERE user_id = $1
           FOR UPDATE`,
@@ -2012,13 +2219,23 @@ const postpaidRepository = {
         newBilled = maxAllowedBilled;
       }
 
-      const newStatus =
+      const isClearingPastDueViaRefund =
         pw.status === pastDueStatus &&
         oldLateFee === 0 &&
         oldServiceFee === 0 &&
-        newBilled === 0
-          ? activeStatus
-          : pw.status;
+        newBilled === 0;
+      const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
+      let newStatus = pw.status;
+      let newLockReason = pw.lock_reason || null;
+      if (isClearingPastDueViaRefund) {
+        if (Number(pw.overdue_count || 0) >= 2) {
+          newStatus = frozenStatus;
+          newLockReason = "OVERDUE_REPEAT";
+        } else {
+          newStatus = activeStatus;
+          newLockReason = null;
+        }
+      }
 
       const buyerBefore = Number(buyer.balance);
       if (excessToMainWallet > 0) {
@@ -2126,9 +2343,14 @@ const postpaidRepository = {
             SET used_amount = $1,
                 billed_amount = $2,
                 status = $3,
+                lock_reason = $4,
+                due_date = CASE WHEN $5::boolean THEN NULL ELSE due_date END,
+                overdue_cycle_month = CASE WHEN $5::boolean THEN NULL ELSE overdue_cycle_month END,
+                overdue_cycle_due_date = CASE WHEN $5::boolean THEN NULL ELSE overdue_cycle_due_date END,
+                overdue_cycle_principal = CASE WHEN $5::boolean THEN 0 ELSE overdue_cycle_principal END,
                 updated_at = NOW()
-          WHERE user_id = $4`,
-        [newUsed, newBilled, newStatus, buyerUserId],
+          WHERE user_id = $6`,
+        [newUsed, newBilled, newStatus, newLockReason, isClearingPastDueViaRefund, buyerUserId],
       );
 
       await client.query(
@@ -2240,6 +2462,9 @@ const postpaidRepository = {
 
         const batchRes = await client.query(
           `SELECT pw.user_id,
+                  pw.status,
+                  pw.due_date,
+                  pw.overdue_cycle_due_date,
                   pw.used_amount,
                   pw.service_fee_amount,
                   pw.late_fee_amount,
@@ -2397,6 +2622,12 @@ const postpaidRepository = {
 
           if (!stmtInsert.rows[0]) continue;
 
+          const keepExistingDueDate =
+            row.status === pastDueStatus || Boolean(row.overdue_cycle_due_date);
+          const nextDueDate = keepExistingDueDate
+            ? toYmdStr(row.overdue_cycle_due_date || row.due_date) || dueDateStr
+            : dueDateStr;
+
           await client.query(
             `UPDATE postpaid_wallets
                 SET billed_amount = $1,
@@ -2411,7 +2642,7 @@ const postpaidRepository = {
               oldServiceFee + serviceFeeAdded,
               usedAfterServiceFee,
               vnMeta.cycleMonth,
-              dueDateStr,
+              nextDueDate,
               row.user_id,
             ],
           );
@@ -2469,17 +2700,19 @@ const postpaidRepository = {
         await client.query("BEGIN");
 
         const batchRes = await client.query(
-          `SELECT user_id, used_amount, billed_amount, service_fee_amount,
+          `SELECT user_id, status, lock_reason, overdue_count, last_overdue_counted_cycle,
+                  overdue_cycle_month, overdue_cycle_due_date, overdue_cycle_principal,
+                  used_amount, billed_amount, service_fee_amount,
                   late_fee_amount, current_cycle_month, due_date
              FROM postpaid_wallets
-            WHERE status IN ($3, $4)
+            WHERE status IN ($3, $4, $5)
               AND (billed_amount + service_fee_amount) > 0
-              AND due_date IS NOT NULL
-              AND due_date < $1::date
+              AND COALESCE(overdue_cycle_due_date, due_date) IS NOT NULL
+              AND COALESCE(overdue_cycle_due_date, due_date) < $1::date
             ORDER BY user_id ASC
             LIMIT $2
             FOR UPDATE SKIP LOCKED`,
-          [vnMeta.todayDateStr, safeBatch, activeStatus, frozenStatus],
+          [vnMeta.todayDateStr, safeBatch, activeStatus, frozenStatus, pastDueStatus],
         );
 
         batchCount = batchRes.rows.length;
@@ -2493,52 +2726,97 @@ const postpaidRepository = {
           const billed = Number(row.billed_amount);
           const serviceFee = Number(row.service_fee_amount);
           const oldLateFee = Number(row.late_fee_amount);
-          const cycleMonth = row.current_cycle_month || vnMeta.cycleMonth;
+          const effectiveCycle =
+            row.overdue_cycle_month || row.current_cycle_month || vnMeta.cycleMonth;
+          const effectiveDueDate = toYmdStr(row.overdue_cycle_due_date || row.due_date);
+          const daysOverdue = diffDaysYmd(vnMeta.todayDateStr, effectiveDueDate);
+          const tierSpec = resolvePostpaidLateFeeTier(daysOverdue, config);
+          if (!tierSpec) continue;
+
+          const isNewOverdueCycle = row.last_overdue_counted_cycle !== effectiveCycle;
+          const nextOverdueCount = Number(row.overdue_count || 0) + (isNewOverdueCycle ? 1 : 0);
+          const snapshotPrincipal = isNewOverdueCycle
+            ? billed
+            : (Number(row.overdue_cycle_principal || 0) > 0
+                ? Number(row.overdue_cycle_principal)
+                : billed);
+          const nextRowStatus = row.status === frozenStatus ? frozenStatus : pastDueStatus;
+
+          const existingFeesRes = await client.query(
+            `SELECT COALESCE(SUM(amount), 0)::bigint AS total_charged,
+                    BOOL_OR(late_fee_tier = $3) AS tier_exists
+               FROM postpaid_entries
+              WHERE user_id = $1
+                AND cycle_month = $2
+                AND action = $4`,
+            [row.user_id, effectiveCycle, tierSpec.tier, lateFeeAction],
+          );
+          const alreadyCharged = Number(existingFeesRes.rows[0]?.total_charged || 0);
+          const tierAlreadyExists = Boolean(existingFeesRes.rows[0]?.tier_exists);
 
           const overdueBasis = billed + serviceFee;
-          const rateFee = Math.round((overdueBasis * config.late_fee_bps) / 10000);
-          const penalty = Math.max(config.min_late_fee, rateFee);
+          const targetFee = Math.round((overdueBasis * tierSpec.bps) / 10000);
+          const deltaPenalty = Math.max(0, targetFee - alreadyCharged);
 
-          if (penalty > 0) {
+          let appliedDelta = 0;
+          if (!tierAlreadyExists && deltaPenalty > 0) {
             const feeInsert = await client.query(
               `INSERT INTO postpaid_entries (
-                 id, user_id, action, amount, delta_used, used_before, used_after, cycle_month, note
+                 id, user_id, action, amount, delta_used, used_before, used_after,
+                 cycle_month, late_fee_tier, note
                )
-               VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)
-               ON CONFLICT (user_id, cycle_month) WHERE action = 'LATE_FEE'
+               VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9)
+               ON CONFLICT (user_id, cycle_month, late_fee_tier) WHERE action = 'LATE_FEE'
                DO NOTHING
                RETURNING id`,
               [
                 uuidv7(),
                 row.user_id,
                 lateFeeAction,
-                penalty,
+                deltaPenalty,
                 usedBefore,
-                usedBefore + penalty,
-                cycleMonth,
-                `Phí trễ hạn kỳ ${formatCycleMonthDisplay(cycleMonth)}`,
+                usedBefore + deltaPenalty,
+                effectiveCycle,
+                tierSpec.tier,
+                `Phí chậm trả bậc ${tierSpec.tier} (${tierSpec.label}) kỳ ${formatCycleMonthDisplay(effectiveCycle)}`,
               ],
             );
-
             if (feeInsert.rows[0]) {
-              await client.query(
-                `UPDATE postpaid_wallets
-                    SET status = $1,
-                        late_fee_amount = $2,
-                        used_amount = $3,
-                        updated_at = NOW()
-                  WHERE user_id = $4`,
-                [pastDueStatus, oldLateFee + penalty, usedBefore + penalty, row.user_id],
-              );
-              totalProcessed += 1;
+              appliedDelta = deltaPenalty;
             }
-          } else {
+          }
+
+          const shouldUpdateWallet =
+            appliedDelta > 0 ||
+            isNewOverdueCycle ||
+            row.status !== nextRowStatus ||
+            !row.overdue_cycle_month ||
+            !row.overdue_cycle_due_date;
+
+          if (shouldUpdateWallet) {
             await client.query(
               `UPDATE postpaid_wallets
                   SET status = $1,
+                      late_fee_amount = $2,
+                      used_amount = $3,
+                      overdue_count = $4,
+                      last_overdue_counted_cycle = $5,
+                      overdue_cycle_month = $6,
+                      overdue_cycle_due_date = $7::date,
+                      overdue_cycle_principal = $8,
                       updated_at = NOW()
-                WHERE user_id = $2`,
-              [pastDueStatus, row.user_id],
+                WHERE user_id = $9`,
+              [
+                nextRowStatus,
+                oldLateFee + appliedDelta,
+                usedBefore + appliedDelta,
+                nextOverdueCount,
+                effectiveCycle,
+                effectiveCycle,
+                effectiveDueDate,
+                snapshotPrincipal,
+                row.user_id,
+              ],
             );
             totalProcessed += 1;
           }
@@ -2688,8 +2966,155 @@ const postpaidRepository = {
     };
   },
 
+  async createUnlockRequest({ userId, userNote = "", proofFileNames = [] }) {
+    if (!Array.isArray(proofFileNames) || proofFileNames.length === 0 || proofFileNames.length > 3) {
+      throw httpError(400, "Vui lòng gửi từ 1 đến 3 ảnh chứng minh thu nhập");
+    }
+    const cleanNote =
+      typeof userNote === "string" && userNote.trim()
+        ? userNote.trim().slice(0, 500)
+        : null;
+
+    const { statuses } = await postpaidRepository.getSystemCatalog(pool);
+    const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const usersMap = await lockUsersByIdsOrdered(client, [userId]);
+      const user = usersMap.get(String(userId));
+      if (!user) {
+        throw httpError(404, "Không tìm thấy người dùng");
+      }
+      if (user.status !== "ACTIVE" || user.role !== "USER") {
+        throw httpError(403, "Tài khoản không khả dụng");
+      }
+
+      const pwRes = await client.query(
+        `SELECT user_id, status, lock_reason, overdue_count, credit_limit,
+                used_amount, billed_amount, service_fee_amount, late_fee_amount
+           FROM postpaid_wallets
+          WHERE user_id = $1
+          FOR UPDATE`,
+        [userId],
+      );
+      const pw = pwRes.rows[0] || null;
+      if (!pw) {
+        throw httpError(404, "Bạn chưa kích hoạt Ví trả sau");
+      }
+      if (pw.status !== frozenStatus || pw.lock_reason !== "OVERDUE_REPEAT") {
+        throw httpError(
+          400,
+          "Chỉ áp dụng gửi hồ sơ chứng minh thu nhập khi ví đang bị khóa do quá hạn lặp lại",
+        );
+      }
+      if (
+        Number(pw.billed_amount) > 0 ||
+        Number(pw.service_fee_amount) > 0 ||
+        Number(pw.late_fee_amount) > 0
+      ) {
+        throw httpError(400, "Vui lòng tất toán hết dư nợ quá hạn trước khi gửi yêu cầu mở khóa");
+      }
+
+      const pendingRes = await client.query(
+        `SELECT id FROM postpaid_unlock_requests WHERE user_id = $1 AND status = 'PENDING' LIMIT 1`,
+        [userId],
+      );
+      if (pendingRes.rows[0]) {
+        throw httpError(409, "Bạn đang có yêu cầu mở khóa chờ xét duyệt");
+      }
+
+      const reqId = uuidv7();
+      const insertRes = await client.query(
+        `INSERT INTO postpaid_unlock_requests (
+           id, user_id, status, user_note, proof_image_paths,
+           overdue_count_snapshot, credit_limit_snapshot
+         )
+         VALUES ($1, $2, 'PENDING', $3, $4::jsonb, $5, $6)
+         RETURNING id, user_id, status, user_note, proof_image_paths,
+                   overdue_count_snapshot, credit_limit_snapshot,
+                   admin_note, reviewed_at, created_at, updated_at`,
+        [
+          reqId,
+          userId,
+          cleanNote,
+          JSON.stringify(proofFileNames),
+          Number(pw.overdue_count || 0),
+          Number(pw.credit_limit || 0),
+        ],
+      );
+
+      await recordAudit(client, "POSTPAID_UNLOCK_REQUEST_SUBMITTED", {
+        user_id: userId,
+        request_id: reqId,
+        proof_count: proofFileNames.length,
+      });
+
+      await client.query("COMMIT");
+      const created = insertRes.rows[0];
+      return {
+        id: created.id,
+        user_id: created.user_id,
+        status: created.status,
+        user_note: created.user_note,
+        proof_count: Array.isArray(created.proof_image_paths)
+          ? created.proof_image_paths.length
+          : proofFileNames.length,
+        overdue_count_snapshot: Number(created.overdue_count_snapshot || 0),
+        credit_limit_snapshot: Number(created.credit_limit_snapshot || 0),
+        admin_note: created.admin_note,
+        reviewed_at: created.reviewed_at,
+        created_at: created.created_at,
+        updated_at: created.updated_at,
+      };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      if (e && e.code === "23505") {
+        throw httpError(409, "Bạn đang có yêu cầu mở khóa chờ xét duyệt");
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getLatestUnlockRequest(userId, db = pool) {
+    const res = await db.query(
+      `SELECT id, user_id, status, user_note, proof_image_paths,
+              overdue_count_snapshot, credit_limit_snapshot,
+              admin_note, reviewed_at, created_at, updated_at
+         FROM postpaid_unlock_requests
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [userId],
+    );
+    const row = res.rows[0] || null;
+    if (!row) return null;
+    return {
+      id: row.id,
+      user_id: row.user_id,
+      status: row.status,
+      user_note: row.user_note,
+      proof_count: Array.isArray(row.proof_image_paths)
+        ? row.proof_image_paths.length
+        : 0,
+      overdue_count_snapshot: Number(row.overdue_count_snapshot || 0),
+      credit_limit_snapshot: Number(row.credit_limit_snapshot || 0),
+      admin_note: row.admin_note,
+      reviewed_at: row.reviewed_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  },
+
   getVnDateMeta,
+  toYmdStr,
+  diffDaysYmd,
+  computeAutoAdjustedCreditLimit,
   formatCycleMonthDisplay,
+  normalizePostpaidConfig,
   normalizePostpaidReminderConfig,
   buildMonthlyDebtReminderNotification,
 };

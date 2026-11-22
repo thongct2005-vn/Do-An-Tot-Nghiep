@@ -2424,7 +2424,7 @@ const postpaidRepository = {
   /**
    * Chốt sao kê theo từng lô (tối đa batchSize dòng mỗi transaction) vào hoặc sau ngày billing_day.
    */
-  async closeBillingCycle({ nowMs = Date.now(), batchSize = 500 } = {}) {
+  async closeBillingCycle({ nowMs = Date.now(), batchSize = 500, userId = null } = {}) {
     const [{ config, statuses, entryActions }] = await Promise.all([
       postpaidRepository.getSystemCatalog(pool),
       postpaidRepository.verifySystemPostpaidWallet(pool),
@@ -2501,6 +2501,7 @@ const postpaidRepository = {
                   ) AS has_cycle_purchase
              FROM postpaid_wallets pw
             WHERE pw.status IN ($3, $4, $5)
+              AND ($10::uuid IS NULL OR pw.user_id = $10::uuid)
               AND (pw.current_cycle_month IS DISTINCT FROM $1)
               AND (
                 (pw.used_amount - pw.service_fee_amount - pw.late_fee_amount) > 0
@@ -2545,6 +2546,7 @@ const postpaidRepository = {
             purchaseAction,
             statementCloseAction,
             config.free_service_fee_tx_count,
+            userId || null,
           ],
         );
 
@@ -2678,7 +2680,7 @@ const postpaidRepository = {
   /**
    * Đánh dấu quá hạn & ghi nhận công nợ phí trễ hạn theo từng lô batchSize dòng.
    */
-  async markOverdueAndApplyLateFees({ nowMs = Date.now(), batchSize = 500 } = {}) {
+  async markOverdueAndApplyLateFees({ nowMs = Date.now(), batchSize = 500, userId = null } = {}) {
     const [{ config, statuses, entryActions }] = await Promise.all([
       postpaidRepository.getSystemCatalog(pool),
       postpaidRepository.verifySystemPostpaidWallet(pool),
@@ -2713,13 +2715,14 @@ const postpaidRepository = {
                   late_fee_amount, current_cycle_month, due_date
              FROM postpaid_wallets
             WHERE status IN ($3, $4, $5)
+              AND ($6::uuid IS NULL OR user_id = $6::uuid)
               AND (billed_amount + service_fee_amount) > 0
               AND COALESCE(overdue_cycle_due_date, due_date) IS NOT NULL
               AND COALESCE(overdue_cycle_due_date, due_date) < $1::date
             ORDER BY user_id ASC
             LIMIT $2
             FOR UPDATE SKIP LOCKED`,
-          [vnMeta.todayDateStr, safeBatch, activeStatus, frozenStatus, pastDueStatus],
+          [vnMeta.todayDateStr, safeBatch, activeStatus, frozenStatus, pastDueStatus, userId || null],
         );
 
         batchCount = batchRes.rows.length;

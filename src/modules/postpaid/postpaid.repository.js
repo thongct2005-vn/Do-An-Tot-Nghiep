@@ -22,6 +22,7 @@ const {
   POSTPAID_CONFIG_FIELD_LABELS,
   parseNonNegIntConfig,
   resolvePostpaidLateFeeTier,
+  resolvePostpaidLimitReductionRule,
   normalizePostpaidConfig,
 } = require("./postpaidConfig");
 const { uuidv7 } = require("uuidv7");
@@ -128,14 +129,20 @@ function formatVnDateFromYmd(ymd) {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : raw;
 }
 
-function computeAutoAdjustedCreditLimit(oldCreditLimit, overduePrincipal) {
-  const safeLimit = Math.max(0, Number(oldCreditLimit) || 0);
-  const safeOverdue = Math.max(0, Number(overduePrincipal) || 0);
-  if (safeOverdue <= 0 || safeLimit <= 0) return safeLimit;
-  if (safeOverdue >= MIN_POSTPAID_CREDIT_LIMIT || safeOverdue >= safeLimit) {
-    return Math.floor(safeLimit * 0.5);
+/**
+ * Tính hạn mức mới sau khi tất toán kỳ quá hạn theo % bậc ngày trễ:
+ * - Bậc 1 (1–4 ngày): chưa hạ (0%)
+ * - Bậc 2 (5–9 ngày): giảm 25%
+ * - Bậc 3 (10–13 ngày): giảm 40%
+ * - Bậc 4 (>= 14 ngày): giảm 50%
+ */
+function computeAutoAdjustedCreditLimit(oldCreditLimit, daysOverdue) {
+  const safeLimit = Math.max(0, Math.trunc(Number(oldCreditLimit) || 0));
+  const rule = resolvePostpaidLimitReductionRule(daysOverdue);
+  if (!rule || rule.reductionPercent <= 0 || safeLimit <= 0) {
+    return safeLimit;
   }
-  return safeOverdue;
+  return Math.floor((safeLimit * (100 - rule.reductionPercent)) / 100);
 }
 
 const {
@@ -409,6 +416,10 @@ function buildPostpaidInfoPayload(catalog) {
   const tierSummaryText = lateFeeTiers
     .map((t) => `${t.label}: ${t.percent_text}%`)
     .join(", ");
+  const limitReductionSummaryText = POSTPAID_LATE_FEE_TIERS
+    .filter((t) => Number(t.limitReductionPercent || 0) > 0)
+    .map((t) => `${t.label} giảm ${t.limitReductionPercent}%`)
+    .join(", ");
 
   return {
     source: "system_configs",
@@ -432,7 +443,7 @@ function buildPostpaidInfoPayload(catalog) {
       billed_formula: "max(0, used_amount - service_fee_amount - late_fee_amount)",
       summary: `Chốt sao kê tự động từ ngày ${config.billing_day} hàng tháng (múi giờ Việt Nam). Toàn bộ dư nợ gốc đang sử dụng được chốt thành dư nợ gốc kỳ sao kê và cộng phí dịch vụ tháng nếu đủ điều kiện.`,
       due_rule: `Hạn thanh toán là ngày ${config.due_day} của tháng kế tiếp sau kỳ chốt sao kê.`,
-      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ gốc kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}" (nếu đang khóa thì giữ nguyên trạng thái khóa), tạm khóa chi tiêu QR mới và tính phí chậm trả theo 4 bậc ngày quá hạn (chỉ thu bù chênh lệch khi sang bậc cao hơn). Quá hạn từ ngày thứ 5 trở lên có dư nợ gốc quá hạn sẽ tự động bị giảm hạn mức khi tất toán kỳ nợ; từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết dư nợ kỳ sao kê cho tới khi gửi 1–3 ảnh chứng minh thu nhập và được Quản trị viên duyệt mở lại.`,
+      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ gốc kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}" (nếu đang khóa thì giữ nguyên trạng thái khóa), tạm khóa chi tiêu QR mới và tính phí chậm trả theo 4 bậc ngày quá hạn (chỉ thu bù chênh lệch khi sang bậc cao hơn). Quá hạn từ ngày thứ 5 trở lên có dư nợ gốc quá hạn sẽ tự động giảm hạn mức khi tất toán kỳ nợ theo bậc ngày trễ (${limitReductionSummaryText}); từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết dư nợ kỳ sao kê cho tới khi gửi 1–3 ảnh chứng minh thu nhập và được Quản trị viên duyệt mở lại.`,
     },
     fee_rules: {
       activation_fee: 0,
@@ -1732,6 +1743,7 @@ const postpaidRepository = {
       let nextCreditLimit = creditLimit;
       let nextLastLimitAdjustedCycle = pw.last_limit_adjusted_cycle || null;
       let limitAdjustmentDelta = 0;
+      let appliedLimitReductionRule = null;
       const cycleOverduePrincipal =
         Number(pw.overdue_cycle_principal || 0) > 0
           ? Number(pw.overdue_cycle_principal)
@@ -1742,14 +1754,16 @@ const postpaidRepository = {
         nextLastLimitAdjustedCycle !== effectiveOverdueCycle &&
         cycleOverduePrincipal > 0
       ) {
+        const limitRule = resolvePostpaidLimitReductionRule(daysOverdue);
         const candidateLimit = computeAutoAdjustedCreditLimit(
           creditLimit,
-          cycleOverduePrincipal,
+          daysOverdue,
         );
         if (candidateLimit < creditLimit) {
           nextCreditLimit = candidateLimit;
           limitAdjustmentDelta = creditLimit - candidateLimit;
           nextLastLimitAdjustedCycle = effectiveOverdueCycle;
+          appliedLimitReductionRule = limitRule;
         }
       }
 
@@ -1937,6 +1951,9 @@ const postpaidRepository = {
       }
 
       if (limitAdjustmentDelta > 0) {
+        const reductionDetail = appliedLimitReductionRule
+          ? `giảm ${appliedLimitReductionRule.reductionPercent}% (Bậc ${appliedLimitReductionRule.tier}: ${appliedLimitReductionRule.label}, quá hạn ${daysOverdue} ngày)`
+          : `sau quá hạn ${daysOverdue} ngày`;
         await client.query(
           `INSERT INTO postpaid_entries (
              id, user_id, tx_id, action, amount, delta_used, used_before, used_after, cycle_month, note
@@ -1950,7 +1967,7 @@ const postpaidRepository = {
             limitAdjustmentDelta,
             newUsed,
             effectiveOverdueCycle,
-            `Hệ thống tự động điều chỉnh hạn mức sau quá hạn ${daysOverdue} ngày: ${formatVndDot(creditLimit)} → ${formatVndDot(nextCreditLimit)}`,
+            `Hệ thống tự động điều chỉnh hạn mức ${reductionDetail}: ${formatVndDot(creditLimit)} → ${formatVndDot(nextCreditLimit)}`,
           ],
         );
       }

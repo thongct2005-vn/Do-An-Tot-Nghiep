@@ -10,6 +10,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     minDays: 1,
     maxDays: 4,
     defaultBps: 525,
+    limitReductionPercent: 0,
   }),
   Object.freeze({
     tier: 2,
@@ -18,6 +19,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     minDays: 5,
     maxDays: 9,
     defaultBps: 1050,
+    limitReductionPercent: 25,
   }),
   Object.freeze({
     tier: 3,
@@ -26,6 +28,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     minDays: 10,
     maxDays: 13,
     defaultBps: 1575,
+    limitReductionPercent: 40,
   }),
   Object.freeze({
     tier: 4,
@@ -34,6 +37,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     minDays: 14,
     maxDays: null,
     defaultBps: 2100,
+    limitReductionPercent: 50,
   }),
 ]);
 
@@ -74,22 +78,45 @@ function parseNonNegIntConfig(raw, fieldName) {
 }
 
 /**
- * Resolves the active late-fee tier descriptor and bps rate for a given overdue day count.
+ * Looks up the matching overdue tier specification for a day count.
  */
-function resolvePostpaidLateFeeTier(daysOverdue, config) {
+function resolvePostpaidTierSpec(daysOverdue) {
   const days = Number(daysOverdue);
   if (!Number.isFinite(days) || days < 1) return null;
   for (const spec of POSTPAID_LATE_FEE_TIERS) {
     if (days >= spec.minDays && (spec.maxDays === null || days <= spec.maxDays)) {
-      return {
-        tier: spec.tier,
-        key: spec.key,
-        label: spec.label,
-        bps: Number(config[spec.key]),
-      };
+      return spec;
     }
   }
   return null;
+}
+
+/**
+ * Resolves the active late-fee tier descriptor and bps rate for a given overdue day count.
+ */
+function resolvePostpaidLateFeeTier(daysOverdue, config) {
+  const spec = resolvePostpaidTierSpec(daysOverdue);
+  if (!spec) return null;
+  return {
+    tier: spec.tier,
+    key: spec.key,
+    label: spec.label,
+    bps: Number(config[spec.key]),
+  };
+}
+
+/**
+ * Resolves the credit-limit reduction percentage matching the overdue tier.
+ */
+function resolvePostpaidLimitReductionRule(daysOverdue) {
+  const spec = resolvePostpaidTierSpec(daysOverdue);
+  if (!spec) return null;
+  return {
+    tier: spec.tier,
+    key: spec.key,
+    label: spec.label,
+    reductionPercent: Number(spec.limitReductionPercent || 0),
+  };
 }
 
 /**
@@ -161,5 +188,6 @@ module.exports = {
   POSTPAID_CONFIG_FIELD_LABELS,
   parseNonNegIntConfig,
   resolvePostpaidLateFeeTier,
+  resolvePostpaidLimitReductionRule,
   normalizePostpaidConfig,
 };

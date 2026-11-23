@@ -1,4 +1,4 @@
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 
 const STATUSES = new Set(["ACTIVE", "BLOCKED"]);
 const FIELDS = new Set(["status", "expected_status", "reason"]);

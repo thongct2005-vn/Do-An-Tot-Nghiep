@@ -1,29 +1,14 @@
-const { successResponse } = require("../../../../utils/apiResponse");
+// auth.controller.js: Controller xử lý HTTP xác thực, TOTP, quên mật khẩu và đổi email cho Merchant Production.
+const { successResponse, createRefreshCookieHelpers } = require("../../../../utils/common/http");
 const merchantAuthService = require("./auth.service");
-const tokenUtil = require("../../../../utils/jwt");
-const { recordFailure, clearFailure } = require("../../../../utils/risk");
+const tokenUtil = require("../../../../utils/auth/jwt");
+const { recordFailure, clearFailure } = require("../../../../utils/security/risk");
 
-const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
-  path: "/api/v2/merchant/auth",
-};
-
-function setRefreshCookie(res, refreshToken) {
-  res.cookie(tokenUtil.MERCHANT_REFRESH_COOKIE, refreshToken, {
-    ...REFRESH_COOKIE_OPTIONS,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+const { setRefreshCookie, clearRefreshCookie, publicToken } =
+  createRefreshCookieHelpers({
+    cookieName: tokenUtil.MERCHANT_REFRESH_COOKIE,
+    path: "/api/v2/merchant/auth",
   });
-}
-
-function clearRefreshCookie(res) {
-  res.clearCookie(tokenUtil.MERCHANT_REFRESH_COOKIE, REFRESH_COOKIE_OPTIONS);
-}
-
-function publicToken(token) {
-  return { access_token: token.access_token };
-}
 
 const merchantAuthController = {
 

@@ -1,4 +1,4 @@
-const { errorResponse } = require("../utils/apiResponse");
+const { errorResponse } = require("../utils/common/http");
 require("dotenv").config();
 
 const MAX_ORIGIN_LENGTH = 160;

@@ -1,15 +1,19 @@
-const { successResponse } = require("../../utils/apiResponse");
-const { httpError } = require("../../utils/httpError");
+// transaction.controller.js: Controller quản trị danh sách, chi tiết, tra soát, xuất báo cáo và hoàn tiền giao dịch Admin.
+const { successResponse, httpError } = require("../../utils/common/http");
 const adminTransactionService = require("./transaction.service");
 const { sendXlsxResponse } = require("./transaction.export");
 const {
   buildTransactionReceiptPdf,
   sendReceiptPdfResponse,
 } = require("./transaction.receipt");
-const socketUtil = require("../../utils/socket");
-const firebaseNotification = require("../../utils/firebaseNotification");
-
-const REVERSE_BODY_ALLOWLIST = new Set(["reason", "admin_password"]);
+const socketUtil = require("../../utils/notifications/socket");
+const firebaseNotification = require("../../utils/notifications/firebaseNotification");
+const {
+  extractAdminIdempotencyKey,
+  emitSocketSafe,
+  sendPushSafe,
+} = require("../shared/adminHelpers");
+const { REVERSE_BODY_ALLOWLIST } = require("./transaction.helpers");
 
 const adminTransactionController = {
   async exportTransactions(req, res, next) {
@@ -208,10 +212,7 @@ const adminTransactionController = {
       }
 
       const adminId = req.user?.user_id || req.user?.id || null;
-      const idempotencyKey =
-        req.headers?.["idempotency-key"] ||
-        req.headers?.["Idempotency-Key"] ||
-        req.idempotencyKey;
+      const idempotencyKey = extractAdminIdempotencyKey(req);
 
       const outcome = await adminTransactionService.reverseTransaction({
         transactionId: id,
@@ -224,51 +225,46 @@ const adminTransactionController = {
       if (!outcome.replayed && outcome.notificationContext) {
         const ctx = outcome.notificationContext;
 
-        try {
-          socketUtil.emitToUser(ctx.debitedUserId, "wallet_balance_updated", {
-            balance: ctx.debitedBalanceAfter,
-            transactionId: ctx.reversalTransactionId,
-            originalTransactionId: ctx.originalTransactionId,
-            type: "REVERSAL_DEBIT",
-          });
-        } catch (socketErr) {
-          console.error(
-            "Emit wallet_balance_updated (reversal debited) error:",
-            socketErr.message
+        await emitSocketSafe(
+          () =>
+            socketUtil.emitToUser(ctx.debitedUserId, "wallet_balance_updated", {
+              balance: ctx.debitedBalanceAfter,
+              transactionId: ctx.reversalTransactionId,
+              originalTransactionId: ctx.originalTransactionId,
+              type: "REVERSAL_DEBIT",
+            }),
+          "wallet_balance_updated (reversal debited)",
+        );
+
+        if (Number(ctx.creditedToMainWallet || 0) > 0) {
+          await emitSocketSafe(
+            () =>
+              socketUtil.emitToUser(ctx.refundedUserId, "wallet_balance_updated", {
+                balance: ctx.refundedBalanceAfter,
+                transactionId:
+                  ctx.excessTransactionId || ctx.reversalTransactionId,
+                originalTransactionId: ctx.originalTransactionId,
+                type: "REVERSAL_REFUND",
+              }),
+            "wallet_balance_updated (reversal refunded)",
           );
         }
 
-        if (Number(ctx.creditedToMainWallet || 0) > 0) {
-          try {
-            socketUtil.emitToUser(ctx.refundedUserId, "wallet_balance_updated", {
-              balance: ctx.refundedBalanceAfter,
-              transactionId: ctx.excessTransactionId || ctx.reversalTransactionId,
-              originalTransactionId: ctx.originalTransactionId,
-              type: "REVERSAL_REFUND",
-            });
-          } catch (socketErr) {
-            console.error(
-              "Emit wallet_balance_updated (reversal refunded) error:",
-              socketErr.message
-            );
-          }
-        }
-
-        try {
-          await firebaseNotification.sendPushNotification(ctx.debitedUserId, {
-            title: "Biến động số dư (Hoàn tiền đơn hàng Merchant)",
-            body: `Ví Merchant của bạn vừa được khấu trừ -${Number(ctx.amount).toLocaleString("vi-VN")}đ để hoàn trả giao dịch ${ctx.originalTransactionId}`,
-            data: {
-              type: "ADMIN_OP_REVERSAL_DEBIT",
-              transactionId: String(ctx.reversalTransactionId),
-              originalTransactionId: String(ctx.originalTransactionId),
-              originalFundingSource: String(ctx.originalFundingSource || ""),
-              balance: String(ctx.debitedBalanceAfter),
-            },
-          });
-        } catch (fcmErr) {
-          console.error("Push notification (reversal debited) error:", fcmErr.message);
-        }
+        await sendPushSafe(
+          () =>
+            firebaseNotification.sendPushNotification(ctx.debitedUserId, {
+              title: "Biến động số dư (Hoàn tiền đơn hàng Merchant)",
+              body: `Ví Merchant của bạn vừa được khấu trừ -${Number(ctx.amount).toLocaleString("vi-VN")}đ để hoàn trả giao dịch ${ctx.originalTransactionId}`,
+              data: {
+                type: "ADMIN_OP_REVERSAL_DEBIT",
+                transactionId: String(ctx.reversalTransactionId),
+                originalTransactionId: String(ctx.originalTransactionId),
+                originalFundingSource: String(ctx.originalFundingSource || ""),
+                balance: String(ctx.debitedBalanceAfter),
+              },
+            }),
+          "reversal debited",
+        );
 
         let customerTitle = "Hoàn tiền thanh toán thành công";
         let customerBody = `Bạn đã được hoàn +${Number(ctx.amount).toLocaleString("vi-VN")}đ vào Ví chính từ giao dịch thanh toán Merchant ${ctx.originalTransactionId}`;
@@ -288,23 +284,23 @@ const adminTransactionController = {
           customerBody = `Bạn đã được hoàn +${Number(ctx.amount).toLocaleString("vi-VN")}đ vào Ví chính Mio từ giao dịch thanh toán Merchant ${ctx.originalTransactionId}`;
         }
 
-        try {
-          await firebaseNotification.sendPushNotification(ctx.refundedUserId, {
-            title: customerTitle,
-            body: customerBody,
-            data: {
-              type: "ADMIN_OP_REVERSAL_REFUND",
-              transactionId: String(ctx.excessTransactionId || ctx.reversalTransactionId),
-              originalTransactionId: String(ctx.originalTransactionId),
-              originalFundingSource: String(ctx.originalFundingSource || ""),
-              creditedToPostpaid: String(ctx.creditedToPostpaid || 0),
-              creditedToMainWallet: String(ctx.creditedToMainWallet || 0),
-              balance: String(ctx.refundedBalanceAfter),
-            },
-          });
-        } catch (fcmErr) {
-          console.error("Push notification (reversal refunded) error:", fcmErr.message);
-        }
+        await sendPushSafe(
+          () =>
+            firebaseNotification.sendPushNotification(ctx.refundedUserId, {
+              title: customerTitle,
+              body: customerBody,
+              data: {
+                type: "ADMIN_OP_REVERSAL_REFUND",
+                transactionId: String(ctx.excessTransactionId || ctx.reversalTransactionId),
+                originalTransactionId: String(ctx.originalTransactionId),
+                originalFundingSource: String(ctx.originalFundingSource || ""),
+                creditedToPostpaid: String(ctx.creditedToPostpaid || 0),
+                creditedToMainWallet: String(ctx.creditedToMainWallet || 0),
+                balance: String(ctx.refundedBalanceAfter),
+              },
+            }),
+          "reversal refunded",
+        );
       }
 
       return successResponse(

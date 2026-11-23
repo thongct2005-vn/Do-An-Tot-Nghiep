@@ -50,8 +50,8 @@ describe('ADMIN Merchant profile HTTP / PostgreSQL', {
   before(async () => {
     database = await createTestDatabase();
     pool = require('../src/config/database');
-    tokenUtil = require('../src/utils/jwt');
-    socket = require('../src/utils/socket');
+    tokenUtil = require('../src/utils/auth/jwt');
+    socket = require('../src/utils/notifications/socket');
     await pool.query("INSERT INTO users(id,role,status) VALUES($1,'ADMIN','ACTIVE'),($2,'USER','ACTIVE')", [adminId,userId]);
     tokens = tokenUtil.generateAuthTokens({ id: adminId, role: 'ADMIN' });
     await pool.query('UPDATE users SET refresh_token=$1 WHERE id=$2', [tokens.refreshToken,adminId]);

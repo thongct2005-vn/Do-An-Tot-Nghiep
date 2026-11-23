@@ -1,7 +1,8 @@
-const { successResponse } = require("../../utils/apiResponse");
-const { emitToUser } = require("../../utils/socket");
-const { sendPushNotification } = require("../../utils/firebaseNotification");
-const { removeUploadedProofFiles } = require("../../utils/postpaidProofImage");
+// postpaid.controller.js: Controller xử lý HTTP cho Ví trả sau (thông tin, kích hoạt, đóng, trả nợ và nộp minh chứng).
+const { successResponse } = require("../../utils/common/http");
+const { emitToUser } = require("../../utils/notifications/socket");
+const { sendPushNotification } = require("../../utils/notifications/firebaseNotification");
+const { removeUploadedProofFiles } = require("../../utils/files/imageStorage");
 const postpaidService = require("./postpaid.service");
 
 const postpaidController = {

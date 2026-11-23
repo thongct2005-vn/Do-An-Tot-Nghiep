@@ -1,60 +1,37 @@
+// auth.repository.js: Truy vấn thông tin đăng nhập, khóa thất bại và quản lý phiên refresh token của Admin.
 const pool = require("../../config/database");
+const {
+  createLoginLockoutMethods,
+  createRefreshTokenMethods,
+} = require("../../utils/auth/authRepositoryBase");
 
 const adminAuthRepository = {
+  ...createLoginLockoutMethods({
+    db: pool,
+    identifierCol: "email",
+  }),
+  ...createRefreshTokenMethods({
+    db: pool,
+    hashRefresh: false,
+    roleFilterSql: "role = 'ADMIN'",
+  }),
+
   async findAdminByEmail(email) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
-      FROM users u
-      WHERE u.email = $1
-      `,
+      `SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.status, u.failed_login_attempts,
+              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role
+         FROM users u
+        WHERE u.email = $1`,
       [email],
     );
     return result.rows[0];
-  },
-
-  async resetFailedLogin(email) {
-    await pool.query(
-      `
-      UPDATE users
-      SET failed_login_attempts = 0, locked_until = NULL
-      WHERE email = $1
-      `,
-      [email],
-    );
-  },
-
-  async registerFailedLogin({ email, maxAttempts, lockMinutes }) {
-    const result = await pool.query(
-      `
-      UPDATE users
-      SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1,
-          locked_until = CASE
-            WHEN COALESCE(failed_login_attempts, 0) + 1 >= $2::INT
-            THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
-            ELSE locked_until
-          END
-      WHERE email = $1
-      RETURNING failed_login_attempts
-      `,
-      [email, maxAttempts, lockMinutes],
-    );
-    return result.rows[0];
-  },
-
-  async updateRefreshToken({ refreshToken, userId }) {
-    await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
-      refreshToken,
-      userId,
-    ]);
   },
 
   async rotateRefreshToken({ userId, oldRefreshToken, newRefreshToken }) {
     const result = await pool.query(
       `UPDATE users SET refresh_token = $1
-       WHERE id = $2 AND refresh_token = $3 AND role = 'ADMIN' AND status = 'ACTIVE'
-       RETURNING id`,
+        WHERE id = $2 AND refresh_token = $3 AND role = 'ADMIN' AND status = 'ACTIVE'
+        RETURNING id`,
       [newRefreshToken, userId, oldRefreshToken],
     );
     return result.rowCount === 1;
@@ -62,11 +39,9 @@ const adminAuthRepository = {
 
   async findAdminByRefreshToken(refreshToken) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.email, u.full_name, u.role, u.status
-      FROM users u
-      WHERE u.refresh_token = $1 AND u.role = 'ADMIN'
-      `,
+      `SELECT u.id, u.email, u.full_name, u.role, u.status
+         FROM users u
+        WHERE u.refresh_token = $1 AND u.role = 'ADMIN'`,
       [refreshToken],
     );
     return result.rows[0];
@@ -74,11 +49,9 @@ const adminAuthRepository = {
 
   async findAdminById(adminId) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.email, u.full_name, u.role, u.status
-      FROM users u
-      WHERE u.id = $1 AND u.role = 'ADMIN'
-      `,
+      `SELECT u.id, u.email, u.full_name, u.role, u.status
+         FROM users u
+        WHERE u.id = $1 AND u.role = 'ADMIN'`,
       [adminId],
     );
     return result.rows[0];
@@ -87,18 +60,10 @@ const adminAuthRepository = {
   async findAdminSessionById(adminId) {
     const result = await pool.query(
       `SELECT id, status, refresh_token FROM users
-       WHERE id = $1 AND role = 'ADMIN'`,
+        WHERE id = $1 AND role = 'ADMIN'`,
       [adminId],
     );
     return result.rows[0];
-  },
-
-  async logout(adminId, refreshToken) {
-    await pool.query(
-      `UPDATE users SET refresh_token = NULL
-       WHERE id = $1 AND refresh_token = $2 AND role = 'ADMIN'`,
-      [adminId, refreshToken],
-    );
   },
 };
 

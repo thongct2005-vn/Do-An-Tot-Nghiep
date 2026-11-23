@@ -1,11 +1,12 @@
+// postpaid.service.js: Nghiệp vụ Ví trả sau (xem quy định, mở/đóng/khóa, biến động, thanh toán dư nợ, hoàn tiền, mở khóa).
 const postpaidRepository = require("./postpaid.repository");
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 const {
   parseAmount,
   assertBankFundingMinAmount,
-} = require("../../utils/amount");
+} = require("../../utils/common/amount");
 const { assertKyc } = require("../kyc/kyc.guard");
-const { resolveOneYearRange } = require("../../utils/dateRange");
+const { resolveOneYearRange } = require("../../utils/common/dateRange");
 const transactionRepository = require("../transaction/transaction.repository");
 
 const postpaidService = {

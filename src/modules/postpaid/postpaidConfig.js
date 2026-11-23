@@ -1,4 +1,4 @@
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 
 const MIN_POSTPAID_CREDIT_LIMIT = 2000000;
 const MIN_AUTO_ADJUSTED_CREDIT_LIMIT = 1000000;

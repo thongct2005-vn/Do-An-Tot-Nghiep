@@ -1,5 +1,6 @@
+// user.repository.js: Truy vấn hồ sơ người dùng, khóa PIN/mật khẩu, FCM token và hạn mức giao dịch.
 const pool = require("../../config/database");
-const { decryptSecretKey } = require("../../utils/keys/secretKey");
+const { decryptSecretKey } = require("../../utils/security/keys");
 
 const userRepository = {
   async findUserByPhone(phone) {
@@ -12,11 +13,9 @@ const userRepository = {
 
   async getUserByUserId(userId) {
     const result = await pool.query(
-      `
-        SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status, u.call_back_url, u.api_key, u.balance, u.secret_key
-        FROM users u
-        WHERE u.id = $1
-        `,
+      `SELECT u.id AS user_id, u.role, u.full_name, u.phone, u.status AS user_status, u.call_back_url, u.api_key, u.balance, u.secret_key
+       FROM users u
+       WHERE u.id = $1`,
       [userId],
     );
 
@@ -35,7 +34,7 @@ const userRepository = {
 
   async checkPinStatus(userId) {
     const result = await pool.query(
-      `SELECT pin_hash FROM users WHERE id = $1 `,
+      `SELECT pin_hash FROM users WHERE id = $1`,
       [userId],
     );
     return result.rows[0];
@@ -145,7 +144,6 @@ const userRepository = {
     return result?.rows[0] || null;
   },
 
-  // Tìm tài khoản theo số điện thoại cho luồng quên mật khẩu / PIN
   async findAccountByPhone(phone) {
     const result = await pool.query(
       `SELECT id, phone, email, status, role FROM users WHERE phone = $1`,
@@ -279,4 +277,5 @@ const userRepository = {
     return result.rows[0] ?? null;
   },
 };
+
 module.exports = userRepository;

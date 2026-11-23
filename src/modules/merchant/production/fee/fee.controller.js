@@ -1,5 +1,6 @@
+// fee.controller.js: Controller xử lý HTTP lấy gói thu phí, xem trước phí và hạn mức rút miễn phí cho Merchant.
 const merchantFeeService = require("./fee.service");
-const { successResponse } = require("../../../../utils/apiResponse");
+const { successResponse } = require("../../../../utils/common/http");
 
 const merchantFeeController = {
   async getPublicFeePlans(req, res, next) {

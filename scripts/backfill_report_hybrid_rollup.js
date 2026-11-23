@@ -2,7 +2,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "../.env") });
 
 const pool = require("../src/config/database");
-const { resolveAdminDateRange } = require("../src/utils/dateRange");
+const { resolveAdminDateRange } = require("../src/utils/common/dateRange");
 const { REPORT_SQL } = require("../src/admin/reports/reports.service");
 
 const REPORT_ROLLUP_LOCK_KEY = 2026111602;

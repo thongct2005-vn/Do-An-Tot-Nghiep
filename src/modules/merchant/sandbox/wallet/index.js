@@ -1,12 +1,11 @@
 const createWalletModule = require("../../shared/wallet");
 const authMiddleware = require("../../../../middlewares/auth.middleware");
 const userRepository = require("../../../../modules/user/user.repository");
-const { httpError } = require("../../../../utils/httpError");
-const { isValidPhone } = require("../../../../utils/validators");
-const { parseAmountInRange } = require("../../../../utils/amount");
+const { httpError, successResponse } = require("../../../../utils/common/http");
+const { isValidPhone } = require("../../../../utils/common/validators");
+const { parseAmountInRange } = require("../../../../utils/common/amount");
 const { getTransactionPolicy } = require("../../../../utils/limits/limitsDb");
 const pool = require("../../../../config/database");
-const { successResponse } = require("../../../../utils/apiResponse");
 
 module.exports = () => {
   const { repository, service, controller, router } = createWalletModule();

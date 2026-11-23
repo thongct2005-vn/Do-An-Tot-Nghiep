@@ -1,5 +1,5 @@
-const { httpError } = require("../../utils/httpError");
-const { isValidPhone, isValidEmail } = require("../../utils/validators");
+const { httpError } = require("../../utils/common/http");
+const { isValidPhone, isValidEmail } = require("../../utils/common/validators");
 
 const ALLOWED_CREATE_USER_FIELDS = new Set([
   "full_name",

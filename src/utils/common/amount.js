@@ -1,0 +1,70 @@
+const { httpError } = require("./http");
+
+// Kiểm tra số tiền có hợp lệ hay không
+function parseAmount(raw, message = "Số tiền không hợp lệ") {
+  let value;
+  if (typeof raw === "number") {
+    value = raw;
+  } else if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
+    value = Number(raw.trim());
+  } else {
+    throw httpError(400, message);
+  }
+  // Không phải số nguyên an toàn - quá lớn hoặc có phần thập phân
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw httpError(400, message);
+  }
+  return value;
+}
+
+// Format số tiền để hiển thị, ví dụ: 100000 -> 100.000đ
+function formatVnd(n) {
+  if (n === 0 || n === "0") return "0đ";
+  const amount = parseAmount(n);
+  return `${amount.toLocaleString("vi-VN")}đ`;
+}
+
+// Lời nhắn dùng cho giao dịch
+function amountRangeMessage(label, { min, max }) {
+  return `Số tiền ${label} phải từ ${formatVnd(min)} và tối đa là ${formatVnd(max)}`;
+}
+
+// kiểm tra số tiền có nằm trong khoảng cho phép hay không
+function parseAmountInRange(raw, rule, label) {
+  const message = amountRangeMessage(label, rule);
+  const value = parseAmount(raw, message);
+  if (value < rule.min || value > rule.max) throw httpError(400, message);
+  return value;
+}
+
+const BANK_FUNDING_MIN_AMOUNT = 10000;
+
+// Kiểm tra số tiền tối thiểu khi dùng nguồn tiền ngân hàng liên kết
+function assertBankFundingMinAmount(amount, actionLabel = "giao dịch") {
+  if (Number(amount) < BANK_FUNDING_MIN_AMOUNT) {
+    throw httpError(
+      400,
+      `Số tiền ${actionLabel} qua ngân hàng liên kết tối thiểu là ${formatVnd(BANK_FUNDING_MIN_AMOUNT)}`,
+    );
+  }
+}
+
+function formatVndDot(amount) {
+  return `${Math.round(Number(amount || 0)).toLocaleString("vi-VN")}đ`;
+}
+
+function parsePositiveIntForFailure(value, fallback = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.trunc(num);
+}
+
+module.exports = {
+  parseAmount,
+  parseAmountInRange,
+  formatVnd,
+  formatVndDot,
+  parsePositiveIntForFailure,
+  BANK_FUNDING_MIN_AMOUNT,
+  assertBankFundingMinAmount,
+};

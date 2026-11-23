@@ -1,16 +1,13 @@
+// dashboard.service.js: Nghiệp vụ tổng hợp KPI, phân bổ trạng thái và chuỗi thời gian Admin Dashboard.
 const adminDashboardRepository = require("./dashboard.repository");
 const {
   resolveAdminDateRange,
   generateTimeBuckets,
-} = require("../../utils/dateRange");
-
-const CANONICAL_TX_TYPES = [
-  { type: "TOPUP", label: "Nạp tiền" },
-  { type: "WITHDRAW", label: "Rút tiền" },
-  { type: "TRANSFER", label: "Chuyển tiền" },
-  { type: "PAYMENT", label: "Thanh toán QR" },
-  { type: "REFUND", label: "Hoàn tiền" },
-];
+} = require("../../utils/common/dateRange");
+const {
+  CANONICAL_TX_TYPES,
+  buildBucketRowMap,
+} = require("./dashboard.helpers");
 
 const adminDashboardService = {
   /**
@@ -116,10 +113,7 @@ const adminDashboardService = {
       range.groupBy,
     );
 
-    const rowMap = new Map();
-    for (const row of rows || []) {
-      rowMap.set(String(row.bucket_key), row);
-    }
+    const rowMap = buildBucketRowMap(rows);
 
     let totalTopup = 0;
     let totalWithdraw = 0;
@@ -174,10 +168,7 @@ const adminDashboardService = {
         range.groupBy,
       );
 
-    const rowMap = new Map();
-    for (const row of rows || []) {
-      rowMap.set(String(row.bucket_key), row);
-    }
+    const rowMap = buildBucketRowMap(rows);
 
     let totalCount = 0;
     const buckets = baseBuckets.map((b) => {

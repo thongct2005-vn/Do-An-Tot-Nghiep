@@ -8,10 +8,10 @@ test('fee reporting SQL, authenticated API, growth and Excel', async t => {
   const target = await createTestDatabase();
   const pool = require('../src/config/database');
   const reports = require('../src/admin/reports/reports.service');
-  const jwt = require('../src/utils/jwt');
+  const jwt = require('../src/utils/auth/jwt');
   const m1 = randomUUID(), m2 = randomUUID(), user = randomUUID(), admin = randomUUID();
   const range = { start_date: '2026-10-31', end_date: '2026-11-01' };
-  const wallet = '00000000-0000-7000-8000-000000000001';
+  const wallet = process.env.SYSTEM_FEE_WALLET_ID;
   let server;
   async function transaction({ merchant = m1, type = 'PAYMENT', status = 'SUCCESS', amount = 500000, fee = 6000,
     at = '2026-10-31T23:59:59+07:00', feeAt = at, feeType = 'QR_FEE' } = {}) {

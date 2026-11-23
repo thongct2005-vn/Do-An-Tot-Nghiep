@@ -1,4 +1,4 @@
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 
 const REMINDER_TEMPLATE_KEYS = Object.freeze(["PAST_DUE", "BILLED", "UNBILLED"]);
 

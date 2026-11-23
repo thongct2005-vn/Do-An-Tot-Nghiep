@@ -76,7 +76,7 @@ describe('Admin Merchant real HTTP / PostgreSQL integration', {
   before(async () => {
     database = await createTestDatabase();
     pool = require('../src/config/database');
-    tokenUtil = require('../src/utils/jwt');
+    tokenUtil = require('../src/utils/auth/jwt');
     await pool.query(`INSERT INTO users (id,role,status,full_name) VALUES
       ($1,'ADMIN','ACTIVE','Test Admin'),($2,'USER','ACTIVE','Test User')`, [adminId, userId]);
     tokens = tokenUtil.generateAuthTokens({ id: adminId, role: 'ADMIN', full_name: 'Test Admin' });

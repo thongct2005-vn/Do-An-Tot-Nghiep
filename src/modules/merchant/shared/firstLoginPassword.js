@@ -1,4 +1,4 @@
-const sharedFirstLogin = require("../../../utils/firstLoginPassword");
+const sharedFirstLogin = require("../../../utils/auth/authHelpers");
 
 function buildFirstLoginChallenge(user) {
   return sharedFirstLogin.buildFirstLoginChallenge(user, {

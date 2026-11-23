@@ -64,7 +64,7 @@ describe('Shared email claims across real application writers', {
   });
 
   it('distinct registration/profile paths cannot concurrently claim the same normalized email', async () => {
-    const { claimEmail } = require('../src/utils/emailClaim');
+    const { claimEmail } = require('../src/utils/db/postgres');
     for (const [leftIndex, rightIndex] of [[0, 1], [5, 3], [4, 2]]) {
       const email = `race-${leftIndex}-${rightIndex}@example.test`;
       const left = input(email.toUpperCase()), right = input(` ${email} `);

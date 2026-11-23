@@ -1,4 +1,5 @@
-const { successResponse } = require("../../../../utils/apiResponse");
+// dashboard.controller.js: Factory controller xử lý HTTP lấy thông tin, đổi callback và cấp/làm mới khóa Merchant.
+const { successResponse } = require("../../../../utils/common/http");
 
 function createDashboardController(dashboardService) {
   return {

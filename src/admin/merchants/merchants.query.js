@@ -1,4 +1,4 @@
-const { httpError } = require('../../utils/httpError');
+const { httpError } = require('../../utils/common/http');
 
 const FILTERS = {
   tab: ['ALL', 'LINKED', 'PENDING', 'UNCONFIGURED', 'SUSPENDED'],

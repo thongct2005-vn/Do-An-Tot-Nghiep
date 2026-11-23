@@ -1,5 +1,7 @@
+// paymentRequest.controller.js: Controller xử lý HTTP tạo và tra cứu mã QR tĩnh / QR động.
 const paymentRequestService = require("./paymentRequest.service");
-const { successResponse } = require("../../utils/apiResponse");
+const { successResponse } = require("../../utils/common/http");
+
 const paymentRequestController = {
   async createStaticQRToken(req, res, next) {
     try {

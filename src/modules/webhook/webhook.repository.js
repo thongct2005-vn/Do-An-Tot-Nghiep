@@ -1,25 +1,15 @@
+// webhook.repository.js: Hàng đợi webhook, hết hạn thanh toán quá giờ và cơ chế claim/retry cho worker.
 const pool = require("../../config/database");
 const { uuidv7 } = require("uuidv7");
-
-// Thời gian chờ trước lần thử tiếp theo (giây), theo số lần đã thử.
-// 8 lần tổng cộng: ngay lập tức, 1p, 5p, 30p, 2h, 6h, 12h, 24h.
-const RETRY_DELAYS_SECONDS = [60, 300, 1800, 7200, 21600, 43200, 86400];
-// Thời gian "thuê" dòng khi worker đang gửi; nếu worker chết thì hết hạn và được gửi lại.
-const LEASE_SECONDS = 120;
-
-const EVENT_STATUS = {
-  "payment.success": "success",
-  "payment.failed": "failed",
-};
+const {
+  WEBHOOK_RETRY_DELAYS_SECONDS,
+  WEBHOOK_LEASE_SECONDS,
+  WEBHOOK_EVENT_STATUS,
+} = require("./webhook.helpers");
 
 const webhookRepository = {
-  /**
-   * Đưa webhook vào hàng đợi. Gọi TRONG cùng transaction với việc đổi trạng thái đơn
-   * để "đã thanh toán" và "sẽ gửi callback" luôn đi cùng nhau.
-   * Chỉ tạo khi bên nhận là MERCHANT. Gọi lại nhiều lần không tạo trùng.
-   */
   async enqueue(client, { paymentRequestId, eventType }) {
-    const status = EVENT_STATUS[eventType];
+    const status = WEBHOOK_EVENT_STATUS[eventType];
     if (!status) throw new Error(`Sự kiện webhook không hợp lệ: ${eventType}`);
     const result = await client.query(
       `INSERT INTO webhook_deliveries(id, payment_request_id, merchant_id, event_type, payload)
@@ -43,16 +33,7 @@ const webhookRepository = {
     return result.rows[0]?.id ?? null;
   },
 
-  /**
-   * Chuyển các đơn merchant đã quá hạn từ PENDING sang FAILED và xếp webhook "failed".
-   * Một câu lệnh duy nhất nên không thể xảy ra chuyện "đã FAILED mà không có webhook".
-   * Có thể giới hạn theo một đơn (khi merchant tra cứu trạng thái).
-   * Khóa Merchant trước request, cùng thứ tự với thanh toán/credentials.
-   * Bỏ qua Merchant hoặc request đang được xử lý để worker thử lại sau.
-   */
   async expireDuePayments(db, { orderId = null, merchantId = null, limit = 500 } = {}) {
-    // Mỗi webhook cần một id uuidv7 sinh từ app; câu lệnh có thể xếp tối đa `limit` webhook
-    // nên sinh sẵn `limit` id rồi ghép theo số thứ tự dòng.
     const webhookIds = Array.from({ length: limit }, () => uuidv7());
     const result = await db.query(
       `WITH locked_merchants AS MATERIALIZED (
@@ -106,11 +87,6 @@ const webhookRepository = {
     return result.rows[0]?.expired_count ?? 0;
   },
 
-  /**
-   * Lấy tối đa `limit` webhook đến hạn gửi và "thuê" chúng LEASE_SECONDS.
-   * SKIP LOCKED giúp chạy nhiều instance mà không gửi trùng.
-   * URL: callback_url của đơn nếu có, không thì callback mặc định của merchant.
-   */
   async claimDue(limit = 10) {
     const client = await pool.connect();
     try {
@@ -133,7 +109,7 @@ const webhookRepository = {
                       FROM payment_requests pr, users u
                      WHERE pr.id = d.payment_request_id AND u.id = d.merchant_id) AS callback_url,
       (SELECT u.secret_key FROM users u WHERE u.id = d.merchant_id) AS secret_key`,
-        [limit, LEASE_SECONDS],
+        [limit, WEBHOOK_LEASE_SECONDS],
       );
       await client.query("COMMIT");
       return result.rows;
@@ -155,12 +131,13 @@ const webhookRepository = {
     );
   },
 
-  /** Ghi nhận một lần gửi lỗi; hết lượt thì chuyển FAILED, ngược lại hẹn lần sau. */
   async markAttemptFailed(id, { attemptCount, maxAttempts, httpStatus, error }) {
     const attemptsDone = attemptCount + 1;
     const exhausted = attemptsDone >= maxAttempts;
     const delay =
-      RETRY_DELAYS_SECONDS[Math.min(attemptsDone - 1, RETRY_DELAYS_SECONDS.length - 1)];
+      WEBHOOK_RETRY_DELAYS_SECONDS[
+        Math.min(attemptsDone - 1, WEBHOOK_RETRY_DELAYS_SECONDS.length - 1)
+      ];
     await pool.query(
       `UPDATE webhook_deliveries
        SET attempt_count = $2,

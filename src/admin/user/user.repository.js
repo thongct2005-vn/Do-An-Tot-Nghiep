@@ -1,6 +1,8 @@
+// user.repository.js: Truy vấn thống kê/quản lý người dùng (PostgreSQL & MongoDB) và thực thi P2P/Nạp/Rút hộ Admin.
 const crypto = require("node:crypto");
 const { uuidv7 } = require("uuidv7");
 const pool = require("../../config/database");
+const { insertAdminChangeHistoryTx } = require("../shared/adminAuditRepo");
 const mongoose = require("mongoose");
 const {
   UserLoginEvent,
@@ -11,11 +13,11 @@ const {
   advanceLoginRollupCutoff,
 } = require("../../models/mongo/loginStatsDailyUser.model");
 const { computeHybridWindow } = require("../dashboard/dashboardRollup");
-const { getCurrentMonthBoundsInVietnam } = require("../../utils/dateRange");
-const { claimEmail } = require("../../utils/emailClaim");
+const { getCurrentMonthBoundsInVietnam } = require("../../utils/common/dateRange");
+const { claimEmail } = require("../../utils/db/postgres");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
-const { httpError } = require("../../utils/httpError");
-const { maskPhone } = require("../../utils/mask");
+const { httpError } = require("../../utils/common/http");
+const { maskPhone } = require("../../utils/common/text");
 const { assertDailyLimit, getDailyUsage } = require("../../utils/limits/dailyLimit");
 
 const adminUserRepository = {
@@ -675,20 +677,14 @@ const adminUserRepository = {
       }
 
       const action = status === "BLOCKED" ? "USER_BLOCKED" : "USER_UNBLOCKED";
-      const historyQuery = `
-        INSERT INTO admin_user_change_history (
-          admin_id, user_id, action, reason, old_values, new_values, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-        RETURNING id, action, reason, created_at
-      `;
-      await client.query(historyQuery, [
+      await insertAdminChangeHistoryTx(client, {
         adminId,
         userId,
         action,
         reason,
-        JSON.stringify(oldValues || {}),
-        JSON.stringify(newValues || {}),
-      ]);
+        oldValues: oldValues || {},
+        newValues: newValues || {},
+      });
 
       await client.query("COMMIT");
       return updatedUser;
@@ -760,20 +756,14 @@ const adminUserRepository = {
         return null;
       }
 
-      const historyQuery = `
-        INSERT INTO admin_user_change_history (
-          admin_id, user_id, action, reason, old_values, new_values, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-        RETURNING id, action, reason, created_at
-      `;
-      await client.query(historyQuery, [
+      await insertAdminChangeHistoryTx(client, {
         adminId,
         userId,
-        "USER_PROFILE_UPDATED",
+        action: "USER_PROFILE_UPDATED",
         reason,
-        JSON.stringify(oldValues || {}),
-        JSON.stringify(newValues || {}),
-      ]);
+        oldValues: oldValues || {},
+        newValues: newValues || {},
+      });
 
       await client.query("COMMIT");
 
@@ -1029,23 +1019,15 @@ const adminUserRepository = {
         execution_mode: "SIMULATED_ADMIN_P2P",
       };
 
-      const historyResult = await client.query(
-        `
-        INSERT INTO admin_user_change_history (
-          admin_id, user_id, action, reason, old_values, new_values, created_at
-        ) VALUES ($1, $2, 'ADMIN_OP_P2P', $3, $4, $5, NOW())
-        RETURNING id, action, reason, created_at
-        `,
-        [
-          adminId,
-          sourceUserId,
-          reason,
-          JSON.stringify(oldValues),
-          JSON.stringify(newValues),
-        ]
-      );
-
-      const historyRow = historyResult.rows[0];
+      const historyRow = await insertAdminChangeHistoryTx(client, {
+        adminId,
+        userId: sourceUserId,
+        action: "ADMIN_OP_P2P",
+        reason,
+        oldValues,
+        newValues,
+        inlineAction: true,
+      });
 
       const responseBody = {
         transaction_id: String(transferResult.transactionId),
@@ -1307,23 +1289,14 @@ const adminUserRepository = {
         execution_mode: executionMode,
       };
 
-      const historyResult = await client.query(
-        `
-        INSERT INTO admin_user_change_history (
-          admin_id, user_id, action, reason, old_values, new_values, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-        RETURNING id, action, reason, created_at
-        `,
-        [
-          adminId,
-          userId,
-          action,
-          reason,
-          JSON.stringify(oldValues),
-          JSON.stringify(newValues),
-        ]
-      );
-      const historyRow = historyResult.rows[0];
+      const historyRow = await insertAdminChangeHistoryTx(client, {
+        adminId,
+        userId,
+        action,
+        reason,
+        oldValues,
+        newValues,
+      });
 
       // 9. Cập nhật idempotency_keys
       const responseBody = {
@@ -1450,13 +1423,14 @@ const adminUserRepository = {
         must_change_password: Boolean(userRow.must_change_password),
       };
 
-      const audit = await client.query(
-        `INSERT INTO admin_user_change_history
-          (admin_id, user_id, action, reason, old_values, new_values, created_at)
-         VALUES ($1, $2, 'USER_CREATED', $3, NULL, $4::jsonb, NOW())
-         RETURNING id, action, reason, created_at`,
-        [adminId, userId, reason, JSON.stringify(auditNewValues)],
-      );
+      const audit = await insertAdminChangeHistoryTx(client, {
+        adminId,
+        userId,
+        action: "USER_CREATED",
+        reason,
+        oldValues: null,
+        newValues: auditNewValues,
+      });
 
       await client.query("COMMIT");
 
@@ -1476,7 +1450,7 @@ const adminUserRepository = {
           created_at: userRow.created_at,
           updated_at: userRow.updated_at,
         },
-        audit: audit.rows[0],
+        audit,
       };
     } catch (error) {
       try {

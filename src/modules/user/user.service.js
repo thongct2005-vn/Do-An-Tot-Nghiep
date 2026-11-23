@@ -1,94 +1,53 @@
-const fs = require("fs");
+// user.service.js: Nghiệp vụ tra cứu người dùng, PIN, mật khẩu, hạn mức giao dịch và khôi phục tài khoản qua eKYC.
+const bcrypt = require("bcrypt");
 const userRepository = require("./user.repository");
 const kycRepository = require("../kyc/kyc.repository");
 const kycService = require("../kyc/kyc.service");
 const otpService = require("../otp/otp.service");
-const viettelAIService = require("../../services/viettelAI.service");
-const bcrypt = require("bcrypt");
+const tokenUtil = require("../../utils/auth/jwt");
+const { httpError } = require("../../utils/common/http");
+const { emitToUser } = require("../../utils/notifications/socket");
+const { maskPhone, maskEmail } = require("../../utils/common/text");
 const {
   isValidPasswordOrPin,
   isValidPhone,
-  isValidPhonesHash
-} = require("../../utils/validators");
-const { httpError } = require("../../utils/httpError");
-const tokenUtil = require("../../utils/jwt");
-const { emitToUser } = require("../../utils/socket");
-const { maskPhone, maskEmail } = require("../../utils/mask");
+  isValidPhonesHash,
+} = require("../../utils/common/validators");
+const { getPositiveIntConfig } = require("../../utils/limits/limitsDb");
 const {
-  getPositiveIntConfig,
-  getTransactionPolicy,
-  getEffectiveTransactionLimit,
-  getEffectiveWalletCapacity,
-} = require("../../utils/limits/limitsDb");
-const { getDailyUsed } = require("../../utils/limits/dailyLimit");
-const { formatVnd, parseAmount } = require("../../utils/amount");
-const { uuidv7 } = require("uuidv7");
-const pool = require("../../config/database");
-
-const CONFIGURABLE_LIMIT_TYPES = ["TRANSFER", "WITHDRAW", "TOPUP"];
-
-async function getResettableUser(userId) {
-  const user = await userRepository.getCredentialState(userId);
-  if (!user || user.status !== "ACTIVE" || user.role !== "USER") {
-    throw httpError(403, "Tài khoản không hợp lệ hoặc đã bị khóa");
-  }
-  return user;
-}
-
-const FORGOT_TYPES = ["password", "pin"];
-
-function assertForgotType(type) {
-  if (!FORGOT_TYPES.includes(type)) {
-    throw httpError(400, "Loại yêu cầu không hợp lệ");
-  }
-}
-
-function assertForgotUsable(user) {
-  if (!user || user.role !== "USER") {
-    throw httpError(404, "Số điện thoại chưa đăng ký tài khoản");
-  }
-  if (user.status !== "ACTIVE") {
-    throw httpError(403, "Tài khoản bị khóa");
-  }
-  if (!user.email) {
-    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
-  }
-}
-
-// Lấy user theo phone trong token OTP và đảm bảo đúng người
-async function getForgotOtpUser({ userId, phone }) {
-  const user = await userRepository.findAccountByPhone(phone);
-  if (!user || user.id !== userId) {
-    throw httpError(401, "Phiên xác thực không hợp lệ");
-  }
-  assertForgotUsable(user);
-  return user;
-}
-
-function removeFiles(paths) {
-  paths.forEach((p) => {
-    try {
-      if (p && fs.existsSync(p)) fs.unlinkSync(p);
-    } catch (_) { }
-  });
-}
+  fetchTransactionLimits,
+  updateUserTransactionLimit,
+  resetUserTransactionLimit,
+} = require("../../utils/limits/userLimitsService");
+const {
+  PIN_POLICY_DEFAULTS,
+  LOGIN_LOCKOUT_DEFAULTS,
+} = require("../../utils/auth/authHelpers");
+const {
+  assertFaceMatchesApprovedKyc,
+  safeUnlinkFiles,
+} = require("../kyc/kyc.helpers");
+const {
+  getResettableUser,
+  assertForgotType,
+  assertForgotUsable,
+  getForgotOtpUser,
+  verifyCredentialChallenge,
+} = require("./user.helpers");
 
 const userService = {
   async findUserByPhone({ userId, phone }) {
     if (!phone) {
       throw httpError(400, "Thiếu số điện thoại");
     }
-
     if (!isValidPhone(phone)) {
       throw httpError(400, "Số điện thoại không hợp lệ");
     }
 
     const user = await userRepository.findUserByPhone(phone);
-
     if (!user) {
       throw httpError(404, "Không tìm thấy người dùng này");
     }
-
     if (user.id === userId) {
       throw httpError(400, "Không thể chuyển tiền cho chính mình");
     }
@@ -111,18 +70,15 @@ const userService = {
     if (phones.length > maxPhones) {
       throw httpError(413, "Danh bạ quá lớn, vui lòng đồng bộ từng phần");
     }
-
     if (phones.length === 0) {
       return [];
     }
-
     if (!isValidPhonesHash(phones)) {
       throw httpError(400, "Danh sách số điện thoại không hợp lệ");
     }
 
     const uniquePhone = [...new Set(phones)];
-    const users = await userRepository.findUserByPhoneHashList(uniquePhone);
-    return users || [];
+    return (await userRepository.findUserByPhoneHashList(uniquePhone)) || [];
   },
 
   async checkPinStatus(userId) {
@@ -132,7 +88,6 @@ const userService = {
         "Thiếu thông tin người dùng để kiểm tra trạng thái pin",
       );
     }
-
     const result = await userRepository.checkPinStatus(userId);
     return {
       has_pin: !!result?.pin_hash,
@@ -143,7 +98,6 @@ const userService = {
     if (!userId || !pin) {
       throw httpError(400, "Thiếu thông tin để tạo pin");
     }
-
     if (!isValidPasswordOrPin(pin)) {
       throw httpError(400, "Mã PIN phải gồm đúng 6 chữ số");
     }
@@ -158,53 +112,21 @@ const userService = {
   },
 
   async verifyCurrentPin({ userId, oldPin }) {
-    if (!userId || !oldPin) {
-      throw httpError(400, "Vui lòng nhập mã PIN hiện tại");
-    }
-    if (!isValidPasswordOrPin(oldPin)) {
-      throw httpError(400, "Mã PIN phải gồm đúng 6 chữ số");
-    }
-
-    const user = await getResettableUser(userId);
-    if (!user.pin_hash) {
-      throw httpError(404, "Bạn chưa thiết lập mã PIN");
-    }
-
-    const claimed = await userRepository.claimPinAttempt({
+    return verifyCredentialChallenge({
       userId,
-      maxAttempts: 5,
-      lockMinutes: 15,
+      value: oldPin,
+      emptyMessage: "Vui lòng nhập mã PIN hiện tại",
+      invalidFormatMessage: "Mã PIN phải gồm đúng 6 chữ số",
+      hashField: "pin_hash",
+      attemptsField: "pin_failed_attempts",
+      missingMessage: "Bạn chưa thiết lập mã PIN",
+      lockedMessage: `Bạn đã nhập sai PIN quá ${PIN_POLICY_DEFAULTS.MAX_ATTEMPTS} lần. Tài khoản bị khóa giao dịch trong ${PIN_POLICY_DEFAULTS.LOCK_MINUTES} phút`,
+      claimAttemptFn: (args) => userRepository.claimPinAttempt(args),
+      getStateFn: (id) => userRepository.getPinState(id),
+      resetFailedFn: (id) => userRepository.resetFailedPin(id),
+      maxAttempts: PIN_POLICY_DEFAULTS.MAX_ATTEMPTS,
+      lockMinutes: PIN_POLICY_DEFAULTS.LOCK_MINUTES,
     });
-
-    if (!claimed) {
-      const state = await userRepository.getPinState(userId);
-      if (state?.is_locked) {
-        throw httpError(
-          423,
-          "Bạn đã nhập sai PIN quá 5 lần. Tài khoản bị khóa giao dịch trong 15 phút",
-        );
-      }
-      throw httpError(404, "Bạn chưa thiết lập mã PIN");
-    }
-
-    const isValid = await bcrypt.compare(oldPin, claimed.pin_hash);
-    if (!isValid) {
-      if (claimed.pin_failed_attempts >= 5) {
-        throw httpError(
-          423,
-          "Bạn đã nhập sai PIN quá 5 lần. Tài khoản bị khóa giao dịch trong 15 phút",
-        );
-      }
-      return {
-        is_correct: false,
-        remaining_attempts: 5 - claimed.pin_failed_attempts,
-      };
-    }
-
-    await userRepository.resetFailedPin(userId);
-    return {
-      is_correct: true,
-    };
   },
 
   async changePin({ userId, oldPin, newPin }) {
@@ -251,53 +173,21 @@ const userService = {
   },
 
   async verifyCurrentPassword({ userId, oldPassword }) {
-    if (!userId || !oldPassword) {
-      throw httpError(400, "Vui lòng nhập mật khẩu hiện tại");
-    }
-    if (!isValidPasswordOrPin(oldPassword)) {
-      throw httpError(400, "Mật khẩu phải gồm đúng 6 chữ số");
-    }
-
-    const user = await getResettableUser(userId);
-    if (!user.password_hash) {
-      throw httpError(404, "Không tìm thấy thông tin mật khẩu");
-    }
-
-    const claimed = await userRepository.claimPasswordAttempt({
+    return verifyCredentialChallenge({
       userId,
-      maxAttempts: 5,
-      lockMinutes: 30,
+      value: oldPassword,
+      emptyMessage: "Vui lòng nhập mật khẩu hiện tại",
+      invalidFormatMessage: "Mật khẩu phải gồm đúng 6 chữ số",
+      hashField: "password_hash",
+      attemptsField: "failed_login_attempts",
+      missingMessage: "Không tìm thấy thông tin mật khẩu",
+      lockedMessage: `Bạn đã nhập sai mật khẩu quá ${LOGIN_LOCKOUT_DEFAULTS.MAX_ATTEMPTS} lần. Tài khoản tạm khóa trong ${LOGIN_LOCKOUT_DEFAULTS.LOCK_MINUTES} phút`,
+      claimAttemptFn: (args) => userRepository.claimPasswordAttempt(args),
+      getStateFn: (id) => userRepository.getPasswordState(id),
+      resetFailedFn: (id) => userRepository.resetFailedPassword(id),
+      maxAttempts: LOGIN_LOCKOUT_DEFAULTS.MAX_ATTEMPTS,
+      lockMinutes: LOGIN_LOCKOUT_DEFAULTS.LOCK_MINUTES,
     });
-
-    if (!claimed) {
-      const state = await userRepository.getPasswordState(userId);
-      if (state?.is_locked) {
-        throw httpError(
-          423,
-          "Bạn đã nhập sai mật khẩu quá 5 lần. Tài khoản tạm khóa trong 30 phút",
-        );
-      }
-      throw httpError(404, "Không tìm thấy thông tin mật khẩu");
-    }
-
-    const isValid = await bcrypt.compare(oldPassword, claimed.password_hash);
-    if (!isValid) {
-      if (claimed.failed_login_attempts >= 5) {
-        throw httpError(
-          423,
-          "Bạn đã nhập sai mật khẩu quá 5 lần. Tài khoản tạm khóa trong 30 phút",
-        );
-      }
-      return {
-        is_correct: false,
-        remaining_attempts: 5 - claimed.failed_login_attempts,
-      };
-    }
-
-    await userRepository.resetFailedPassword(userId);
-    return {
-      is_correct: true,
-    };
   },
 
   async changePassword({ userId, oldPassword, newPassword }) {
@@ -350,60 +240,12 @@ const userService = {
   },
 
   async getTransactionLimits(userId) {
-    if (!userId) {
-      throw httpError(400, "Thiếu thông tin người dùng");
-    }
-    const user = await getResettableUser(userId);
-    const role = user.role || "USER";
-    const currentBalance = Number(user.balance) || 0;
-
-    const cap = await getEffectiveWalletCapacity(pool, { userId, role });
-
-    const items = [];
-    for (const transactionType of CONFIGURABLE_LIMIT_TYPES) {
-      const rule = await getEffectiveTransactionLimit(pool, {
-        userId,
-        role,
-        transactionType,
-      });
-      const dailyUsed = await getDailyUsed(pool, userId, transactionType);
-      const effectiveDaily =
-        rule.dailyLimit == null ? null : Number(rule.dailyLimit);
-      const dailyRemaining =
-        effectiveDaily == null ? null : Math.max(0, effectiveDaily - dailyUsed);
-
-      items.push({
-        transaction_type: transactionType,
-        min_amount: Number(rule.system.min),
-        system_max_amount: Number(rule.system.max),
-        system_daily_limit:
-          rule.system.dailyLimit == null
-            ? Number(rule.system.max)
-            : Number(rule.system.dailyLimit),
-        max_amount: Number(rule.max),
-        daily_limit:
-          effectiveDaily == null ? Number(rule.system.max) : effectiveDaily,
-        is_custom: Boolean(rule.custom),
-        daily_used: dailyUsed,
-        daily_remaining: dailyRemaining,
-      });
-    }
-
-    return {
-      wallet_capacity: {
-        current_balance: currentBalance,
-        min_capacity: cap.minCapacity,
-        default_capacity: cap.defaultCapacity,
-        max_capacity: cap.maxCapacity,
-        effective_capacity: cap.effectiveCapacity,
-        remaining_capacity: Math.max(
-          0,
-          cap.effectiveCapacity - currentBalance,
-        ),
-        is_custom: cap.isCustom,
-      },
-      limits: items,
-    };
+    return fetchTransactionLimits({
+      userId,
+      role: "USER",
+      userRepository,
+      includeSummary: false,
+    });
   },
 
   async updateTransactionLimit({
@@ -412,113 +254,33 @@ const userService = {
     maxAmount,
     dailyLimit,
   }) {
-    if (!userId) {
-      throw httpError(400, "Thiếu thông tin người dùng");
-    }
-    const type = String(transactionType || "").trim().toUpperCase();
-    const user = await getResettableUser(userId);
-    const role = user.role || "USER";
-
-    if (type === "WALLET_CAPACITY") {
-      const cap = await getEffectiveWalletCapacity(pool, { userId, role });
-      const capNum = parseAmount(maxAmount);
-      if (capNum < cap.minCapacity || capNum > cap.maxCapacity) {
-        throw httpError(
-          400,
-          `Sức chứa ví phải từ ${formatVnd(cap.minCapacity)} đến ${formatVnd(cap.maxCapacity)}`,
-        );
-      }
-      if (capNum === cap.defaultCapacity) {
-        await userRepository.deleteUserTransactionLimit({
-          userId,
-          transactionType: "WALLET_CAPACITY",
-        });
-      } else {
-        await userRepository.upsertUserTransactionLimit({
-          id: uuidv7(),
-          userId,
-          transactionType: "WALLET_CAPACITY",
-          maxAmount: capNum,
-          dailyLimit: capNum,
-        });
-      }
-      return await this.getTransactionLimits(userId);
-    }
-
-    if (!CONFIGURABLE_LIMIT_TYPES.includes(type)) {
-      throw httpError(400, "Loại giao dịch không hỗ trợ cấu hình hạn mức");
-    }
-
-    const sys = await getTransactionPolicy(role, type, pool);
-    const sysMin = Number(sys.min);
-    const sysMax = Number(sys.max);
-    const sysDaily =
-      sys.dailyLimit == null ? sysMax : Number(sys.dailyLimit);
-
-    const maxNum = parseAmount(maxAmount);
-    const dailyNum = parseAmount(dailyLimit);
-
-    if (maxNum < sysMin || maxNum > sysMax) {
-      throw httpError(
-        400,
-        `Hạn mức mỗi lần phải từ ${formatVnd(sysMin)} đến ${formatVnd(sysMax)}`,
-      );
-    }
-    if (dailyNum < sysMin || dailyNum > sysDaily) {
-      throw httpError(
-        400,
-        `Hạn mức mỗi ngày phải từ ${formatVnd(sysMin)} đến ${formatVnd(sysDaily)}`,
-      );
-    }
-    if (maxNum > dailyNum) {
-      throw httpError(
-        400,
-        "Hạn mức mỗi lần không được lớn hơn hạn mức mỗi ngày",
-      );
-    }
-
-    if (maxNum === sysMax && dailyNum === sysDaily) {
-      await userRepository.deleteUserTransactionLimit({
-        userId,
-        transactionType: type,
-      });
-    } else {
-      await userRepository.upsertUserTransactionLimit({
-        id: uuidv7(),
-        userId,
-        transactionType: type,
-        maxAmount: maxNum,
-        dailyLimit: dailyNum,
-      });
-    }
-
-    return await this.getTransactionLimits(userId);
+    return updateUserTransactionLimit({
+      userId,
+      transactionType,
+      maxAmount,
+      dailyLimit,
+      role: "USER",
+      userRepository,
+      validateActiveRole: true,
+      includeSummary: false,
+    });
   },
 
   async resetTransactionLimit({ userId, transactionType }) {
-    if (!userId) {
-      throw httpError(400, "Thiếu thông tin người dùng");
-    }
-    const type = String(transactionType || "").trim().toUpperCase();
-    if (
-      type !== "WALLET_CAPACITY" &&
-      !CONFIGURABLE_LIMIT_TYPES.includes(type)
-    ) {
-      throw httpError(400, "Loại cấu hình không hợp lệ");
-    }
-    await getResettableUser(userId);
-    await userRepository.deleteUserTransactionLimit({
+    return resetUserTransactionLimit({
       userId,
-      transactionType: type,
+      transactionType,
+      role: "USER",
+      userRepository,
+      validateActiveRole: true,
+      includeSummary: false,
     });
-    return await this.getTransactionLimits(userId);
   },
 
   async updateFmcToken({ userId, fcmToken }) {
     if (!userId || !fcmToken) {
       throw httpError(400, "Thiếu thông tin để cập nhật mã thông báo đẩy");
     }
-
     await userRepository.updateFmcToken({ userId, fcmToken });
   },
 
@@ -526,9 +288,9 @@ const userService = {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin để lấy mã thông báo đẩy");
     }
-    const result = await userRepository.getFcmToken(userId);
-    return result;
+    return await userRepository.getFcmToken(userId);
   },
+
   async resetPin({ userId, version, pin }) {
     if (!userId) {
       throw httpError(400, "Thiếu thông tin người dùng");
@@ -542,7 +304,6 @@ const userService = {
 
     const user = await getResettableUser(userId);
 
-    // Token chỉ dùng được một lần: PIN đã đổi thì dấu vân tay hash không còn khớp
     if (tokenUtil.credentialVersion(user.pin_hash) !== version) {
       throw httpError(
         401,
@@ -616,15 +377,11 @@ const userService = {
       );
     }
 
-    // Đã xoá refresh token trong DB; báo các thiết bị đang đăng nhập thoát ra
     emitToUser(userId, "force_logout", {
       reason: "Mật khẩu của tài khoản vừa được đặt lại. Vui lòng đăng nhập lại",
     });
   },
 
-  // ===== Quên mật khẩu / quên mã PIN =====
-
-  // Bước 1: nhập số điện thoại, gửi OTP về email
   async forgotRequest({ phone, type }) {
     if (!phone) {
       throw httpError(400, "Thiếu số điện thoại");
@@ -655,7 +412,6 @@ const userService = {
     return { masked_email: maskEmail(user.email) };
   },
 
-  // Bước 2: nhập OTP, nhận kyc_token
   async forgotVerifyOtp({ userId, phone, type, otp }) {
     assertForgotType(type);
     const user = await getForgotOtpUser({ userId, phone });
@@ -668,8 +424,6 @@ const userService = {
     };
   },
 
-  // Bước 3. Đã KYC: số CCCD và khuôn mặt phải khớp dữ liệu cũ.
-  // Chưa KYC: lưu KYC như bình thường (không có gì để so sánh).
   async forgotVerifyKyc({ userId, type, frontPath, backPath, facePath }) {
     const uploaded = [frontPath, backPath, facePath];
     let keepFiles = false;
@@ -696,26 +450,7 @@ const userService = {
         if (String(ocrInfo.id) !== String(approved.id)) {
           throw httpError(403, "Giấy tờ không khớp với tài khoản đã định danh");
         }
-
-        // So khuôn mặt vừa chụp với ảnh đã lưu khi KYC (ảnh khuôn mặt,
-        // nếu mất thì dùng ảnh trên mặt trước CCCD cũ)
-        const referencePath = [
-          approved.face_image_url,
-          approved.front_image_url,
-        ].find((p) => p && fs.existsSync(p));
-        if (!referencePath) {
-          throw httpError(
-            409,
-            "Không tìm thấy dữ liệu khuôn mặt đã đăng ký, vui lòng liên hệ hỗ trợ",
-          );
-        }
-        const sameFace = await viettelAIService.verifyFaceMatch(
-          referencePath,
-          facePath,
-        );
-        if (!sameFace.isMatch) {
-          throw httpError(403, "Khuôn mặt không khớp với dữ liệu đã đăng ký");
-        }
+        await assertFaceMatchesApprovedKyc({ approved, facePath });
       } else {
         const exists = await kycRepository.checkIdExists(ocrInfo.id);
         if (exists.is_exists) {
@@ -751,7 +486,7 @@ const userService = {
         type,
       };
     } finally {
-      if (!keepFiles) removeFiles(uploaded);
+      if (!keepFiles) safeUnlinkFiles(uploaded);
     }
   },
 };

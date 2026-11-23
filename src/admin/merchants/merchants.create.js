@@ -1,10 +1,10 @@
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 const {
   isValidPhone,
   isValidEmail,
   normalizeMerchantAddress,
-} = require("../../utils/validators");
-const { validateCallbackUrlForSave } = require("../../utils/url/urlGuard");
+} = require("../../utils/common/validators");
+const { validateCallbackUrlForSave } = require("../../utils/security/url");
 
 const ALLOWED_CREATE_FIELDS = new Set([
   "full_name",

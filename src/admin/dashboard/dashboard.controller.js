@@ -1,4 +1,5 @@
-const { successResponse } = require("../../utils/apiResponse");
+// dashboard.controller.js: Controller xử lý các endpoint thống kê tổng quan, dòng tiền và lưu lượng Admin Dashboard.
+const { successResponse } = require("../../utils/common/http");
 const adminDashboardService = require("./dashboard.service");
 
 const adminDashboardController = {

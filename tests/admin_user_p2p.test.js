@@ -11,8 +11,8 @@ const adminUserRepository = require("../src/admin/user/user.repository");
 const adminUserService = require("../src/admin/user/user.service");
 const adminUserController = require("../src/admin/user/user.controller");
 const authMiddleware = require("../src/middlewares/auth.middleware");
-const socketUtil = require("../src/utils/socket");
-const firebaseNotification = require("../src/utils/firebaseNotification");
+const socketUtil = require("../src/utils/notifications/socket");
+const firebaseNotification = require("../src/utils/notifications/firebaseNotification");
 const limitsDb = require("../src/utils/limits/limitsDb");
 
 describe("Admin User P2P Operations - Comprehensive Test Suite (14 Mandatory Scenarios)", () => {

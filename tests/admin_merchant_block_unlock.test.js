@@ -37,8 +37,8 @@ describe('ADMIN Merchant block/unlock HTTP / PostgreSQL', {
   before(async () => {
     database = await createTestDatabase();
     pool = require('../src/config/database');
-    tokenUtil = require('../src/utils/jwt');
-    mock.method(require('../src/utils/socket'), 'emitToUser', async (id,event,payload) => {
+    tokenUtil = require('../src/utils/auth/jwt');
+    mock.method(require('../src/utils/notifications/socket'), 'emitToUser', async (id,event,payload) => {
       if (socketFailure) throw new Error('Socket delivery failed');
       // Read through another pool connection to prove the update and audit committed.
       events.push({id,event,payload,merchant:await read(id),audits:await audits(id)});

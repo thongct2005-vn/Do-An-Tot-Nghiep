@@ -15,7 +15,7 @@ async function defaultSendPushNotification(userId, payload, row) {
   if (!row?.fcm_token) {
     return { sent: false, reason: "NO_FCM_TOKEN" };
   }
-  const { sendPushNotification } = require("../utils/firebaseNotification");
+  const { sendPushNotification } = require("../utils/notifications/firebaseNotification");
   await sendPushNotification(userId, payload);
   return { sent: true };
 }

@@ -15,7 +15,7 @@ const {
   sanitizeSearch,    // Làm sạch chuỗi tìm kiếm
   sanitizePhone,     // Chuẩn hóa/lọc số điện thoại
   sanitizeEmail,     // Chuẩn hóa/lọc email
-} = require("../utils/sanitize");
+} = require("../utils/common/text");
 
 // ----------------------------------------------------------------------------
 // FIELD_RULES: bảng ánh xạ "tên field" -> "hàm làm sạch riêng cho field đó".

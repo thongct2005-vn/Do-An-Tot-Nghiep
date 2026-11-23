@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { Client } = require('pg');
 const { createTestDatabase } = require('./merchant_test_database');
 const { exactInteger, sum, previousRange } = require('../src/admin/reports/financialReport.data');
-const { resolveAdminDateRange } = require('../src/utils/dateRange');
+const { resolveAdminDateRange } = require('../src/utils/common/dateRange');
 
 test('Excel integer precision is checked before conversion and summation', () => {
   assert.equal(exactInteger('11806391000'), 11806391000);
@@ -17,10 +17,11 @@ test('Excel integer precision is checked before conversion and summation', () =>
 
 test('financial aggregates preserve scope, source fees, boundaries and comparison period', async t => {
   const target = await createTestDatabase();
+  require('dotenv').config({ quiet: true });
   const repo = require('../src/admin/reports/financialReport.repository');
   const db = new Client(target.config);
   await db.connect();
-  const merchant=randomUUID(), customer=randomUUID(), wallet='00000000-0000-7000-8000-000000000001';
+  const merchant=randomUUID(), customer=randomUUID(), wallet=process.env.SYSTEM_FEE_WALLET_ID;
   const f = { ...resolveAdminDateRange('2026-10-31','2026-11-01'), group:'day', merchant:null, type:null };
   async function tx(type, amount, status='SUCCESS', at='2026-11-01T12:00:00+07:00') {
     const id=randomUUID();

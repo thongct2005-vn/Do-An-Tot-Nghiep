@@ -1,44 +1,19 @@
+// wallet.service.js: Nghiệp vụ số dư ví, kiểm tra điều kiện giao dịch và xác thực mã PIN + Step-Up OTP.
 const userRepository = require("../user/user.repository");
 const walletRepository = require("./wallet.repository");
 const otpService = require("../otp/otp.service");
 const authService = require("../auth/auth.service");
 const bcrypt = require("bcrypt");
-const tokenUtil = require("../../utils/jwt");
-const { httpError } = require("../../utils/httpError");
-const { parseAmount } = require("../../utils/amount");
-const { computePinBinding } = require("../../utils/pinBinding");
-const { isValidPasswordOrPin } = require("../../utils/validators");
-const { maskEmail } = require("../../utils/mask");
-
-const MAX_PIN_ATTEMPTS = 5;
-const PIN_LOCK_MINUTES = 15;
+const tokenUtil = require("../../utils/auth/jwt");
+const { httpError } = require("../../utils/common/http");
+const { computePinBinding } = require("../../utils/security/pinBinding");
+const { isValidPasswordOrPin } = require("../../utils/common/validators");
+const { maskEmail } = require("../../utils/common/text");
+const { PIN_POLICY_DEFAULTS } = require("../../utils/auth/authHelpers");
+const { createWalletCoreService } = require("./wallet.helpers");
 
 const walletService = {
-  async getWalletByUserId(userId) {
-    if (!userId) {
-      throw httpError(400, "Thiếu thông tin người dùng để lấy số dư");
-    }
-    const wallet = await walletRepository.getWalletBalanceByUserId(userId);
-    if (!wallet) {
-      throw httpError(404, "Không tìm thấy ví của người dùng");
-    }
-    return {
-      balance: wallet.balance,
-    };
-  },
-
-  async checkTransferEligibility({ userId, amount }) {
-    if (amount === undefined || amount === null || amount === "") {
-      throw httpError(400, "Thiếu dữ liệu để kiểm tra");
-    }
-    const amountNum = parseAmount(amount);
-    const wallet = await this.getWalletByUserId(userId);
-    const currentBalance = wallet.balance;
-    return {
-      is_eligible: Number(currentBalance) >= amountNum,
-      wallet_balance: currentBalance,
-    };
-  },
+  ...createWalletCoreService({ walletRepository }),
 
   async checkPin({
     userId,
@@ -51,7 +26,6 @@ const walletService = {
     if (!userId || !pin) {
       throw httpError(400, "Thiếu thông tin để kiểm tra mã pin");
     }
-    // PIN phải là chuỗi đúng 6 số: chặn sớm, tránh bcrypt.compare ném lỗi 500 khi pin không phải string
     if (!isValidPasswordOrPin(pin)) {
       throw httpError(400, "Mã PIN không hợp lệ");
     }
@@ -59,24 +33,23 @@ const walletService = {
       throw httpError(400, "Thiếu mã chống trùng lặp giao dịch");
     }
 
+    const { MAX_ATTEMPTS, LOCK_MINUTES } = PIN_POLICY_DEFAULTS;
     const binding = computePinBinding(action, params);
 
-    // Trừ lượt thử TRƯỚC khi so PIN (1 câu SQL atomic) để request song song không lách được giới hạn.
     const claimed = await userRepository.claimPinAttempt({
       userId,
-      maxAttempts: MAX_PIN_ATTEMPTS,
-      lockMinutes: PIN_LOCK_MINUTES,
+      maxAttempts: MAX_ATTEMPTS,
+      lockMinutes: LOCK_MINUTES,
     });
 
     if (!claimed) {
-      // Không trừ được lượt: hoặc chưa có PIN, hoặc đang bị khoá
       const state = await userRepository.getPinState(userId);
       if (!state?.pin_hash) {
         throw httpError(400, "Người dùng chưa thiết lập mã pin");
       }
       throw httpError(
         403,
-        `Bạn đã nhập sai PIN quá nhiều lần. Vui lòng thử lại sau ${PIN_LOCK_MINUTES} phút`,
+        `Bạn đã nhập sai PIN quá nhiều lần. Vui lòng thử lại sau ${LOCK_MINUTES} phút`,
       );
     }
 
@@ -84,26 +57,22 @@ const walletService = {
     const isCorrectPin = await bcrypt.compare(pin, claimed.pin_hash);
 
     if (!isCorrectPin) {
-      if (attempts >= MAX_PIN_ATTEMPTS) {
+      if (attempts >= MAX_ATTEMPTS) {
         throw httpError(
           403,
-          `Bạn đã nhập sai PIN ${MAX_PIN_ATTEMPTS} lần. Tạm khóa ${PIN_LOCK_MINUTES} phút`,
+          `Bạn đã nhập sai PIN ${MAX_ATTEMPTS} lần. Tạm khóa ${LOCK_MINUTES} phút`,
         );
       }
       return {
         is_correct: false,
-        remaining_attempts: MAX_PIN_ATTEMPTS - attempts,
+        remaining_attempts: MAX_ATTEMPTS - attempts,
       };
     }
 
-    // Kích hoạt thử thách bảo mật bổ sung (Step-Up OTP Challenge) khi điểm rủi ro cao
-    // hoặc khi vừa nhập sai PIN từ 2 lần trở lên trước khi nhập đúng ở lần thứ 3-4.
-    // Không reset pin_failed_attempts trước khi người dùng hoàn tất bước xác thực bổ sung
-    // để tránh trường hợp bấm tắt hộp thoại rồi nhập lại PIN đúng sẽ bỏ qua thử thách.
     if (riskChallenge || attempts >= 3) {
       const heldAttempts = Math.min(
         Math.max(attempts - 1, 2),
-        MAX_PIN_ATTEMPTS - 1,
+        MAX_ATTEMPTS - 1,
       );
       await userRepository.holdPinChallengeAttempt({
         userId,

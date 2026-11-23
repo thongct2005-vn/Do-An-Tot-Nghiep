@@ -1,25 +1,11 @@
+// otp.service.js: Nghiệp vụ tạo, giới hạn gửi lại, khóa sai nhiều lần và xác thực mã OTP email.
 const otpRepository = require("./otp.repository");
 const { uuidv7 } = require("uuidv7");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
-
-const { sendOtpEmail } = require("../../utils/mailer");
-
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MINUTES = 5;
-const OTP_EXPIRE_MINUTES = 5;
-const RESEND_COOLDOWN_SECONDS = 60;
-const OTP_PATTERN = /^\d{6}$/;
-
-const { httpError } = require("../../utils/httpError");
-
-function requireEmail(email) {
-  const normalized = typeof email === "string" ? email.trim() : "";
-  if (!normalized) {
-    throw httpError(400, "Thiếu email");
-  }
-  return normalized;
-}
+const { sendOtpEmail } = require("../../utils/notifications/mailer");
+const { httpError } = require("../../utils/common/http");
+const { OTP_POLICY, OTP_PATTERN, requireEmail } = require("./otp.helpers");
 
 const otpService = {
   async generateAndSaveOtp({ email }) {
@@ -40,7 +26,7 @@ const otpService = {
       if (
         !existing.used_at &&
         now - new Date(existing.created_at).getTime() <
-          RESEND_COOLDOWN_SECONDS * 1000
+          OTP_POLICY.RESEND_COOLDOWN_SECONDS * 1000
       ) {
         throw httpError(429, "Vui lòng đợi một lúc trước khi yêu cầu mã mới");
       }
@@ -53,21 +39,21 @@ const otpService = {
       await otpRepository.updateOtp({
         email: normalizedEmail,
         otpHash,
-        expiredMinutes: OTP_EXPIRE_MINUTES,
+        expiredMinutes: OTP_POLICY.EXPIRE_MINUTES,
       });
     } else {
       await otpRepository.createOtp({
         id: uuidv7(),
         email: normalizedEmail,
         otpHash,
-        expiredMinutes: OTP_EXPIRE_MINUTES,
+        expiredMinutes: OTP_POLICY.EXPIRE_MINUTES,
       });
     }
 
     await sendOtpEmail({
       to: normalizedEmail,
       otp,
-      expiresInMinutes: OTP_EXPIRE_MINUTES,
+      expiresInMinutes: OTP_POLICY.EXPIRE_MINUTES,
     });
 
     return {
@@ -100,19 +86,21 @@ const otpService = {
     if (!isMatch) {
       const row = await otpRepository.registerFailedAttempt({
         email: normalizedEmail,
-        maxAttempts: MAX_FAILED_ATTEMPTS,
-        lockMinutes: LOCK_MINUTES,
+        maxAttempts: OTP_POLICY.MAX_FAILED_ATTEMPTS,
+        lockMinutes: OTP_POLICY.LOCK_MINUTES,
       });
-      const attempts = Number(row?.failed_attempts ?? MAX_FAILED_ATTEMPTS);
+      const attempts = Number(
+        row?.failed_attempts ?? OTP_POLICY.MAX_FAILED_ATTEMPTS,
+      );
 
-      if (attempts >= MAX_FAILED_ATTEMPTS) {
+      if (attempts >= OTP_POLICY.MAX_FAILED_ATTEMPTS) {
         throw httpError(
           403,
-          `Bạn đã nhập sai ${MAX_FAILED_ATTEMPTS} lần. Tài khoản bị tạm khóa ${LOCK_MINUTES} phút`,
+          `Bạn đã nhập sai ${OTP_POLICY.MAX_FAILED_ATTEMPTS} lần. Tài khoản bị tạm khóa ${OTP_POLICY.LOCK_MINUTES} phút`,
         );
       }
 
-      const remainingAttempts = MAX_FAILED_ATTEMPTS - attempts;
+      const remainingAttempts = OTP_POLICY.MAX_FAILED_ATTEMPTS - attempts;
       throw httpError(
         400,
         `Mã OTP không chính xác. Bạn còn ${remainingAttempts} lần thử`,

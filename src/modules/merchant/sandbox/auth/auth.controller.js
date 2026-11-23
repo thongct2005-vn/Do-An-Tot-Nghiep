@@ -1,31 +1,13 @@
-const { successResponse } = require("../../../../utils/apiResponse");
+// auth.controller.js: Controller xử lý HTTP xác thực và quản lý cookie refresh token cho Merchant Sandbox.
+const { successResponse, createRefreshCookieHelpers } = require("../../../../utils/common/http");
 const merchantAuthService = require("./auth.service");
-const tokenUtil = require("../../../../utils/jwt");
+const tokenUtil = require("../../../../utils/auth/jwt");
 
-const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
-  path: "/sb/api/v2/merchant/sandbox/auth",
-};
-
-function setRefreshCookie(res, refreshToken) {
-  res.cookie(tokenUtil.MERCHANT_SANDBOX_REFRESH_COOKIE, refreshToken, {
-    ...REFRESH_COOKIE_OPTIONS,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+const { setRefreshCookie, clearRefreshCookie, publicToken } =
+  createRefreshCookieHelpers({
+    cookieName: tokenUtil.MERCHANT_SANDBOX_REFRESH_COOKIE,
+    path: "/sb/api/v2/merchant/sandbox/auth",
   });
-}
-
-function clearRefreshCookie(res) {
-  res.clearCookie(
-    tokenUtil.MERCHANT_SANDBOX_REFRESH_COOKIE,
-    REFRESH_COOKIE_OPTIONS,
-  );
-}
-
-function publicToken(token) {
-  return { access_token: token.access_token };
-}
 
 const merchantAuthController = {
   async login(req, res, next) {
@@ -99,7 +81,6 @@ const merchantAuthController = {
       next(e);
     }
   },
-
 
   async register(req, res, next) {
     try {

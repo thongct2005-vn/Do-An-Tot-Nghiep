@@ -1,3 +1,4 @@
+// wallet.repository.js: Truy vấn số dư ví merchant dùng chung cho production và sandbox.
 const pool = require("../../../../config/database");
 
 const walletRepository = {

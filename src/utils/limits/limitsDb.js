@@ -1,5 +1,5 @@
 const pool = require("../../config/database");
-const { httpError } = require("../httpError");
+const { httpError } = require("../common/http");
 
 // --- Cấu hình & trạng thái cache ---
 

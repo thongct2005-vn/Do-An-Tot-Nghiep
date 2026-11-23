@@ -1,88 +1,11 @@
+// dashboard.repository.js: Truy vấn KPI dòng tiền, phân bổ trạng thái và chuỗi thời gian giao dịch cho Admin Dashboard.
 const pool = require("../../config/database");
 const {
-  ensureRollupConsistent,
-  computeHybridWindow,
-} = require("./dashboardRollup");
-
-/**
- * Cấu hình DATE_TRUNC và định dạng TO_CHAR tương ứng theo Asia/Ho_Chi_Minh.
- * Dùng DATE_TRUNC để PostgreSQL ước lượng đúng số lượng nhóm (HashAggregate, tránh external sort).
- * @param {"hour" | "day" | "week" | "month"} groupBy
- * @returns {{ unit: string, format: string }}
- */
-function getTruncConfig(groupBy) {
-  switch (groupBy) {
-    case "hour":
-      return { unit: "hour", format: "YYYY-MM-DD HH24" };
-    case "week":
-      return { unit: "week", format: "YYYY-MM-DD" };
-    case "month":
-      return { unit: "month", format: "YYYY-MM" };
-    case "day":
-    default:
-      return { unit: "day", format: "YYYY-MM-DD" };
-  }
-}
-
-function buildHybridBranches({
-  startInstant,
-  nextDayInstant,
-  rollupUntil,
-  rollupBranchSql,
-  tailBranchSql,
-}) {
-  const { useRollup, useTail, splitInstant } = computeHybridWindow(
-    startInstant,
-    nextDayInstant,
-    rollupUntil
-  );
-
-  const branches = [];
-  const params = [];
-
-  if (useRollup) {
-    const startIdx = `$${params.length + 1}`;
-    const endIdx = `$${params.length + 2}`;
-    params.push(startInstant, splitInstant);
-    branches.push(rollupBranchSql(startIdx, endIdx));
-  }
-
-  if (useTail) {
-    const startIdx = `$${params.length + 1}`;
-    const endIdx = `$${params.length + 2}`;
-    params.push(splitInstant, nextDayInstant);
-    branches.push(tailBranchSql(startIdx, endIdx));
-  }
-
-  return { branches, params };
-}
-
-async function resolveConsistencyCutoff(options = {}) {
-  if (options && options.rollupUntil !== undefined) {
-    return options.rollupUntil;
-  }
-  if (options && options.ensureConsistent === false) {
-    return null;
-  }
-  return ensureRollupConsistent(pool);
-}
-
-async function queryHybridWithFallback(startInstant, nextDayInstant, rollupUntil, buildFn, queryBuilder) {
-  const exec = async (cutoff) => {
-    const { branches, params } = buildFn(cutoff);
-    if (branches.length === 0) return null;
-    const { rows } = await pool.query(queryBuilder(branches), params);
-    return rows;
-  };
-  try {
-    return await exec(rollupUntil);
-  } catch (err) {
-    if (err && err.code === "42P01" && rollupUntil) {
-      return await exec(null);
-    }
-    throw err;
-  }
-}
+  getTruncConfig,
+  buildHybridBranches,
+  resolveConsistencyCutoff,
+  queryHybridWithFallback,
+} = require("./dashboard.helpers");
 
 const adminDashboardRepository = {
   /**

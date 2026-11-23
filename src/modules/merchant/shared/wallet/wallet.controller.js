@@ -1,4 +1,5 @@
-const { successResponse } = require("../../../../utils/apiResponse");
+// wallet.controller.js: Factory controller xử lý HTTP kiểm tra điều kiện số dư cho Merchant.
+const { successResponse } = require("../../../../utils/common/http");
 
 function createWalletController(walletService) {
   return {

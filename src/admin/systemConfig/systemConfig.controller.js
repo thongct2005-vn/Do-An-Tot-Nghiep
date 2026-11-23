@@ -1,20 +1,7 @@
-const { successResponse } = require("../../utils/apiResponse");
+// systemConfig.controller.js: Controller quản lý xem, mô phỏng tác động và cập nhật cấu hình hệ thống Admin.
+const { successResponse, extractRawBody } = require("../../utils/common/http");
 const adminSystemConfigService = require("./systemConfig.service");
-
-function extractConfigPayload(rawBody) {
-  const body = rawBody && typeof rawBody === "object" && !Array.isArray(rawBody) ? rawBody : {};
-  if (Object.prototype.hasOwnProperty.call(body, "config")) {
-    return body.config;
-  }
-  if (Object.prototype.hasOwnProperty.call(body, "proposed_config")) {
-    return body.proposed_config;
-  }
-  const rest = { ...body };
-  delete rest.reason;
-  delete rest.dry_run;
-  delete rest.key;
-  return rest;
-}
+const { extractConfigPayload } = require("./systemConfig.helpers");
 
 const adminSystemConfigController = {
   async listConfigs(req, res, next) {
@@ -47,7 +34,7 @@ const adminSystemConfigController = {
 
   async previewConfigUpdate(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body;
+      const body = extractRawBody(req);
       const result = await adminSystemConfigService.previewConfigUpdate(
         req.params.key,
         extractConfigPayload(body)
@@ -65,7 +52,7 @@ const adminSystemConfigController = {
 
   async updateConfig(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body || {};
+      const body = extractRawBody(req) || {};
       const dryRun =
         Boolean(body?.dry_run) ||
         String(req.query?.dry_run || "").toLowerCase() === "true";

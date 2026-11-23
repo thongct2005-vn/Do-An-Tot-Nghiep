@@ -2,7 +2,7 @@
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const { httpError } = require("../utils/httpError");
+const { httpError } = require("../utils/common/http");
 
 const KYC_ROOT = path.join(process.cwd(), "private", "kyc");
 const POSTPAID_PROOF_ROOT = path.join(process.cwd(), "private", "postpaid-proof");

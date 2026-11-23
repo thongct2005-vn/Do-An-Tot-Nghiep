@@ -175,7 +175,7 @@ test('OTP and TOTP auth paths persist one event each, rejected/challenge paths p
   const auth = require('../src/modules/auth/auth.service');
   const repo = require('../src/modules/auth/auth.repository');
   const otpRepo = require('../src/modules/otp/otp.repository');
-  const totp = require('../src/utils/totp');
+  const totp = require('../src/utils/auth/totp');
   const bcrypt = require('bcrypt');
   const {createHmac} = require('node:crypto');
   const user = {id:'event-user',phone:'0912000111',email:'fixture@example.invalid',role:'USER',status:'ACTIVE',totp_enabled:false,must_change_password:false,password_hash:'fixture'};
@@ -218,7 +218,7 @@ test('OTP and TOTP auth paths persist one event each, rejected/challenge paths p
 
 test('login stats routes authorize ADMIN and agree across production/sandbox prefixes', async () => {
   const previousAuditIds = await AdminActionLog.distinct('_id');
-  const jwt = require('../src/utils/jwt');
+  const jwt = require('../src/utils/auth/jwt');
   const adminRepo = require('../src/admin/auth/auth.repository');
   const original = adminRepo.findAdminSessionById;
   const admin = jwt.generateAuthTokens({id:'admin-test',role:'ADMIN'});

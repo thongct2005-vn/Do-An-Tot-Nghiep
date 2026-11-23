@@ -1,5 +1,6 @@
+// otp.controller.js: Controller xử lý HTTP gửi và xác thực mã OTP email.
 const otpService = require("./otp.service");
-const { successResponse } = require("../../utils/apiResponse");
+const { successResponse } = require("../../utils/common/http");
 
 const otpController = {
   async generateOtp(req, res, next) {

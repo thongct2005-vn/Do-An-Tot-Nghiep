@@ -1,3 +1,4 @@
+// kyc.repository.js: Truy vấn và cập nhật hồ sơ định danh điện tử eKYC trong bảng user_kyc.
 const pool = require("../../config/database");
 
 const kycRepository = {

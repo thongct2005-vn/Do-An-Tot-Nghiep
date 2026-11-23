@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { getCurrentMonthBoundsInVietnam } = require("../../utils/dateRange");
+const { getCurrentMonthBoundsInVietnam } = require("../../utils/common/dateRange");
 
 const loginStatsDailyUserSchema = new mongoose.Schema(
   {

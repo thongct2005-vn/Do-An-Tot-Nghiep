@@ -1,5 +1,5 @@
 const kycRepository = require("./kyc.repository");
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 
 const MESSAGES = {
   sender: "Tài khoản chưa xác thực danh tính",

@@ -1,17 +1,27 @@
+// auth.repository.js: Truy vấn tài khoản, khóa sai mật khẩu và refresh token của Merchant Sandbox.
 const pool = require("../../../../config/database");
-const { claimEmail } = require("../../../../utils/emailClaim");
-const tokenUtil = require("../../../../utils/jwt");
-const { encryptSecretKey } = require("../../../../utils/keys/secretKey");
+const { claimEmail } = require("../../../../utils/db/postgres");
+const tokenUtil = require("../../../../utils/auth/jwt");
+const { encryptSecretKey } = require("../../../../utils/security/keys");
+const {
+  createLoginLockoutMethods,
+  createRefreshTokenMethods,
+} = require("../../../../utils/auth/authRepositoryBase");
 
 const merchantAuthRepository = {
+  ...createLoginLockoutMethods({ db: pool, identifierCol: "phone" }),
+  ...createRefreshTokenMethods({
+    db: pool,
+    hashRefresh: true,
+    clearFcmOnLogout: true,
+  }),
+
   async findMerchantByPhone(phone) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
-      FROM users u
-      WHERE u.phone = $1
-      `,
+      `SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
+              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+         FROM users u
+        WHERE u.phone = $1`,
       [phone],
     );
     return result.rows[0];
@@ -19,12 +29,10 @@ const merchantAuthRepository = {
 
   async findMerchantByEmail(email) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
-      FROM users u
-      WHERE u.email = $1
-      `,
+      `SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
+              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+         FROM users u
+        WHERE u.email = $1`,
       [email],
     );
     return result.rows[0];
@@ -32,62 +40,22 @@ const merchantAuthRepository = {
 
   async findMerchantApiKey(apiKey) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
-             u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
-      FROM users u
-      WHERE u.api_key = $1
-      `,
+      `SELECT u.id, u.phone, u.full_name, u.email, u.password_hash, u.must_change_password, u.status, u.failed_login_attempts,
+              u.locked_until, (u.locked_until > NOW()) AS is_locked, u.balance, u.role, u.call_back_url, u.api_key
+         FROM users u
+        WHERE u.api_key = $1`,
       [apiKey],
     );
     return result.rows[0];
   },
 
-  async resetFailedLogin(phone) {
-    await pool.query(
-      `
-      UPDATE users
-      SET failed_login_attempts = 0, locked_until = NULL
-      WHERE phone = $1
-      `,
-      [phone],
-    );
-  },
-
-  async registerFailedLogin({ phone, maxAttempts, lockMinutes }) {
-    const result = await pool.query(
-      `
-      UPDATE users
-      SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1,
-          locked_until = CASE
-            WHEN COALESCE(failed_login_attempts, 0) + 1 >= $2::INT
-            THEN NOW() + ($3::TEXT || ' minutes')::INTERVAL
-            ELSE locked_until
-          END
-      WHERE phone = $1
-      RETURNING failed_login_attempts
-      `,
-      [phone, maxAttempts, lockMinutes],
-    );
-    return result.rows[0];
-  },
-
-  async updateRefeshToken({ refreshToken, userId }) {
-    await pool.query(`UPDATE users SET refresh_token = $1 WHERE id = $2`, [
-      tokenUtil.hashToken(refreshToken),
-      userId,
-    ]);
-  },
-
   async findMerchantByRefreshToken(refreshToken) {
     const result = await pool.query(
-      `
-      SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status, u.must_change_password
-      FROM users u
-      WHERE u.refresh_token = $1
-        AND u.status = 'ACTIVE'
-        AND u.role = 'MERCHANT'
-      `,
+      `SELECT u.id, u.phone, u.full_name, u.balance, u.role, u.status, u.must_change_password
+         FROM users u
+        WHERE u.refresh_token = $1
+          AND u.status = 'ACTIVE'
+          AND u.role = 'MERCHANT'`,
       [tokenUtil.hashToken(refreshToken)],
     );
     return result.rows[0];
@@ -113,10 +81,8 @@ const merchantAuthRepository = {
       email = await claimEmail(client, email);
 
       await client.query(
-        `
-        INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key, secret_key)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        `,
+        `INSERT INTO users(id, phone, phone_hash, full_name, email, password_hash, role, call_back_url, api_key, secret_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           userId,
           phone,
@@ -132,10 +98,8 @@ const merchantAuthRepository = {
       );
 
       await client.query(
-        `
-        INSERT INTO user_kyc(id, user_id, address)
-        VALUES ($1, $2, $3)
-        `,
+        `INSERT INTO user_kyc(id, user_id, address)
+         VALUES ($1, $2, $3)`,
         [phone, userId, address],
       );
 
@@ -146,13 +110,6 @@ const merchantAuthRepository = {
     } finally {
       client.release();
     }
-  },
-
-  async logout(userId) {
-    await pool.query(
-      "UPDATE users SET refresh_token = $1, fcm_token = $2 WHERE id = $3",
-      [null, null, userId],
-    );
   },
 };
 

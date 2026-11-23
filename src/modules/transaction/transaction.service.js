@@ -1,28 +1,26 @@
+// transaction.service.js: Nghiệp vụ chuyển tiền, nạp/rút, thanh toán QR, xem trước phí và xuất sao kê lịch sử cho User.
 const transactionRepository = require("./transaction.repository");
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 const {
   parseAmountInRange,
   assertBankFundingMinAmount,
-} = require("../../utils/amount");
+} = require("../../utils/common/amount");
 const pool = require("../../config/database");
 const {
   getEffectiveTransactionLimit,
   getPositiveIntConfig,
 } = require("../../utils/limits/limitsDb");
-const {
-  getTransactionLimitsSummary,
-  resolveRole,
-} = require("../../utils/limits/dailyLimit");
+const { getTransactionLimitsSummary } = require("../../utils/limits/dailyLimit");
 const {
   resolveExportRange,
   resolveOneYearRange,
-} = require("../../utils/dateRange");
+} = require("../../utils/common/dateRange");
 const {
   buildTransactionsXlsx,
   buildExportFileName,
-} = require("../../utils/exportExcel");
-const { sendTransactionExportEmail } = require("../../utils/mailer");
-const { maskEmail } = require("../../utils/mask");
+} = require("../../utils/files/exportExcel");
+const { sendTransactionExportEmail } = require("../../utils/notifications/mailer");
+const { maskEmail } = require("../../utils/common/text");
 const { assertKyc, assertKycBoth } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
@@ -32,21 +30,13 @@ const {
   normalizeHistoryStatus,
   normalizeAmountRange,
   normalizeFundingSourceFilter,
-} = require("../../utils/historyFilters");
-
-const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT", "REFUND"];
-const TRANSACTION_DIRECTIONS = ["IN", "OUT"];
-const USER_FUNDING_ALIAS_MAP = {
-  LUMAPAY: "LUMAPAY",
-  MAIN_WALLET: "LUMAPAY",
-  WALLET: "LUMAPAY",
-  POSTPAID: "POSTPAID",
-};
-
-async function resolveActorRole(userId, explicitRole = null) {
-  if (explicitRole) return explicitRole;
-  return (await resolveRole(pool, userId)) || "USER";
-}
+} = require("../../utils/payment/historyFilters");
+const {
+  TRANSACTION_TYPES,
+  TRANSACTION_DIRECTIONS,
+  USER_FUNDING_ALIAS_MAP,
+  resolveActorRole,
+} = require("./transaction.helpers");
 
 const TransactionService = {
   async transferMoney({

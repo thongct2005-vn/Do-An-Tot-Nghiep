@@ -1,15 +1,16 @@
-const { successResponse } = require("../../utils/apiResponse");
+// merchants.controller.js: Controller xử lý các endpoint quản lý Merchant, biểu phí và xuất Excel Admin.
+const { successResponse, extractRawBody } = require("../../utils/common/http");
 const adminMerchantsService = require("./merchants.service");
 const adminMerchantFeeService = require("./merchantFee.service");
 const { sendXlsxResponse } = require("../transaction/transaction.export");
-const { resolveRequestBase, sendKycImageFile } = require("../../utils/kycImage");
+const { resolveRequestBase, sendKycImageFile } = require("../../utils/files/imageStorage");
 
 const adminMerchantsController = {
   async createMerchant(req, res, next) {
     try {
       const result = await adminMerchantsService.createMerchant({
         adminId: req.user?.user_id,
-        body: Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body,
+        body: extractRawBody(req),
       });
       return successResponse(res, 201, "Tạo đối tác merchant mới thành công", result);
     } catch (error) {
@@ -22,7 +23,7 @@ const adminMerchantsController = {
       const result = await adminMerchantsService.updateMerchantStatus({
         adminId: req.user.user_id,
         merchantId: req.params.id,
-        body: Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body,
+        body: extractRawBody(req),
       });
       return successResponse(res, 200, "Cập nhật trạng thái merchant thành công", result);
     } catch (error) {
@@ -37,7 +38,7 @@ const adminMerchantsController = {
         merchantId: req.params.id,
         // Global sanitization can strip invalid phone/email characters. Validate
         // its original snapshot so malformed input cannot become a valid update.
-        body: Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body,
+        body: extractRawBody(req),
       });
       return successResponse(res, 200, "Cập nhật hồ sơ merchant thành công", result);
     } catch (error) {

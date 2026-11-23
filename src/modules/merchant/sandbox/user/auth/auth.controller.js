@@ -1,5 +1,8 @@
-const { successResponse } = require("../../../../../utils/apiResponse");
+// auth.controller.js: Controller xử lý HTTP đăng nhập, đăng ký và thông tin phiên cho User Sandbox.
+const { successResponse } = require("../../../../../utils/common/http");
+const { buildBasicUserInfo } = require("../../../../../utils/auth/authHelpers");
 const authService = require("./auth.service");
+
 const authController = {
   async isPhoneExist(req, res, next) {
     try {
@@ -59,18 +62,11 @@ const authController = {
   async getMe(req, res, next) {
     try {
       const { user_id: userId, phone, full_name: fullName } = req.user;
-      const result = {
-        user_info: {
-          user_id: userId,
-          phone: phone,
-          full_name: fullName,
-        },
-      };
       return successResponse(
         res,
         200,
         "Lấy thông tin người dùng thành công",
-        result,
+        { user_info: buildBasicUserInfo({ id: userId, phone, full_name: fullName }) },
       );
     } catch (e) {
       next(e);

@@ -1,5 +1,7 @@
-const { successResponse } = require("../../../../utils/apiResponse");
-const { getPublicBaseUrl } = require("../../../../utils/url/publicUrl");
+// paymentRequest.controller.js: Factory controller xử lý HTTP tạo đơn QR và tra cứu đơn hàng cho Merchant.
+const { successResponse } = require("../../../../utils/common/http");
+const { getPublicBaseUrl } = require("../../../../utils/security/url");
+
 function createPaymentRequestController(paymentMerchantRequestService) {
   return {
     async createDynamicQRToken(req, res, next) {

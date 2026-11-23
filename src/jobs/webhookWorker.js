@@ -1,6 +1,6 @@
 const webhookRepository = require("../modules/webhook/webhook.repository");
-const { postCallBack } = require("../utils/webhookClient");
-const { decryptSecretKey } = require("../utils/keys/secretKey");
+const { postCallBack } = require("../utils/notifications/webhookClient");
+const { decryptSecretKey } = require("../utils/security/keys");
 
 const POLL_INTERVAL_MS = Number(process.env.WEBHOOK_POLL_MS) || 5000;
 const BATCH_SIZE = 10;

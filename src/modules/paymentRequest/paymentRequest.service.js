@@ -1,13 +1,18 @@
+// paymentRequest.service.js: Nghiệp vụ tạo và giải mã mã QR tĩnh / QR động cho người dùng.
 const paymentRequestRepository = require("./paymentRequest.repository");
 const walletRepository = require("../wallet/wallet.repository");
-const { generateReferenceCode } = require("../../utils/generateReferenceCode");
+const { generateReferenceCode } = require("../../utils/payment/qrAndRef");
 const { uuidv7 } = require("uuidv7");
 const userRepository = require("../user/user.repository");
-const { httpError } = require("../../utils/httpError");
-const { parseAmountInRange } = require("../../utils/amount");
+const { httpError } = require("../../utils/common/http");
+const { parseAmountInRange } = require("../../utils/common/amount");
 const { getEffectiveTransactionLimit } = require("../../utils/limits/limitsDb");
 const pool = require("../../config/database");
-
+const {
+  STATIC_QR_TOKEN_REGEX,
+  DYNAMIC_QR_REFERENCE_REGEX,
+  assertQrDescription,
+} = require("./paymentRequest.helpers");
 
 const paymentRequestService = {
   async createStaticQRToken(userId) {
@@ -39,7 +44,7 @@ const paymentRequestService = {
     if (!token) {
       throw httpError(400, "Thiếu mã QR để tra cứu");
     }
-    if (!/^(?:LumaPay|Mio):[A-Za-z0-9]{8,64}$/.test(String(token).trim())) {
+    if (!STATIC_QR_TOKEN_REGEX.test(String(token).trim())) {
       throw httpError(404, "Mã QR không hợp lệ");
     }
     const result =
@@ -67,12 +72,8 @@ const paymentRequestService = {
       transactionType: "TRANSFER",
     });
     const numAmount = parseAmountInRange(amount, qrRule, "nhận");
+    assertQrDescription(description);
 
-    if (description !== undefined && description !== null) {
-      if (typeof description !== "string" || description.length > 50) {
-        throw httpError(400, "Mô tả quá dài");
-      }
-    }
     const { id: destinationUserId } =
       await walletRepository.getWalletBalanceByUserId(userId);
     if (!destinationUserId) {
@@ -80,21 +81,20 @@ const paymentRequestService = {
     }
     const id = uuidv7();
     const referenceCode = generateReferenceCode(16);
-    const result = await paymentRequestRepository.insertPaymentRequest({
+    return await paymentRequestRepository.insertPaymentRequest({
       id,
       referenceCode,
       destinationUserId,
       amount: numAmount,
       description,
     });
-    return result;
   },
 
   async getUserAndWalletByDynamicQRToken({ referenceCode, requestingUserId }) {
     if (!referenceCode) {
       throw httpError(400, "Thiếu mã QR để tra cứu");
     }
-    if (!/^[A-Za-z0-9]{8,64}$/.test(String(referenceCode).trim())) {
+    if (!DYNAMIC_QR_REFERENCE_REGEX.test(String(referenceCode).trim())) {
       throw httpError(404, "Mã QR không hợp lệ");
     }
 
@@ -148,4 +148,5 @@ const paymentRequestService = {
     };
   },
 };
+
 module.exports = paymentRequestService;

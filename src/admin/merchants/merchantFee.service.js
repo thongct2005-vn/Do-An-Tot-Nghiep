@@ -1,195 +1,25 @@
+// merchantFee.service.js: Nghiệp vụ xem, mô phỏng và cập nhật biểu phí mặc định hệ thống (USER/MERCHANT) cùng lịch sử Admin.
 const pool = require("../../config/database");
-const { uuidv7 } = require("uuidv7");
-const { httpError } = require("../../utils/httpError");
-const { formatVnd } = require("../../utils/amount");
+const { httpError } = require("../../utils/common/http");
+const { UUID_REGEX } = require("../../utils/common/validators");
 const { invalidateLimitsCache } = require("../../utils/limits/limitsDb");
+const { assertValidReason, parseAdminPagination } = require("../shared/adminHelpers");
 const merchantFeeService = require("../../modules/merchant/production/fee/fee.service");
 const {
   normalizeSystemFeeConfig,
   validateFeeConfigInput,
   mergeEffectiveFeeConfig,
-  previewFeeCalculation,
 } = require("../../modules/fee/feeCalculator");
-
-const DEFAULT_SAMPLE_AMOUNTS = [10_000, 50_000, 100_000, 1_000_000, 10_000_000];
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function assertValidReason(rawReason) {
-  if (typeof rawReason !== "string") {
-    throw httpError(400, "Vui lòng nhập lý do cập nhật cấu hình phí");
-  }
-  const clean = rawReason.trim();
-  if (clean.length < 5 || clean.length > 500) {
-    throw httpError(400, "Lý do thay đổi cấu hình phí phải từ 5 đến 500 ký tự");
-  }
-  return clean;
-}
-
-function normalizeRoleParam(rawRole) {
-  const role = String(rawRole || "MERCHANT").trim().toUpperCase();
-  if (!["MERCHANT", "USER"].includes(role)) {
-    throw httpError(
-      400,
-      "Đối tượng áp dụng biểu phí không hợp lệ, chỉ hỗ trợ tài khoản đối tác hoặc người dùng",
-    );
-  }
-  return role;
-}
-
-function parseSampleAmounts(rawSamples) {
-  if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
-    return DEFAULT_SAMPLE_AMOUNTS;
-  }
-  const parsed = rawSamples
-    .map((n) => Number(n))
-    .filter((n) => Number.isSafeInteger(n) && n > 0);
-  if (parsed.length === 0) {
-    throw httpError(400, "Danh sách mức tiền mẫu không hợp lệ");
-  }
-  return parsed.slice(0, 20);
-}
-
-function simulateFeeSamples({
-  oldConfig,
-  newConfig,
-  role = "MERCHANT",
-  alreadyWithdrawn = 0,
-  sampleAmounts = DEFAULT_SAMPLE_AMOUNTS,
-}) {
-  return sampleAmounts.map((amount) => {
-    const oldQr = previewFeeCalculation({
-      transactionType: "PAYMENT",
-      role,
-      amount,
-      effectiveConfig: oldConfig,
-    });
-    const newQr = previewFeeCalculation({
-      transactionType: "PAYMENT",
-      role,
-      amount,
-      effectiveConfig: newConfig,
-    });
-    const oldWithdraw = previewFeeCalculation({
-      transactionType: "WITHDRAW",
-      role,
-      amount,
-      effectiveConfig: oldConfig,
-      alreadyWithdrawn,
-    });
-    const newWithdraw = previewFeeCalculation({
-      transactionType: "WITHDRAW",
-      role,
-      amount,
-      effectiveConfig: newConfig,
-      alreadyWithdrawn,
-    });
-
-    const oldTransfer = previewFeeCalculation({
-      transactionType: "TRANSFER",
-      role,
-      amount,
-      effectiveConfig: oldConfig,
-    });
-    const newTransfer = previewFeeCalculation({
-      transactionType: "TRANSFER",
-      role,
-      amount,
-      effectiveConfig: newConfig,
-    });
-
-    return {
-      amount,
-      qr_payment: {
-        old_fee: oldQr.fee_amount,
-        new_fee: newQr.fee_amount,
-        old_net: oldQr.net_amount,
-        new_net: newQr.net_amount,
-      },
-      transfer_outbound: {
-        old_fee: oldTransfer.fee_amount,
-        new_fee: newTransfer.fee_amount,
-        old_total_debit: oldTransfer.total_debit_from_payer,
-        new_total_debit: newTransfer.total_debit_from_payer,
-      },
-      withdraw: {
-        old_fee: oldWithdraw.fee_amount,
-        new_fee: newWithdraw.fee_amount,
-        old_total_debit: oldWithdraw.total_debit_from_payer,
-        new_total_debit: newWithdraw.total_debit_from_payer,
-      },
-    };
-  });
-}
-
-function buildPersistableSystemConfig(merged) {
-  return {
-    rate_bps: merged.rate_bps,
-    min_fee: merged.min_fee,
-    max_fee: merged.max_fee,
-    free_threshold_amount: merged.free_threshold_amount,
-    transfer_fee_bps: merged.transfer_fee_bps ?? 0,
-    transfer_min_fee: merged.transfer_min_fee ?? 0,
-    transfer_max_fee: merged.transfer_max_fee ?? null,
-    withdraw_fee_bps: merged.withdraw_fee_bps,
-    withdraw_free_quota_per_month: merged.withdraw_free_quota_per_month,
-    tiers: Array.isArray(merged.tiers) ? merged.tiers : [],
-  };
-}
-
-function mergeSystemUpdate(currentRaw, validated, role) {
-  const current = normalizeSystemFeeConfig(currentRaw, role);
-  const next = {
-    rate_bps: validated.rate_bps !== undefined ? validated.rate_bps : current.rate_bps,
-    min_fee: validated.min_fee !== undefined ? validated.min_fee : current.min_fee,
-    max_fee:
-      validated.max_fee_unbounded === true
-        ? null
-        : validated.max_fee !== undefined
-          ? validated.max_fee
-          : current.max_fee,
-    free_threshold_amount:
-      validated.free_threshold_amount !== undefined
-        ? validated.free_threshold_amount
-        : current.free_threshold_amount,
-    transfer_fee_bps:
-      validated.transfer_fee_bps !== undefined
-        ? validated.transfer_fee_bps
-        : current.transfer_fee_bps,
-    transfer_min_fee:
-      validated.transfer_min_fee !== undefined
-        ? validated.transfer_min_fee
-        : current.transfer_min_fee,
-    transfer_max_fee:
-      validated.transfer_max_fee_unbounded === true
-        ? null
-        : validated.transfer_max_fee !== undefined
-          ? validated.transfer_max_fee
-          : current.transfer_max_fee,
-    withdraw_fee_bps:
-      validated.withdraw_fee_bps !== undefined
-        ? validated.withdraw_fee_bps
-        : current.withdraw_fee_bps,
-    withdraw_free_quota_per_month:
-      validated.withdraw_free_quota_per_month !== undefined
-        ? validated.withdraw_free_quota_per_month
-        : current.withdraw_free_quota_per_month,
-    tiers: validated.tiers !== undefined ? validated.tiers : current.tiers,
-  };
-
-  if (next.max_fee !== null && next.min_fee > next.max_fee) {
-    throw httpError(
-      400,
-      `Phí giao dịch tối thiểu (${formatVnd(next.min_fee)}) không được lớn hơn phí giao dịch tối đa (${formatVnd(next.max_fee)})`,
-    );
-  }
-  if (next.transfer_max_fee !== null && next.transfer_min_fee > next.transfer_max_fee) {
-    throw httpError(
-      400,
-      `Phí chuyển tiền tối thiểu (${formatVnd(next.transfer_min_fee)}) không được lớn hơn phí chuyển tiền tối đa (${formatVnd(next.transfer_max_fee)})`,
-    );
-  }
-  return buildPersistableSystemConfig(next);
-}
+const adminMerchantFeeRepository = require("./merchantFee.repository");
+const {
+  DEFAULT_SAMPLE_AMOUNTS,
+  ALLOWED_FEE_AUDIT_ACTIONS,
+  ALLOWED_FEE_CONFIG_KEYS,
+  normalizeRoleParam,
+  parseSampleAmounts,
+  simulateFeeSamples,
+  mergeSystemUpdate,
+} = require("./merchantFee.helpers");
 
 const adminMerchantFeeService = {
   DEFAULT_SAMPLE_AMOUNTS,
@@ -198,14 +28,9 @@ const adminMerchantFeeService = {
     const normalizedRole = normalizeRoleParam(role);
     const configKey =
       normalizedRole === "USER" ? "USER_FEE_CONFIG" : "MERCHANT_FEE_CONFIG";
-    const rowRes = await pool.query(
-      `SELECT key, value, description, updated_at, updated_by
-         FROM system_configs
-        WHERE key = $1
-        LIMIT 1`,
-      [configKey],
-    );
-    const row = rowRes.rows[0] || null;
+
+    const row =
+      await adminMerchantFeeRepository.getSystemFeeConfigRow(configKey);
     if (!row) {
       const roleLabel = normalizedRole === "USER" ? "người dùng" : "đối tác";
       throw httpError(500, `Hệ thống chưa có cấu hình biểu phí ${roleLabel}`);
@@ -235,8 +60,15 @@ const adminMerchantFeeService = {
       now,
       baseConfig: current.config,
     });
-    const proposedPlain = mergeSystemUpdate(current.config, validated, normalizedRole);
-    const proposedNormalized = normalizeSystemFeeConfig(proposedPlain, normalizedRole);
+    const proposedPlain = mergeSystemUpdate(
+      current.config,
+      validated,
+      normalizedRole,
+    );
+    const proposedNormalized = normalizeSystemFeeConfig(
+      proposedPlain,
+      normalizedRole,
+    );
     const samples = parseSampleAmounts(sampleAmounts);
 
     return {
@@ -281,132 +113,65 @@ const adminMerchantFeeService = {
     if (!adminId) {
       throw httpError(401, "Thiếu thông tin quản trị viên thực hiện");
     }
-    const cleanReason = assertValidReason(reason);
+    const cleanReason = assertValidReason(reason, {
+      min: 5,
+      max: 500,
+      requiredMessage: "Vui lòng nhập lý do cập nhật cấu hình phí",
+      lengthMessage: "Lý do thay đổi cấu hình phí phải từ 5 đến 500 ký tự",
+    });
     const actor = actorLabel || `admin:${adminId}`;
 
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const currentRes = await client.query(
-        `SELECT key, value FROM system_configs WHERE key = $1 FOR UPDATE`,
-        [configKey],
-      );
-      if (!currentRes.rows[0]) {
-        const roleLabel = normalizedRole === "USER" ? "người dùng" : "đối tác";
-        throw httpError(500, `Hệ thống chưa có cấu hình biểu phí ${roleLabel}`);
-      }
-      const oldPlain = buildPersistableSystemConfig(
-        normalizeSystemFeeConfig(currentRes.rows[0].value, normalizedRole),
-      );
-      const oldNormalized = normalizeSystemFeeConfig(oldPlain, normalizedRole);
-
-      const validated = validateFeeConfigInput(config, {
-        isOverride: false,
+    const { oldNormalized, newPlain, newNormalized, auditRow } =
+      await adminMerchantFeeRepository.updateDefaultFeeConfigTx({
+        configKey,
+        normalizedRole,
+        config,
+        adminId,
+        cleanReason,
+        actor,
         now,
-        baseConfig: oldNormalized,
       });
-      if (Object.keys(validated).length === 0) {
-        throw httpError(400, "Không có trường cấu hình phí nào được cung cấp để cập nhật");
-      }
 
-      const newPlain = mergeSystemUpdate(oldPlain, validated, normalizedRole);
-      const newNormalized = normalizeSystemFeeConfig(newPlain, normalizedRole);
+    invalidateLimitsCache();
 
-      await client.query(
-        `INSERT INTO system_configs (key, value, updated_by, updated_at)
-         VALUES ($1, $2::jsonb, $3::uuid, NOW())
-         ON CONFLICT (key) DO UPDATE SET
-           value = EXCLUDED.value,
-           updated_by = EXCLUDED.updated_by,
-           updated_at = NOW()`,
-        [configKey, JSON.stringify(newPlain), adminId],
-      );
+    console.info(
+      `[admin-fee] SYSTEM_FEE_CONFIG_UPDATED key=${configKey} actor=${actor} rate_bps=${newPlain.rate_bps} withdraw_fee_bps=${newPlain.withdraw_fee_bps}`,
+    );
 
-      const { walletId: feeWalletId } =
-        await merchantFeeService.verifySystemFeeWallet(client);
-
-      const auditHistoryRes = await client.query(
-        `INSERT INTO admin_user_change_history
-           (admin_id, user_id, action, reason, old_values, new_values, created_at)
-         VALUES ($1::uuid, $2::uuid, 'SYSTEM_FEE_CONFIG_UPDATED', $3, $4::jsonb, $5::jsonb, NOW())
-         RETURNING id, action, reason, created_at`,
-        [
-          adminId,
-          feeWalletId,
-          cleanReason,
-          JSON.stringify({ key: configKey, actor, config: oldPlain }),
-          JSON.stringify({ key: configKey, actor, config: newPlain }),
-        ],
-      );
-
-      await client.query(
-        `INSERT INTO audit_outbox (id, event_type, payload, created_at)
-         VALUES ($1::uuid, 'SYSTEM_FEE_CONFIG_UPDATED', $2::jsonb, NOW())`,
-        [
-          uuidv7(),
-          JSON.stringify({
-            key: configKey,
-            role: normalizedRole,
-            admin_id: adminId,
-            actor,
-            reason: cleanReason,
-            old_values: oldPlain,
-            new_values: newPlain,
-          }),
-        ],
-      );
-
-      await client.query("COMMIT");
-      invalidateLimitsCache();
-
-      console.info(
-        `[admin-fee] SYSTEM_FEE_CONFIG_UPDATED key=${configKey} actor=${actor} rate_bps=${newPlain.rate_bps} withdraw_fee_bps=${newPlain.withdraw_fee_bps}`,
-      );
-
-      return {
-        dry_run: false,
-        key: configKey,
+    return {
+      dry_run: false,
+      key: configKey,
+      role: normalizedRole,
+      old_config: oldNormalized,
+      new_config: newNormalized,
+      audit: {
+        ...auditRow,
+        actor,
+      },
+      simulation: simulateFeeSamples({
+        oldConfig: oldNormalized,
+        newConfig: newNormalized,
         role: normalizedRole,
-        old_config: oldNormalized,
-        new_config: newNormalized,
-        audit: {
-          ...auditHistoryRes.rows[0],
-          actor,
-        },
-        simulation: simulateFeeSamples({
-          oldConfig: oldNormalized,
-          newConfig: newNormalized,
-          role: normalizedRole,
-          sampleAmounts: samples,
-        }),
-      };
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+        sampleAmounts: samples,
+      }),
+    };
   },
 
   async getMerchantFeeConfig(merchantId) {
-    if (!merchantId || !UUID_RE.test(String(merchantId))) {
+    if (!merchantId || !UUID_REGEX.test(String(merchantId))) {
       throw httpError(400, "ID merchant không hợp lệ");
     }
 
-    const userRes = await pool.query(
-      `SELECT id, full_name, email, status, role, balance
-         FROM users
-        WHERE id = $1 AND role = 'MERCHANT'
-        LIMIT 1`,
-      [merchantId],
-    );
-    const merchant = userRes.rows[0];
+    const merchant =
+      await adminMerchantFeeRepository.getMerchantSummaryById(merchantId);
     if (!merchant) {
       throw httpError(404, "Không tìm thấy tài khoản merchant");
     }
 
-    const systemConfig = await merchantFeeService.getSystemFeeConfig("MERCHANT", pool);
+    const systemConfig = await merchantFeeService.getSystemFeeConfig(
+      "MERCHANT",
+      pool,
+    );
     const effectiveConfig = mergeEffectiveFeeConfig(
       systemConfig,
       null,
@@ -449,70 +214,51 @@ const adminMerchantFeeService = {
     limit = 50,
     offset = 0,
   } = {}) {
-    if (merchantId && !UUID_RE.test(String(merchantId))) {
+    if (merchantId && !UUID_REGEX.test(String(merchantId))) {
       throw httpError(400, "Định danh đối tác không hợp lệ");
     }
-    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const { limitNum: safeLimit } = parseAdminPagination(1, limit, {
+      defaultLimit: 50,
+      maxLimit: 200,
+    });
     const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
 
-    const allowedActions = [
-      "MERCHANT_FEE_CONFIG_UPDATED",
-      "SYSTEM_FEE_CONFIG_UPDATED",
-    ];
-    let actionFilter = allowedActions;
+    let actionFilter = ALLOWED_FEE_AUDIT_ACTIONS;
     if (action) {
       const normalized = String(action).trim().toUpperCase();
-      if (!allowedActions.includes(normalized)) {
+      if (!ALLOWED_FEE_AUDIT_ACTIONS.includes(normalized)) {
         throw httpError(400, "Loại thao tác lịch sử phí không hợp lệ");
       }
       actionFilter = [normalized];
     }
 
-    const allowedKeys = ["MERCHANT_FEE_CONFIG", "USER_FEE_CONFIG"];
     let keyFilter = null;
     if (key !== null && key !== undefined && String(key).trim() !== "") {
       const normalizedKey = String(key).trim().toUpperCase();
-      if (!allowedKeys.includes(normalizedKey)) {
+      if (!ALLOWED_FEE_CONFIG_KEYS.includes(normalizedKey)) {
         throw httpError(400, "Khóa cấu hình biểu phí không hợp lệ");
       }
       keyFilter = normalizedKey;
     }
 
-    const filterParams = [actionFilter, merchantId || null, keyFilter];
-    const whereClause = `
-        WHERE ach.action = ANY($1::text[])
-          AND ($2::uuid IS NULL OR ach.user_id = $2::uuid)
-          AND ($3::text IS NULL OR (ach.new_values->>'key') = $3::text)
-    `;
+    const { totalItems, rows } =
+      await adminMerchantFeeRepository.getFeeConfigHistory({
+        actionFilter,
+        merchantId,
+        keyFilter,
+        limit: safeLimit,
+        offset: safeOffset,
+      });
 
-    const [countRes, res] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*)::int AS total_items
-           FROM admin_user_change_history ach
-          ${whereClause}`,
-        filterParams,
-      ),
-      pool.query(
-        `SELECT ach.id, ach.admin_id, ach.user_id AS target_user_id, ach.action,
-                ach.reason, ach.old_values, ach.new_values, ach.created_at,
-                au.full_name AS admin_name, au.email AS admin_email,
-                tu.full_name AS target_name, tu.role AS target_role
-           FROM admin_user_change_history ach
-           LEFT JOIN users au ON au.id = ach.admin_id
-           LEFT JOIN users tu ON tu.id = ach.user_id
-          ${whereClause}
-          ORDER BY ach.created_at DESC
-          LIMIT $4 OFFSET $5`,
-        [...filterParams, safeLimit, safeOffset],
-      ),
-    ]);
-    const totalItems = Number(countRes.rows[0]?.total_items || 0);
-
-    const items = res.rows.map((r) => ({
+    const items = rows.map((r) => ({
       id: r.id,
       action: r.action,
       reason: r.reason,
-      actor: r.new_values?.actor || r.admin_email || r.admin_name || String(r.admin_id),
+      actor:
+        r.new_values?.actor ||
+        r.admin_email ||
+        r.admin_name ||
+        String(r.admin_id),
       admin: {
         id: r.admin_id,
         full_name: r.admin_name || null,
@@ -521,9 +267,9 @@ const adminMerchantFeeService = {
       target_merchant:
         r.action === "MERCHANT_FEE_CONFIG_UPDATED"
           ? {
-            id: r.target_user_id,
-            full_name: r.target_name || null,
-          }
+              id: r.target_user_id,
+              full_name: r.target_name || null,
+            }
           : null,
       old_values: r.old_values,
       new_values: r.new_values,

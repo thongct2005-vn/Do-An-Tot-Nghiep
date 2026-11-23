@@ -2,7 +2,7 @@ const { describe, it, beforeEach } = require("node:test");
 const assert = require("node:assert");
 const adminAuthService = require("../src/admin/auth/auth.service");
 const adminAuthRepository = require("../src/admin/auth/auth.repository");
-const tokenUtil = require("../src/utils/jwt");
+const tokenUtil = require("../src/utils/auth/jwt");
 
 describe("Admin Auth Service - Session Maintenance Tests", () => {
   const originalFindRefreshToken = adminAuthRepository.findAdminByRefreshToken;

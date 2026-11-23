@@ -1,3 +1,4 @@
+// auth.service.js: Nghiệp vụ xác thực đăng nhập, OTP/TOTP, đăng ký và làm mới phiên App User.
 const authRepository = require("./auth.repository");
 const otpService = require("../otp/otp.service");
 const bcrypt = require("bcrypt");
@@ -6,157 +7,26 @@ const {
   isValidPhone,
   isValidPasswordOrPin,
   isValidEmail,
-  isValidOtp
-} = require("../../utils/validators");
+  isValidOtp,
+} = require("../../utils/common/validators");
 const { uuidv7 } = require("uuidv7");
-const tokenUtil = require("../../utils/jwt");
-const totpUtil = require("../../utils/totp");
-const { emitToUser, disconnectUser } = require("../../utils/socket");
-const { httpError } = require("../../utils/httpError");
+const tokenUtil = require("../../utils/auth/jwt");
+const totpUtil = require("../../utils/auth/totp");
+const { emitToUser, disconnectUser } = require("../../utils/notifications/socket");
+const { httpError } = require("../../utils/common/http");
 const {
   recordSuccessfulUserLogin,
 } = require("../../models/mongo/userLoginEvent.model");
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOGIN_LOCK_MINUTES = 30;
-const TOTP_MAX_ATTEMPTS = 5;
-const TOTP_LOCK_MINUTES = 5;
-const TOTP_ISSUER = process.env.TOTP_ISSUER;
-const { maskEmail } = require("../../utils/mask");
+const { maskEmail } = require("../../utils/common/text");
 const {
   buildFirstLoginChallenge,
   changeFirstLoginPassword,
-} = require("../../utils/firstLoginPassword");
+} = require("../../utils/auth/authHelpers");
+const { TOTP_ISSUER, createUserAuthHelpers } = require("./auth.helpers");
 
-async function checkCredentials(phone, password) {
-  if (!phone || !password) {
-    throw httpError(400, "Thiếu số điện thoại hoặc mật khẩu");
-  }
-
-  if (!isValidPhone(phone) || !isValidPasswordOrPin(password)) {
-    throw httpError(400, "Số điện thoại hoặc mật khẩu không hợp lệ");
-  }
-
-  const user = await authRepository.findUserByPhone(phone);
-
-  if (!user) {
-    throw httpError(404, "Số điện thoại chưa đăng ký tài khoản");
-  }
-
-  if (!user.email) {
-    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
-  }
-
-  if (user.status !== "ACTIVE") {
-    throw httpError(403, "Tài khoản bị khóa");
-  }
-
-  if (user.role !== "USER") {
-    throw httpError(403, "Tài khoản không hợp lệ");
-  }
-
-  if (user.locked_until) {
-    if (user.is_locked) {
-      throw httpError(403, "Tài khoản bị tạm khóa");
-    }
-    await authRepository.resetFailedLogin(phone);
-    user.failed_login_attempts = 0;
-    user.locked_until = null;
-  }
-
-  const isCorrectPassword = await bcrypt.compare(password, user.password_hash);
-  if (!isCorrectPassword) {
-    const row = await authRepository.registerFailedLogin({
-      phone,
-      maxAttempts: MAX_LOGIN_ATTEMPTS,
-      lockMinutes: LOGIN_LOCK_MINUTES,
-    });
-    const attempts = Number(row?.failed_login_attempts ?? MAX_LOGIN_ATTEMPTS);
-    const remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
-    const isLocked = attempts >= MAX_LOGIN_ATTEMPTS;
-    const err = httpError(
-      isLocked ? 403 : 400,
-      isLocked
-        ? `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản bị tạm khóa ${LOGIN_LOCK_MINUTES} phút`
-        : `Mật khẩu không chính xác. Bạn còn ${remainingAttempts} lần thử`,
-    );
-    err.remainingAttempts = remainingAttempts;
-    throw err;
-  }
-
-  user.prior_failed_attempts = Number(user.failed_login_attempts || 0);
-  return user;
-}
-
-// Kiểm tra mã 6 số của Google Authenticator.
-// requireEnabled = true: đăng nhập; false: bước xác nhận bật lần đầu.
-async function verifyTotpCode({ userId, code, requireEnabled }) {
-  if (!isValidOtp(code)) {
-    throw httpError(400, "Mã xác thực phải gồm 6 chữ số");
-  }
-
-  const state = await authRepository.getTotpState(userId);
-  if (!state || !state.totp_secret || state.totp_enabled !== requireEnabled) {
-    throw httpError(
-      400,
-      requireEnabled
-        ? "Tài khoản chưa bật Google Authenticator"
-        : "Chưa có mã QR để xác nhận, vui lòng quét lại mã QR",
-    );
-  }
-  if (state.is_totp_locked) {
-    throw httpError(
-      403,
-      `Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau ${TOTP_LOCK_MINUTES} phút`,
-    );
-  }
-
-  const secret = totpUtil.decryptSecret(state.totp_secret);
-  const lastStep =
-    state.totp_last_step === null ? null : Number(state.totp_last_step);
-  const step = totpUtil.verifyCode(secret, code, { lastStep });
-
-  if (step === null) {
-    const row = await authRepository.registerTotpFailure({
-      userId,
-      maxAttempts: TOTP_MAX_ATTEMPTS,
-      lockMinutes: TOTP_LOCK_MINUTES,
-    });
-    const attempts = Number(row?.totp_failed_attempts ?? TOTP_MAX_ATTEMPTS);
-    if (attempts >= TOTP_MAX_ATTEMPTS) {
-      throw httpError(
-        403,
-        `Bạn đã nhập sai ${TOTP_MAX_ATTEMPTS} lần. Tạm khóa ${TOTP_LOCK_MINUTES} phút`,
-      );
-    }
-    throw httpError(
-      400,
-      `Mã không chính xác hoặc đã được sử dụng. Bạn còn ${TOTP_MAX_ATTEMPTS - attempts} lần thử`,
-    );
-  }
-
-  const consumed = await authRepository.consumeTotpStep({ userId, step });
-  if (!consumed) {
-    throw httpError(400, "Mã đã được sử dụng, vui lòng đợi mã mới");
-  }
-}
-
-async function getOtpUser({ userId, phone }) {
-  const user = await authRepository.findUserByPhone(phone);
-  if (
-    !user ||
-    user.id !== userId ||
-    user.status !== "ACTIVE" ||
-    user.role === "merchant"
-  ) {
-    throw httpError(401, "Phiên xác thực không hợp lệ");
-  }
-
-  if (!user.email) {
-    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
-  }
-
-  return user;
-}
+const { checkCredentials, verifyTotpCode, getOtpUser } = createUserAuthHelpers({
+  authRepository,
+});
 
 const authService = {
   verifyTotpCode,

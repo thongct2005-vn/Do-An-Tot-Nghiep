@@ -15,15 +15,18 @@ async function main() {
     console.log("Applying migration 20261117_postpaid_wallet.sql...");
     await client.query(sql);
 
-    const checkRes = await client.query(`
+    const checkRes = await client.query(
+      `
       SELECT
         to_regclass('public.postpaid_wallets')::text AS postpaid_wallets_table,
         to_regclass('public.postpaid_entries')::text AS postpaid_entries_table,
-        (SELECT balance FROM users WHERE id = '00000000-0000-7000-8000-000000000002'::uuid) AS system_postpaid_balance,
+        (SELECT balance FROM users WHERE id = $1::uuid) AS system_postpaid_balance,
         (SELECT value FROM system_configs WHERE key = 'POSTPAID_CONFIG') AS postpaid_config,
         (SELECT value FROM system_configs WHERE key = 'POSTPAID_STATUS') AS postpaid_status,
         (SELECT value FROM system_configs WHERE key = 'POSTPAID_ENTRY_ACTIONS') AS postpaid_entry_actions
-    `);
+    `,
+      [process.env.SYSTEM_POSTPAID_WALLET_ID],
+    );
     console.log("Verified postpaid objects:", checkRes.rows[0]);
   } finally {
     client.release();

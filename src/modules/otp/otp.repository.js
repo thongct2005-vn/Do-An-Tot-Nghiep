@@ -1,3 +1,4 @@
+// otp.repository.js: Truy vấn tạo, cập nhật, khóa và tiêu thụ mã OTP email.
 const pool = require("../../config/database");
 
 const otpRepository = {

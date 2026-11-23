@@ -1,24 +1,16 @@
+// fee.repository.js: Truy vấn cấu hình ví thu phí hệ thống, hạn mức sử dụng theo tháng và sổ cái fee_ledger_entries.
 const { uuidv7 } = require("uuidv7");
 const pool = require("../../../../config/database");
-const { httpError } = require("../../../../utils/httpError");
+const { httpError } = require("../../../../utils/common/http");
+const { recordAudit } = require("../../../../utils/db/audit");
 const {
   assertValidSystemWalletRow,
   verifySystemWalletInDb,
-} = require("../../../../utils/systemWallet");
+  buildSystemFeeWalletSpec,
+} = require("../../../../utils/payment/systemWallet");
 const {
   assertSystemFeeWalletConfigured,
 } = require("../../../fee/feeCalculator");
-
-function buildSystemFeeWalletSpec(expectedPhone) {
-  return {
-    expectedRole: "SYSTEM",
-    expectedFullName: "SYSTEM_FEE_WALLET",
-    expectedPhone: expectedPhone || null,
-    activeStatus: "ACTIVE",
-    displayLabel: "ví thu phí hệ thống",
-    inactiveMessage: "Ví thu phí hệ thống chưa sẵn sàng",
-  };
-}
 
 const merchantFeeRepository = {
   async verifySystemFeeWallet(db = pool) {
@@ -27,10 +19,12 @@ const merchantFeeRepository = {
     return verifySystemWalletInDb(db, {
       walletId: feeWalletId,
       otherSystemWalletId: process.env.SYSTEM_POSTPAID_WALLET_ID,
-      collisionMessage: "Ví thu phí hệ thống và ví nguồn Ví trả sau không được trùng ID",
+      collisionMessage:
+        "Ví thu phí hệ thống và ví nguồn Ví trả sau không được trùng ID",
       spec: buildSystemFeeWalletSpec(feeWalletPhone),
     });
   },
+
   async getMerchantUser(db, merchantUserId, { forUpdate = false } = {}) {
     const res = await db.query(
       `SELECT id, role, status, balance
@@ -50,12 +44,14 @@ const merchantFeeRepository = {
         ${forUpdate ? "FOR UPDATE" : ""}`,
       [userId, monthKey],
     );
-    return res.rows[0] || {
-      user_id: userId,
-      month_key: monthKey,
-      withdrawn_amount: 0,
-      qr_gross_amount: 0,
-    };
+    return (
+      res.rows[0] || {
+        user_id: userId,
+        month_key: monthKey,
+        withdrawn_amount: 0,
+        qr_gross_amount: 0,
+      }
+    );
   },
 
   async ensureAndLockMonthlyUsageTx(client, { userId, monthKey }) {
@@ -68,7 +64,10 @@ const merchantFeeRepository = {
     return this.getMonthlyUsage(client, userId, monthKey, { forUpdate: true });
   },
 
-  async addMonthlyUsageTx(client, { userId, monthKey, withdrawDelta = 0, qrGrossDelta = 0 }) {
+  async addMonthlyUsageTx(
+    client,
+    { userId, monthKey, withdrawDelta = 0, qrGrossDelta = 0 },
+  ) {
     const wDelta = Math.max(0, Math.trunc(Number(withdrawDelta) || 0));
     const qDelta = Math.max(0, Math.trunc(Number(qrGrossDelta) || 0));
     if (wDelta === 0 && qDelta === 0) return null;
@@ -86,10 +85,6 @@ const merchantFeeRepository = {
     return res.rows[0];
   },
 
-  /**
-   * Ghi nhận tiền phí vào ví hệ thống SYSTEM_FEE_WALLET (khoá cuối cùng trong transaction
-   * để tránh tranh chấp/deadlock với ví người dùng) và chèn sổ cái idempotent theo (transaction_id, fee_type).
-   */
   async creditSystemFeeWalletAndLedgerTx(
     client,
     {
@@ -122,7 +117,6 @@ const merchantFeeRepository = {
       );
     }
 
-    // Khóa ví SYSTEM_FEE_WALLET trước khi kiểm tra/chèn sổ cái để tránh trùng khi retry hoặc chạy song song
     const walletLockRes = await client.query(
       `SELECT id, role, status, full_name, phone, balance
          FROM users
@@ -144,7 +138,11 @@ const merchantFeeRepository = {
       [String(transactionId), feeType],
     );
     if (existing.rows[0]) {
-      return { credited: false, alreadyRecorded: true, ledgerId: existing.rows[0].id };
+      return {
+        credited: false,
+        alreadyRecorded: true,
+        ledgerId: existing.rows[0].id,
+      };
     }
 
     const balanceBefore = Number(lockedFeeWallet.balance);
@@ -196,11 +194,7 @@ const merchantFeeRepository = {
   },
 
   async recordAudit(db, { eventType, payload }) {
-    await db.query(
-      `INSERT INTO audit_outbox (id, event_type, payload)
-       VALUES ($1::uuid, $2, $3::jsonb)`,
-      [uuidv7(), eventType, JSON.stringify(payload)],
-    );
+    await recordAudit(db, { eventType, payload });
   },
 };
 

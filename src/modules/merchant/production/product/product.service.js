@@ -1,34 +1,14 @@
+// product.service.js: Nghiệp vụ thống kê phân trang con trỏ và xuất Excel sản phẩm bán chạy cho Merchant.
 const productRepository = require("./product.repository");
-const { httpError } = require("../../../../utils/httpError");
+const { httpError } = require("../../../../utils/common/http");
 const { getPositiveIntConfig } = require("../../../../utils/limits/limitsDb");
-const { resolveOneYearRange } = require("../../../../utils/dateRange");
-const { buildProductStatsXlsx } = require("../../../../utils/exportExcel");
-
-/**
- * Encode / decode cursor: "{total_quantity_sold}:{product_id}"
- * Ví dụ: "120:sku-abc-001"
- */
-function encodeCursor(totalQuantitySold, productId) {
-  return `${Number(totalQuantitySold)}:${String(productId)}`;
-}
-
-function decodeCursor(cursor) {
-  if (!cursor || typeof cursor !== "string") return null;
-  const trimmed = cursor.trim();
-  if (!trimmed) return null;
-
-  const sepIndex = trimmed.indexOf(":");
-  if (sepIndex <= 0) return null;
-
-  const qtyPart = trimmed.slice(0, sepIndex);
-  const productId = trimmed.slice(sepIndex + 1);
-  if (!productId) return null;
-
-  const quantity = Number(qtyPart);
-  if (!Number.isFinite(quantity) || quantity < 0) return null;
-
-  return { quantity, productId };
-}
+const { buildProductStatsXlsx } = require("../../../../utils/files/exportExcel");
+const {
+  encodeCursor,
+  decodeCursor,
+  normalizeProductStatsFilters,
+  mapProductStatRow,
+} = require("./product.helpers");
 
 const productService = {
   async getTopSellingProducts(
@@ -39,27 +19,15 @@ const productService = {
       throw httpError(400, "Thiếu thông tin người dùng");
     }
 
-    const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
-      startDate,
-      endDate,
-      {
-        defaultToOneYear: true,
-        defaultEndToToday: true,
-        tooOldMessage:
-          "Chỉ có thể xem thống kê sản phẩm trong vòng 1 năm gần nhất",
-      },
-    );
-
-    const normalizedSortBy =
-      sortBy && String(sortBy).trim().toLowerCase() === "revenue"
-        ? "revenue"
-        : "quantity";
-    const rawSortDir = sortDir ?? sortByQuantity;
-    const safeSort =
-      rawSortDir && String(rawSortDir).trim().toUpperCase() === "ASC"
-        ? "ASC"
-        : "DESC";
-    const safeKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+    const { startDay, endDay, normalizedSortBy, safeSort, safeKeyword } =
+      normalizeProductStatsFilters({
+        startDate,
+        endDate,
+        sortBy,
+        sortDir,
+        sortByQuantity,
+        keyword,
+      });
 
     const limitNum = Math.min(Math.max(Number(limit) || 10, 1), 50);
 
@@ -100,14 +68,7 @@ const productService = {
     }
 
     return {
-      products: pageRows.map((row) => ({
-        product_id: row.product_id,
-        product_name: row.product_name,
-        total_quantity_sold: Number(row.total_quantity_sold),
-        gross_revenue: Number(row.gross_revenue ?? row.total_revenue ?? 0),
-        total_merchant_fee: Number(row.total_merchant_fee ?? 0),
-        total_revenue: Number(row.total_revenue),
-      })),
+      products: pageRows.map(mapProductStatRow),
       next_cursor: nextCursor,
       limit: limitNum,
     };
@@ -121,27 +82,15 @@ const productService = {
       throw httpError(400, "Thiếu thông tin người dùng");
     }
 
-    const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
-      startDate,
-      endDate,
-      {
-        defaultToOneYear: true,
-        defaultEndToToday: true,
-        tooOldMessage:
-          "Chỉ có thể xem thống kê sản phẩm trong vòng 1 năm gần nhất",
-      },
-    );
-
-    const normalizedSortBy =
-      sortBy && String(sortBy).trim().toLowerCase() === "revenue"
-        ? "revenue"
-        : "quantity";
-    const rawSortDir = sortDir ?? sortByQuantity;
-    const safeSort =
-      rawSortDir && String(rawSortDir).trim().toUpperCase() === "ASC"
-        ? "ASC"
-        : "DESC";
-    const safeKeyword = keyword && keyword.trim() ? keyword.trim() : null;
+    const { startDay, endDay, normalizedSortBy, safeSort, safeKeyword } =
+      normalizeProductStatsFilters({
+        startDate,
+        endDate,
+        sortBy,
+        sortDir,
+        sortByQuantity,
+        keyword,
+      });
 
     const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS");
     const data = await productRepository.getTopSellingProducts(userId, {
@@ -161,14 +110,7 @@ const productService = {
       );
     }
 
-    const products = (data.items || []).map((row) => ({
-      product_id: row.product_id,
-      product_name: row.product_name,
-      total_quantity_sold: Number(row.total_quantity_sold),
-      gross_revenue: Number(row.gross_revenue ?? row.total_revenue ?? 0),
-      total_merchant_fee: Number(row.total_merchant_fee ?? 0),
-      total_revenue: Number(row.total_revenue),
-    }));
+    const products = (data.items || []).map(mapProductStatRow);
 
     const buffer = await buildProductStatsXlsx({
       products,

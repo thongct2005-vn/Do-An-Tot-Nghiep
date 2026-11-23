@@ -1,6 +1,7 @@
-const { successResponse } = require("../../utils/apiResponse");
+// user.controller.js: Controller xử lý HTTP hồ sơ, bảo mật PIN/mật khẩu, hạn mức và khôi phục tài khoản người dùng.
+const { successResponse, runWithRiskFailure } = require("../../utils/common/http");
 const userService = require("./user.service");
-const { recordFailure, clearFailure } = require("../../utils/risk");
+const { clearFailure } = require("../../utils/security/risk");
 
 const userController = {
   async findUserByPhone(req, res, next) {
@@ -45,6 +46,7 @@ const userController = {
       next(e);
     }
   },
+
   async createPin(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -55,6 +57,7 @@ const userController = {
       next(e);
     }
   },
+
   async verifyCurrentPin(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -73,6 +76,7 @@ const userController = {
       next(e);
     }
   },
+
   async changePin(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -83,6 +87,7 @@ const userController = {
       next(e);
     }
   },
+
   async verifyCurrentPassword(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -103,6 +108,7 @@ const userController = {
       next(e);
     }
   },
+
   async changePassword(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -113,6 +119,7 @@ const userController = {
       next(e);
     }
   },
+
   async getTransactionLimits(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -127,6 +134,7 @@ const userController = {
       next(e);
     }
   },
+
   async updateTransactionLimit(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -151,6 +159,7 @@ const userController = {
       next(e);
     }
   },
+
   async resetTransactionLimit(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -169,6 +178,7 @@ const userController = {
       next(e);
     }
   },
+
   async updateFcmToken(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -179,6 +189,7 @@ const userController = {
       next(e);
     }
   },
+
   async getFcmToken(req, res, next) {
     try {
       const { user_id: userId } = req.user;
@@ -190,6 +201,7 @@ const userController = {
       next(e);
     }
   },
+
   async resetPin(req, res, next) {
     try {
       const { user_id: userId, pv: version } = req.resetUser;
@@ -200,6 +212,7 @@ const userController = {
       next(e);
     }
   },
+
   async resetPassword(req, res, next) {
     try {
       const { user_id: userId, pv: version } = req.resetUser;
@@ -211,7 +224,6 @@ const userController = {
     }
   },
 
- 
   async forgotRequest(req, res, next) {
     try {
       const { phone, type } = req.body;
@@ -221,6 +233,7 @@ const userController = {
       next(e);
     }
   },
+
   async forgotResendOtp(req, res, next) {
     try {
       const { user_id: userId, phone } = req.otpUser;
@@ -230,25 +243,26 @@ const userController = {
       next(e);
     }
   },
+
   async forgotVerifyOtp(req, res, next) {
     try {
       const { otp } = req.body;
       const { user_id: userId, phone, type } = req.otpUser;
-      const result = await userService.forgotVerifyOtp({
-        userId,
-        phone,
-        type,
-        otp,
-      });
+      const result = await runWithRiskFailure(phone, () =>
+        userService.forgotVerifyOtp({
+          userId,
+          phone,
+          type,
+          otp,
+        }),
+      );
       clearFailure(phone);
       return successResponse(res, 200, "Xác thực OTP thành công", result);
     } catch (e) {
-      if (e.statusCode && e.statusCode < 500) {
-        recordFailure(req.otpUser?.phone);
-      }
       next(e);
     }
   },
+
   async forgotVerifyKyc(req, res, next) {
     try {
       const { user_id: userId, type } = req.forgotUser;

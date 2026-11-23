@@ -1,6 +1,7 @@
-const { successResponse } = require("../../utils/apiResponse");
-const { sendPostpaidProofImageFile } = require("../../utils/postpaidProofImage");
-const { emitToUser } = require("../../utils/socket");
+// postpaid.controller.js: Controller quản trị Ví trả sau Admin (tổng quan, khóa/mở khóa, hạn mức, duyệt yêu cầu mở khóa).
+const { successResponse, extractRawBody } = require("../../utils/common/http");
+const { sendPostpaidProofImageFile } = require("../../utils/files/imageStorage");
+const { emitToUser } = require("../../utils/notifications/socket");
 const adminPostpaidService = require("./postpaid.service");
 
 const adminPostpaidController = {
@@ -42,7 +43,7 @@ const adminPostpaidController = {
 
   async freezeWallet(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body || {};
+      const body = extractRawBody(req) || {};
       const data = await adminPostpaidService.freezeWallet({
         userId: req.params.userId,
         adminId: req.user?.user_id,
@@ -61,7 +62,7 @@ const adminPostpaidController = {
 
   async unfreezeWallet(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body || {};
+      const body = extractRawBody(req) || {};
       const data = await adminPostpaidService.unfreezeWallet({
         userId: req.params.userId,
         adminId: req.user?.user_id,
@@ -80,7 +81,7 @@ const adminPostpaidController = {
 
   async adjustCreditLimit(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body || {};
+      const body = extractRawBody(req) || {};
       const data = await adminPostpaidService.adjustCreditLimit({
         userId: req.params.userId,
         adminId: req.user?.user_id,
@@ -121,7 +122,7 @@ const adminPostpaidController = {
 
   async approveUnlockRequest(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body || {};
+      const body = extractRawBody(req) || {};
       const data = await adminPostpaidService.approveUnlockRequest({
         requestId: req.params.id,
         adminId: req.user?.user_id,
@@ -145,7 +146,7 @@ const adminPostpaidController = {
 
   async rejectUnlockRequest(req, res, next) {
     try {
-      const body = Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body || {};
+      const body = extractRawBody(req) || {};
       const data = await adminPostpaidService.rejectUnlockRequest({
         requestId: req.params.id,
         adminId: req.user?.user_id,

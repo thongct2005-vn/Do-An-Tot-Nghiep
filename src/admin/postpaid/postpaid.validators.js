@@ -1,4 +1,4 @@
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 const { MIN_POSTPAID_CREDIT_LIMIT } = require("../../modules/postpaid/postpaidConfig");
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -1,5 +1,6 @@
-const { successResponse } = require("../../../../utils/apiResponse");
-const { sendXlsx } = require("../../../../utils/exportExcel");
+// product.controller.js: Controller xử lý HTTP lấy và xuất Excel thống kê sản phẩm bán chạy cho Merchant.
+const { successResponse } = require("../../../../utils/common/http");
+const { sendXlsx } = require("../../../../utils/files/exportExcel");
 const productService = require("./product.service");
 
 const productController = {

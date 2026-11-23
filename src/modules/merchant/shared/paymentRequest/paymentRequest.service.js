@@ -1,102 +1,20 @@
+// paymentRequest.service.js: Factory service tạo đơn QR thanh toán và tra cứu trạng thái hóa đơn cho Merchant.
 const walletRepository = require("../../../../modules/wallet/wallet.repository");
 const {
   generateReferenceCode,
-} = require("../../../../utils/generateReferenceCode");
+} = require("../../../../utils/payment/qrAndRef");
 const { uuidv7 } = require("uuidv7");
-const QRCode = require("qrcode");
-const { httpError } = require("../../../../utils/httpError");
-const MAX_ITEMS = 100;
-const { parseAmountInRange } = require("../../../../utils/amount");
+const { httpError } = require("../../../../utils/common/http");
+const { parseAmountInRange } = require("../../../../utils/common/amount");
 const { getEffectiveTransactionLimit } = require("../../../../utils/limits/limitsDb");
+const { generateQrDataUrl } = require("../../../../utils/payment/qrAndRef");
 const pool = require("../../../../config/database");
-const { validateReturnUrlForSave } = require("../../../../utils/url/urlGuard");
-
-function normalizeItems(items) {
-  if (items === undefined || items === null) return [];
-  if (!Array.isArray(items) || items.length > MAX_ITEMS) {
-    throw httpError(
-      400,
-      `Danh sách sản phẩm phải là mảng và tối đa ${MAX_ITEMS} phần tử`,
-    );
-  }
-  return items.map((item, index) => {
-    const position = index + 1;
-    if (!item || typeof item !== "object") {
-      throw httpError(400, `Sản phẩm thứ ${position} không hợp lệ`);
-    }
-    const productId =
-      typeof item.product_id === "string" ? item.product_id.trim() : "";
-    const name = typeof item.name === "string" ? item.name.trim() : "";
-    const description = item.description ?? null;
-    if (!productId || productId.length > 100) {
-      throw httpError(
-        400,
-        `Mã sản phẩm thứ ${position} phải từ 1 đến 100 ký tự`,
-      );
-    }
-    if (!name || name.length > 255) {
-      throw httpError(
-        400,
-        `Tên sản phẩm thứ ${position} phải từ 1 đến 255 ký tự`,
-      );
-    }
-    if (
-      !Number.isInteger(item.quantity) ||
-      item.quantity < 1 ||
-      item.quantity > 100000
-    ) {
-      throw httpError(
-        400,
-        `Số lượng sản phẩm thứ ${position} phải là số nguyên từ 1 đến 100000`,
-      );
-    }
-    if (!Number.isInteger(item.unit_price) || item.unit_price < 0) {
-      throw httpError(
-        400,
-        `Đơn giá sản phẩm thứ ${position} phải là số nguyên không âm`,
-      );
-    }
-    if (
-      description !== null &&
-      (typeof description !== "string" || description.length > 255)
-    ) {
-      throw httpError(400, `Mô tả sản phẩm thứ ${position} tối đa 255 ký tự`);
-    }
-    return {
-      id: uuidv7(),
-      productId,
-      name,
-      quantity: item.quantity,
-      unitPrice: item.unit_price,
-      description,
-    };
-  });
-}
-
-async function normalizeCallbackUrl(callbackUrl, validateCallbackUrl) {
-  if (callbackUrl === undefined || callbackUrl === null) return null;
-  if (typeof callbackUrl !== "string") {
-    throw httpError(400, "Callback URL không hợp lệ");
-  }
-  const trimmed = callbackUrl.trim();
-  if (!trimmed) return null;
-  if (trimmed.length > 100) {
-    throw httpError(400, "Callback URL tối đa 100 ký tự");
-  }
-  return validateCallbackUrl(trimmed);
-}
-
-async function normalizeReturnUrl(returnUrl) {
-  if (returnUrl === undefined || returnUrl === null) return null;
-  if (typeof returnUrl !== "string") {
-    throw httpError(400, "Return URL không hợp lệ");
-  }
-  const trimmed = returnUrl.trim();
-  if (!trimmed) return null;
-  // ALLOW_PRIVATE_RETURN_URL != "true": http/https, production bắt buộc https,
-  // không user:pass, không localhost / IP nội bộ, tên miền phải ra IP công khai.
-  return validateReturnUrlForSave(trimmed);
-}
+const { assertQrDescription } = require("../../../paymentRequest/paymentRequest.helpers");
+const {
+  normalizeItems,
+  normalizeCallbackUrl,
+  normalizeReturnUrl,
+} = require("./paymentRequest.helpers");
 
 function createPaymentRequestService({
   paymentMerchantRequestRepository,
@@ -124,12 +42,7 @@ function createPaymentRequestService({
         transactionType: "QR_PAYMENT",
       });
       const numAmount = parseAmountInRange(amount, qrRule, paymentVerb);
-
-      if (description !== undefined && description !== null) {
-        if (typeof description !== "string" || description.length > 50) {
-          throw httpError(400, "Mô tả quá dài");
-        }
-      }
+      assertQrDescription(description);
 
       const normalizedItems = normalizeItems(items);
       const normalizedCallbackUrl = await normalizeCallbackUrl(
@@ -144,11 +57,7 @@ function createPaymentRequestService({
       }
       const id = uuidv7();
       const referenceCode = generateReferenceCode(16);
-      const qrImage = await QRCode.toDataURL(referenceCode, {
-        width: 300,
-        margin: 2,
-        errorCorrectionLevel: "M",
-      });
+      const qrImage = await generateQrDataUrl(referenceCode);
       const result =
         await paymentMerchantRequestRepository.insertMerchantPaymentRequest({
           id,
@@ -162,7 +71,6 @@ function createPaymentRequestService({
           returnUrl: normalizedReturnUrl,
           credentialsRevision,
         });
-      // Redirect flow: merchant chuyển khách sang trang thanh toán của cổng
       const paymentUrl = `${baseUrl}/pay/${referenceCode}`;
       return { ...result, qr_image: qrImage, payment_url: paymentUrl };
     },
@@ -183,7 +91,12 @@ function createPaymentRequestService({
         order_id: payment.order_id,
         amount: Number(payment.amount),
         status: payment.status.toLowerCase(),
-        ...(payment.status === 'CANCELLED' ? {message:'Đơn đã bị hủy. Vui lòng tạo đơn mới bằng credentials hiện tại.'} : {}),
+        ...(payment.status === "CANCELLED"
+          ? {
+              message:
+                "Đơn đã bị hủy. Vui lòng tạo đơn mới bằng credentials hiện tại.",
+            }
+          : {}),
         transaction_id: payment.transaction_id ?? null,
         paid_at: payment.paid_at ?? null,
         created_at: payment.created_at,

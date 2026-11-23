@@ -1,6 +1,6 @@
-const { httpError } = require("../../utils/httpError");
-const { isValidPhone, isValidEmail } = require("../../utils/validators");
-const { validateCallbackUrlForSave } = require("../../utils/url/urlGuard");
+const { httpError } = require("../../utils/common/http");
+const { isValidPhone, isValidEmail } = require("../../utils/common/validators");
+const { validateCallbackUrlForSave } = require("../../utils/security/url");
 
 const PROFILE_FIELDS = ["full_name", "phone", "email", "call_back_url"];
 const REQUEST_FIELDS = new Set([...PROFILE_FIELDS, "store_name", "reason"]);

@@ -1,149 +1,22 @@
+// merchants.repository.js: Truy vấn danh sách, chi tiết, thống kê, ảnh eKYC và cập nhật trạng thái/hồ sơ Merchant Admin.
 const pool = require("../../config/database");
 const crypto = require("node:crypto");
 const { uuidv7 } = require("uuidv7");
-const { httpError } = require("../../utils/httpError");
-const { claimEmail } = require("../../utils/emailClaim");
+const { httpError } = require("../../utils/common/http");
+const { claimEmail } = require("../../utils/db/postgres");
 const { PROFILE_FIELDS, comparableProfileValue } = require("./merchants.profile");
-
-const KYC_LATERAL_JOIN = `
-  LEFT JOIN LATERAL (
-    SELECT
-      yk.id AS tax_code,
-      CASE
-        WHEN yk.status IN ('APPROVED', 'APPPROVED') THEN 'APPROVED'
-        WHEN yk.status = 'REJECTED' THEN 'REJECTED'
-        ELSE 'PENDING'
-      END AS approval_status,
-      yk.status AS raw_kyc_status,
-      yk.dob,
-      yk.gender,
-      yk.address,
-      yk.front_image_url,
-      yk.back_image_url,
-      yk.face_image_url,
-      yk.face_match_score,
-      yk.created_at AS kyc_created_at,
-      yk.updated_at AS kyc_updated_at
-    FROM user_kyc yk
-    WHERE yk.user_id = u.id
-    ORDER BY yk.updated_at DESC NULLS LAST, yk.created_at DESC NULLS LAST
-    LIMIT 1
-  ) k ON true
-`;
-
-const APPROVAL_STATUS_EXPR = `COALESCE(k.approval_status, 'PENDING')`;
-const CONFIGURED_EXPR = `(u.api_key IS NOT NULL AND u.secret_key IS NOT NULL
-  AND u.call_back_url IS NOT NULL AND TRIM(u.call_back_url) <> '')`;
-const LINKED_EXPR = `(u.status = 'ACTIVE' AND NOT u.credentials_revoked AND ${CONFIGURED_EXPR})`;
-const UNCONFIGURED_EXPR = `(u.status = 'ACTIVE' AND NOT ${CONFIGURED_EXPR})`;
-const SUSPENDED_EXPR = `u.status IN ('SUSPENDED', 'BLOCKED')`;
-const PENDING_EXPR = `${APPROVAL_STATUS_EXPR} = 'PENDING'`;
-
-const OPERATIONAL_STATUS_EXPR = `
-  CASE
-    WHEN u.status IN ('SUSPENDED', 'BLOCKED') THEN 'SUSPENDED'
-    WHEN u.status = 'ACTIVE' THEN 'ACTIVE'
-    ELSE 'UNKNOWN'
-  END
-`;
-
-const API_STATUS_EXPR = `
-  CASE
-    WHEN u.credentials_revoked THEN 'LOCKED'
-    WHEN u.status IN ('SUSPENDED', 'BLOCKED') THEN 'LOCKED'
-    WHEN u.status IS DISTINCT FROM 'ACTIVE' THEN 'NOT_CONNECTED'
-    WHEN u.api_key IS NULL OR u.secret_key IS NULL THEN 'PENDING_KEY'
-    WHEN NOT ${CONFIGURED_EXPR} THEN 'NOT_CONNECTED'
-    ELSE 'LINKED'
-  END
-`;
-
-function buildMerchantFilterClause({
-  search,
-  tab,
-  approvalStatus,
-  status,
-  apiStatus,
-  startDate,
-  endDate,
-}) {
-  const conditions = ["u.role = 'MERCHANT'"];
-  const params = [];
-
-  if (tab && tab !== "ALL") {
-    if (tab === "LINKED") {
-      conditions.push(LINKED_EXPR);
-    } else if (tab === "PENDING") {
-      conditions.push(PENDING_EXPR);
-    } else if (tab === "UNCONFIGURED") {
-      conditions.push(UNCONFIGURED_EXPR);
-    } else if (tab === "SUSPENDED") {
-      conditions.push(SUSPENDED_EXPR);
-    }
-  }
-
-  if (approvalStatus && approvalStatus !== "ALL") {
-    params.push(approvalStatus);
-    conditions.push(`${APPROVAL_STATUS_EXPR} = $${params.length}`);
-  }
-
-  if (status && status !== "ALL") {
-    if (status === "SUSPENDED" || status === "BLOCKED") {
-      conditions.push(`u.status IN ('SUSPENDED', 'BLOCKED')`);
-    } else if (status === "ACTIVE") {
-      conditions.push(`u.status = 'ACTIVE'`);
-    } else if (status === "PENDING_ACTIVATION") {
-      conditions.push(`${APPROVAL_STATUS_EXPR} = 'PENDING'`);
-    } else if (status === "DISABLED") {
-      conditions.push(`${APPROVAL_STATUS_EXPR} = 'REJECTED'`);
-    } else {
-      params.push(status);
-      conditions.push(`${OPERATIONAL_STATUS_EXPR} = $${params.length}`);
-    }
-  }
-
-  if (apiStatus && apiStatus !== "ALL") {
-    params.push(apiStatus);
-    conditions.push(`${API_STATUS_EXPR} = $${params.length}`);
-  }
-
-  if (startDate) {
-    params.push(startDate);
-    conditions.push(`u.created_at >= $${params.length}`);
-  }
-
-  if (endDate) {
-    params.push(endDate);
-    conditions.push(`u.created_at < $${params.length}`);
-  }
-
-  if (search && search.trim() !== "") {
-    const cleanSearch = search.trim();
-    params.push(`%${cleanSearch}%`);
-    const idx = params.length;
-    conditions.push(
-      `(
-        u.full_name ILIKE $${idx}
-        OR u.phone LIKE $${idx}
-        OR COALESCE(u.email, '') ILIKE $${idx}
-        OR COALESCE(k.tax_code, '') ILIKE $${idx}
-        OR u.id::TEXT ILIKE $${idx}
-        OR ('MER-' || UPPER(RIGHT(REPLACE(u.id::TEXT, '-', ''), 5))) ILIKE $${idx}
-      )`
-    );
-  }
-
-  const whereClause = conditions.join(" AND ");
-  const needKycInFilter = Boolean(
-    tab === "PENDING" ||
-      (approvalStatus && approvalStatus !== "ALL") ||
-      status === "PENDING_ACTIVATION" ||
-      status === "DISABLED" ||
-      (search && search.trim() !== "")
-  );
-
-  return { whereClause, params, needKycInFilter };
-}
+const { insertAdminChangeHistoryTx } = require("../shared/adminAuditRepo");
+const {
+  KYC_LATERAL_JOIN,
+  APPROVAL_STATUS_EXPR,
+  LINKED_EXPR,
+  UNCONFIGURED_EXPR,
+  SUSPENDED_EXPR,
+  PENDING_EXPR,
+  OPERATIONAL_STATUS_EXPR,
+  API_STATUS_EXPR,
+  buildMerchantFilterClause,
+} = require("./merchants.helpers");
 
 const adminMerchantsRepository = {
   async createMerchant({ adminId, values, reason, passwordHash }) {
@@ -225,13 +98,14 @@ const adminMerchantsRepository = {
         password_initialized: false,
       };
 
-      const audit = await client.query(
-        `INSERT INTO admin_user_change_history
-          (admin_id, user_id, action, reason, old_values, new_values, created_at)
-         VALUES ($1, $2, 'MERCHANT_CREATED', $3, NULL, $4::jsonb, NOW())
-         RETURNING id, action, reason, created_at`,
-        [adminId, merchantId, reason, JSON.stringify(auditNewValues)],
-      );
+      const audit = await insertAdminChangeHistoryTx(client, {
+        adminId,
+        userId: merchantId,
+        action: "MERCHANT_CREATED",
+        reason,
+        oldValues: null,
+        newValues: auditNewValues,
+      });
 
       await client.query("COMMIT");
       const userRow = insertedUser.rows[0];
@@ -260,7 +134,7 @@ const adminMerchantsRepository = {
           created_at: userRow.created_at,
           updated_at: userRow.updated_at,
         },
-        audit: audit.rows[0],
+        audit,
       };
     } catch (error) {
       await client.query("ROLLBACK");
@@ -304,16 +178,16 @@ const adminMerchantsRepository = {
         [merchantId, status],
       );
       const action = status === "BLOCKED" ? "MERCHANT_BLOCKED" : "MERCHANT_UNBLOCKED";
-      const audit = await client.query(
-        `INSERT INTO admin_user_change_history
-          (admin_id, user_id, action, reason, old_values, new_values, created_at)
-         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,NOW())
-         RETURNING id, action, reason, created_at`,
-        [adminId, merchantId, action, reason,
-          JSON.stringify({ status: current.status }), JSON.stringify({ status })],
-      );
+      const audit = await insertAdminChangeHistoryTx(client, {
+        adminId,
+        userId: merchantId,
+        action,
+        reason,
+        oldValues: { status: current.status },
+        newValues: { status },
+      });
       await client.query("COMMIT");
-      return { merchant: updated.rows[0], audit: audit.rows[0] };
+      return { merchant: updated.rows[0], audit };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -357,13 +231,16 @@ const adminMerchantsRepository = {
       const updated = await client.query(`UPDATE users SET ${assignments.join(", ")}
         WHERE id=$${params.length} AND role='MERCHANT'
         RETURNING id, full_name, phone, email, call_back_url, updated_at`, params);
-      const audit = await client.query(`INSERT INTO admin_user_change_history
-        (admin_id, user_id, action, reason, old_values, new_values, created_at)
-        VALUES($1,$2,'USER_PROFILE_UPDATED',$3,$4::jsonb,$5::jsonb,NOW())
-        RETURNING id, action, reason, created_at`,
-      [adminId, merchantId, reason, JSON.stringify(oldValues), JSON.stringify(newValues)]);
+      const audit = await insertAdminChangeHistoryTx(client, {
+        adminId,
+        userId: merchantId,
+        action: "USER_PROFILE_UPDATED",
+        reason,
+        oldValues,
+        newValues,
+      });
       await client.query("COMMIT");
-      return { merchant: updated.rows[0], audit: audit.rows[0], revokeSession };
+      return { merchant: updated.rows[0], audit, revokeSession };
     } catch (error) {
       await client.query("ROLLBACK");
       if (error.code === "23505" && error.table === "users" && /phone|email/.test(error.constraint || "")) {

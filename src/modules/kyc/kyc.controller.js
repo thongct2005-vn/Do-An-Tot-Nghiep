@@ -1,4 +1,5 @@
-const { successResponse } = require("../../utils/apiResponse");
+// kyc.controller.js: Controller xử lý HTTP kiểm tra, xác thực lần đầu và cập nhật eKYC.
+const { successResponse } = require("../../utils/common/http");
 const kycService = require("./kyc.service");
 
 const kycController = {

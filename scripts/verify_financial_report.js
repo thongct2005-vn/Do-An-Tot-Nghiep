@@ -12,6 +12,7 @@ async function main(){
   const {exportFinancialReport}=require('../src/admin/reports/financialReport.service');
   const admin=randomUUID(),customer=randomUUID();
   const out=path.resolve(__dirname,'../docs/samples');
+  const systemFeeWalletId=process.env.SYSTEM_FEE_WALLET_ID;
   try{
     await pool.query("INSERT INTO users(id,role,full_name) VALUES($1,'ADMIN','Quản trị viên kiểm thử'),($2,'USER','Tài khoản kiểm thử')",[admin,customer]);
     // Use a dedicated connection because TEMP tables are connection scoped.
@@ -27,7 +28,7 @@ async function main(){
       // Assign the exact target total independently of transaction amount.
       await c.query(`INSERT INTO fee_ledger_entries(id,transaction_id,fee_type,amount,fee_wallet_user_id,fee_wallet_balance_before,fee_wallet_balance_after,created_at)
         SELECT gen_random_uuid(),id,'QR_FEE',2728+CASE WHEN substring(id from 8)::int<=26642 THEN 1 ELSE 0 END,
-          '00000000-0000-7000-8000-000000000001',0,1,created_at FROM transactions WHERE id LIKE 'sample-%'`);
+          $1,0,1,created_at FROM transactions WHERE id LIKE 'sample-%'`,[systemFeeWalletId]);
     }finally{c.release();}
     const range={start_date:'2026-11-01',end_date:'2026-11-18',page:'2',limit:'20'};
     const sql=(await pool.query("SELECT count(*)::int n,sum(amount)::text gross FROM transactions WHERE id LIKE 'sample-%'")).rows[0];
@@ -39,9 +40,9 @@ async function main(){
     const first=await exportFinancialReport(range,admin,opts);
     await fs.writeFile(path.join(out,'bao-cao-mau-theo-anh.xlsx'),first.buffer);
     await pool.query(`INSERT INTO fee_ledger_entries(id,transaction_id,fee_type,amount,fee_wallet_user_id,fee_wallet_balance_before,fee_wallet_balance_after,created_at)
-      VALUES(gen_random_uuid(),'sample-1','USER_FEE',500000,'00000000-0000-7000-8000-000000000001',0,500000,'2026-11-02'),
-      (gen_random_uuid(),'sample-1','POSTPAID_SERVICE_FEE',250000,'00000000-0000-7000-8000-000000000001',0,250000,'2026-11-02'),
-      (gen_random_uuid(),NULL,'MONTHLY_PLAN_FEE',50000,'00000000-0000-7000-8000-000000000001',0,50000,'2026-11-02')`);
+      VALUES(gen_random_uuid(),'sample-1','USER_FEE',500000,$1,0,500000,'2026-11-02'),
+      (gen_random_uuid(),'sample-1','POSTPAID_SERVICE_FEE',250000,$1,0,250000,'2026-11-02'),
+      (gen_random_uuid(),NULL,'MONTHLY_PLAN_FEE',50000,$1,0,50000,'2026-11-02')`,[systemFeeWalletId]);
     const queries=[];
     const tracedPool={query:(...args)=>pool.query(...args),connect:async()=>{const client=await pool.connect();return {
       query:async(sql,params)=>{const start=performance.now();const result=await client.query(sql,params);

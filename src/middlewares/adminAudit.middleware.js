@@ -1,6 +1,6 @@
 const { createHash } = require("node:crypto");
 const { recordAdminAction } = require("../models/mongo/adminActionLog.model");
-const { warnMongoAudit } = require("../utils/mongoAuditWarning");
+const { warnMongoAudit } = require("../utils/db/audit");
 
 function adminAudit(req, res, next) {
   const startedAt = Date.now();

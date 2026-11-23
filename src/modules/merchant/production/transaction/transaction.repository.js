@@ -1,130 +1,35 @@
+// transaction.repository.js: Truy vấn giao dịch, lịch sử, xuất Excel và thống kê doanh thu cho Merchant Production.
 const pool = require("../../../../config/database");
-const { httpError } = require("../../../../utils/httpError");
+const { httpError } = require("../../../../utils/common/http");
 const { assertDailyLimit } = require("../../../../utils/limits/dailyLimit");
 const {
   buildEffectiveTransactionTypeSql,
   buildEffectiveTransactionTypeFilterSql,
-} = require("../../../../utils/historyFilters");
+} = require("../../../../utils/payment/historyFilters");
 const transactionRepository = require("../../../transaction/transaction.repository");
-
-// Giao dịch QR bằng Ví trả sau ghi source_user_id là SYSTEM_POSTPAID_WALLET; join sang
-// postpaid_entries (PURCHASE) để hiển thị đúng thông tin người mua và nguồn thanh toán.
-const POSTPAID_PAYER_JOIN = `
-      LEFT JOIN LATERAL (
-        SELECT pe.user_id, u.full_name, u.phone
-          FROM postpaid_entries pe
-          JOIN users u ON u.id = pe.user_id
-         WHERE pe.tx_id = t.id AND pe.action = 'PURCHASE'
-         LIMIT 1
-      ) pp ON true`;
-
-const FUNDING_SOURCE_SELECT = `'Ví LumaPay'::text AS funding_source`;
-
-function buildMerchantExtraFilters({
-  direction = null,
-  status = null,
-  minAmount = null,
-  maxAmount = null,
-  fundingSource = null,
-  startIndex,
-}) {
-  const hasDirection = Boolean(direction && String(direction).trim());
-  const hasStatus = Boolean(status && String(status).trim());
-  const hasMinAmount = minAmount !== null && minAmount !== undefined;
-  const hasMaxAmount = maxAmount !== null && maxAmount !== undefined;
-  const hasFundingSource = Boolean(fundingSource && String(fundingSource).trim());
-
-  const iDirFlag = startIndex;
-  const iDirVal = startIndex + 1;
-  const iStatusFlag = startIndex + 2;
-  const iStatusVal = startIndex + 3;
-  const iMinFlag = startIndex + 4;
-  const iMinVal = startIndex + 5;
-  const iMaxFlag = startIndex + 6;
-  const iMaxVal = startIndex + 7;
-  const iFundFlag = startIndex + 8;
-  const iFundVal = startIndex + 9;
-
-  const sql = `
-        AND (
-          $${iDirFlag}::boolean = false
-          OR (
-            CASE
-              WHEN t.transaction_type = 'TOPUP' THEN 'IN'
-              WHEN t.source_user_id = $1 THEN 'OUT'
-              ELSE 'IN'
-            END
-          ) = $${iDirVal}::text
-        )
-        AND ($${iStatusFlag}::boolean = false OR t.status = $${iStatusVal}::text)
-        AND ($${iMinFlag}::boolean = false OR t.amount >= $${iMinVal}::bigint)
-        AND ($${iMaxFlag}::boolean = false OR t.amount <= $${iMaxVal}::bigint)
-        AND (
-          $${iFundFlag}::boolean = false
-          OR (
-            CASE
-              WHEN t.linked_bank_account_id IS NOT NULL AND lba.user_id = $1 THEN 'BANK'
-              ELSE 'MAIN_WALLET'
-            END
-          ) = $${iFundVal}::text
-        )`;
-
-  const values = [
-    hasDirection,
-    hasDirection ? String(direction).trim().toUpperCase() : null,
-    hasStatus,
-    hasStatus ? String(status).trim().toUpperCase() : null,
-    hasMinAmount,
-    hasMinAmount ? Number(minAmount) : null,
-    hasMaxAmount,
-    hasMaxAmount ? Number(maxAmount) : null,
-    hasFundingSource,
-    hasFundingSource ? String(fundingSource).trim().toUpperCase() : null,
-  ];
-
-  return { sql, values };
-}
+const {
+  POSTPAID_PAYER_JOIN,
+  FUNDING_SOURCE_SELECT,
+  buildMerchantExtraFilters,
+} = require("./transaction.queries");
 
 const merchantTransactionRepository = {
   async checkIdempotencyKey(idempotencyKey) {
     const result = await pool.query(
-      `
-      SELECT status, response_body, request_hash, response_status_code
-      FROM idempotency_keys WHERE idempotency_key = $1
-      `,
+      `SELECT status, response_body, request_hash, response_status_code
+         FROM idempotency_keys
+        WHERE idempotency_key = $1`,
       [idempotencyKey],
     );
     return result.rows[0];
   },
 
-  async createIdempotencyKey({
-    idempotencyKey,
-    actorId,
-    actorType,
-    requestPath,
-    requestHash,
-  }) {
-    await pool.query(
-      `INSERT INTO idempotency_keys
-        (idempotency_key, actor_id, actor_type, request_path, request_hash)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [idempotencyKey, actorId, actorType, requestPath, requestHash],
-    );
+  async createIdempotencyKey(params) {
+    return transactionRepository.createIdempotencyKey(params);
   },
 
-  async updateIdempotencyKey({
-    idempotencyKey,
-    status,
-    responseBody,
-    responseStatusCode,
-  }) {
-    await pool.query(
-      `UPDATE idempotency_keys
-         SET status = $1, response_body = $2, response_status_code = $3
-         WHERE idempotency_key = $4
-         `,
-      [status, responseBody, responseStatusCode, idempotencyKey],
-    );
+  async updateIdempotencyKey(params) {
+    return transactionRepository.updateIdempotencyKey(params);
   },
 
   async executeTransfer(client, params) {
@@ -605,31 +510,7 @@ const merchantTransactionRepository = {
   },
 
   async getCurrentMonthSummary(userId) {
-    const result = await pool.query(
-      `
-     SELECT
-    COALESCE(SUM(CASE
-      WHEN transaction_type IN ('WITHDRAW', 'TRANSFER', 'PAYMENT', 'REFUND') AND source_user_id = $1 THEN amount + user_fee
-      ELSE 0
-    END), 0) AS total_expense,
-    COALESCE(SUM(CASE
-      WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-      WHEN transaction_type IN ('TRANSFER', 'PAYMENT', 'REFUND') AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
-      ELSE 0
-    END), 0) AS total_income
-  FROM transactions
-  WHERE (source_user_id = $1 OR destination_user_id = $1)
-    AND status = 'SUCCESS'
-    AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
-      `,
-      [userId],
-    );
-
-    const row = result.rows[0];
-    return {
-      total_income: Number(row.total_income),
-      total_expense: Number(row.total_expense),
-    };
+    return transactionRepository.getCurrentMonthSummary(userId);
   },
 
   async getDailyRevenueStats(

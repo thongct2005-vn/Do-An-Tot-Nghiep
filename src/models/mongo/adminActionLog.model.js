@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { warnMongoAudit } = require("../../utils/mongoAuditWarning");
+const { warnMongoAudit } = require("../../utils/db/audit");
 
 const adminActionLogSchema = new mongoose.Schema(
   {

@@ -1,6 +1,6 @@
 const adminAuthRepository = require("./auth.repository");
-const tokenUtil = require("../../utils/jwt");
-const { httpError } = require("../../utils/httpError");
+const tokenUtil = require("../../utils/auth/jwt");
+const { httpError } = require("../../utils/common/http");
 
 async function requireCurrentAdminSession(req, res, next) {
   try {

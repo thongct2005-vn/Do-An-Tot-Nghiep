@@ -1,0 +1,76 @@
+const crypto = require("crypto");
+const { httpError } = require("../common/http");
+const { parseAmount } = require("../common/amount");
+
+// Với mỗi loại giao dịch: danh sách trường trong body mà PIN token phải "ký" vào.
+const PIN_ACTIONS = {
+  TRANSFER: ["destination_user_id", "amount"],
+  TOPUP: ["linked_bank_account_id", "amount"],
+  WITHDRAW: ["linked_bank_account_id", "amount"],
+  QR_PAYMENT: ["reference_code"],
+  POSTPAID_ACTIVATE: [],
+  POSTPAID_FREEZE: [],
+  POSTPAID_UNFREEZE: [],
+  POSTPAID_CLOSE: [],
+  POSTPAID_REPAY: ["amount"],
+  BANK_LINK: ["bank_id"],
+  BANK_SHOW_BALANCE: ["linked_bank_account_id"],
+  BANK_UNLINK: ["linked_bank_account_id"],
+  UPDATE_LIMIT: ["transaction_type", "max_amount", "daily_limit"],
+  RESET_LIMIT: ["transaction_type"],
+};
+
+const FIELD_LABELS = {
+  destination_user_id: "người nhận tiền",
+  linked_bank_account_id: "tài khoản ngân hàng liên kết",
+  reference_code: "mã tham chiếu thanh toán",
+  bank_id: "ngân hàng",
+  amount: "số tiền giao dịch",
+  transaction_type: "loại giao dịch",
+  max_amount: "hạn mức mỗi lần",
+  daily_limit: "hạn mức mỗi ngày",
+};
+
+// Chuẩn hóa 1 trường về dạng chuỗi sạch để so sánh nhất quán
+function normalizeField(name, value) {
+  if (name === "amount" || name === "max_amount" || name === "daily_limit") {
+    return String(parseAmount(value));
+  }
+  const label = FIELD_LABELS[name] || "giao dịch";
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw httpError(400, `Thiếu hoặc không hợp lệ thông tin ${label}`);
+  }
+  const text = String(value).trim();
+  if (!text) throw httpError(400, `Thiếu hoặc không hợp lệ thông tin ${label}`);
+  return text;
+}
+
+// Tạo binding: băm (action + giá trị các trường) thành 1 chuỗi hex 64 ký tự
+function computePinBinding(action, params) {
+  const fields = PIN_ACTIONS[action];
+  if (!fields) throw httpError(400, "Loại giao dịch không hợp lệ");
+
+  // params là body của request; với action không có trường ký (vd: POSTPAID_ACTIVATE) cho phép object rỗng / undefined.
+  const resolvedParams =
+    params && typeof params === "object"
+      ? params
+      : fields.length === 0
+        ? {}
+        : null;
+  if (!resolvedParams) {
+    throw httpError(400, "Thiếu dữ liệu giao dịch để xác thực PIN");
+  }
+
+  // Lấy đúng các trường cần ký, chuẩn hóa từng giá trị
+  const values = fields.map((field) =>
+    normalizeField(field, resolvedParams[field]),
+  );
+
+  // Băm JSON dạng mảng [action, giá trị1, giá trị2...]
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify([action, ...values]))
+    .digest("hex");
+}
+
+module.exports = { PIN_ACTIONS, computePinBinding };

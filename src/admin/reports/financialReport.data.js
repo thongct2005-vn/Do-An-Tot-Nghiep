@@ -1,4 +1,4 @@
-const { httpError } = require('../../utils/httpError');
+const { httpError } = require('../../utils/common/http');
 
 // Excel guarantees 15 significant decimal digits. Reject before creating cells.
 const MAX_EXCEL_INTEGER = 999999999999999n;

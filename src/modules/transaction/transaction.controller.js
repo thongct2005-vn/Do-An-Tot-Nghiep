@@ -1,7 +1,8 @@
-const { successResponse } = require("../../utils/apiResponse");
+// transaction.controller.js: Controller xử lý HTTP thực hiện giao dịch, lịch sử, xuất Excel và hạn mức cho App User.
+const { successResponse } = require("../../utils/common/http");
 const transactionService = require("./transaction.service");
-const { emitToUser } = require("../../utils/socket");
-const { sendPushNotification } = require("../../utils/firebaseNotification");
+const { emitToUser } = require("../../utils/notifications/socket");
+const { sendPushNotification } = require("../../utils/notifications/firebaseNotification");
 
 const transactionController = {
   async transferMoney(req, res, next) {

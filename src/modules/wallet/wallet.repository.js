@@ -1,3 +1,4 @@
+// wallet.repository.js: Truy vấn số dư ví người dùng từ bảng users.
 const pool = require("../../config/database");
 
 const walletRepository = {

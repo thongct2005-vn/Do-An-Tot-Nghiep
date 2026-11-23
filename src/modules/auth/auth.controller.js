@@ -1,6 +1,8 @@
-const { successResponse } = require("../../utils/apiResponse");
+// auth.controller.js: Controller xử lý HTTP xác thực, OTP đăng nhập/đăng ký và Google Authenticator cho App User.
+const { successResponse, runWithRiskFailure } = require("../../utils/common/http");
 const authService = require("./auth.service");
-const { recordFailure, clearFailure } = require("../../utils/risk");
+const { clearFailure } = require("../../utils/security/risk");
+const { buildBasicUserInfo } = require("../../utils/auth/authHelpers");
 
 const authController = {
   async isPhoneExist(req, res, next) {
@@ -31,11 +33,13 @@ const authController = {
   async login(req, res, next) {
     try {
       const { phone, password } = req.body;
-      const result = await authService.login({
-        phone,
-        password,
-        riskChallenge: Boolean(req.risk?.challenge),
-      });
+      const result = await runWithRiskFailure(req.body?.phone, () =>
+        authService.login({
+          phone,
+          password,
+          riskChallenge: Boolean(req.risk?.challenge),
+        }),
+      );
       return successResponse(
         res,
         200,
@@ -43,9 +47,6 @@ const authController = {
         result,
       );
     } catch (e) {
-      if (e.statusCode && e.statusCode < 500) {
-        recordFailure(req.body?.phone);
-      }
       next(e);
     }
   },
@@ -142,11 +143,11 @@ const authController = {
     try {
       const { user_id: userId, phone, full_name: fullName } = req.user;
       const result = {
-        user_info: {
-          user_id: userId,
-          phone: phone,
+        user_info: buildBasicUserInfo({
+          id: userId,
+          phone,
           full_name: fullName,
-        },
+        }),
       };
       return successResponse(
         res,

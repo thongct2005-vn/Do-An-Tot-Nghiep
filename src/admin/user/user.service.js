@@ -1,50 +1,43 @@
+// user.service.js: Nghiệp vụ quản trị người dùng, thống kê đăng nhập, step-up auth và hỗ trợ P2P/Nạp/Rút Admin.
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const adminUserRepository = require("./user.repository");
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 const { parseCreateUserPayload } = require("./user.create");
-const mailerModule = require("../../utils/mailer");
-const { emitToUser } = require("../../utils/socket");
-const { isValidPhone, isValidEmail } = require("../../utils/validators");
-const { maskPhone } = require("../../utils/mask");
-const { clearFailure } = require("../../utils/risk");
+const mailerModule = require("../../utils/notifications/mailer");
+const { emitToUser } = require("../../utils/notifications/socket");
+const { isValidPhone, isValidEmail } = require("../../utils/common/validators");
+const { clearFailure } = require("../../utils/security/risk");
 const {
   resolveKycSideSpec,
   buildAdminKycImageUrl,
   resolveSafeKycFilePath,
-} = require("../../utils/kycImage");
+} = require("../../utils/files/imageStorage");
 const {
   resolveAdminDateRange,
   generateTimeBuckets,
   getMondayOfDateStr,
-} = require("../../utils/dateRange");
-
-const MAX_ADMIN_AUTH_ATTEMPTS = 5;
-const ADMIN_LOCK_MINUTES = 30;
-const AUTH_REFERENCE_REGEX = /^[A-Za-z0-9_-]{5,100}$/;
-const ADMIN_P2P_REQUEST_PATH = "POST /api/v2/admin/user/:id/operations/p2p";
-const MIN_P2P_AMOUNT = 1000;
-const MAX_P2P_AMOUNT = 50000000;
-const ADMIN_TOPUP_REQUEST_PATH = "POST /api/v2/admin/user/:id/operations/topup";
-const ADMIN_WITHDRAW_REQUEST_PATH = "POST /api/v2/admin/user/:id/operations/withdraw";
-const MIN_BANK_OP_AMOUNT = 1000;
-const MAX_BANK_OP_AMOUNT = 50000000;
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function sanitizeP2PResponseData(raw) {
-  if (!raw) return raw;
-  const parsed = typeof raw === "string" ? JSON.parse(raw) : { ...raw };
-  delete parsed.destBalanceAfter;
-  delete parsed.dest_balance_after;
-  delete parsed.destBalanceBefore;
-  delete parsed.dest_balance_before;
-  if (parsed.destination_phone && !parsed.destination_phone_masked) {
-    parsed.destination_phone_masked = maskPhone(parsed.destination_phone);
-  }
-  delete parsed.destination_phone;
-  delete parsed.destinationPhone;
-  return parsed;
-}
+} = require("../../utils/common/dateRange");
+const {
+  assertValidAdminId,
+  parseAdminPagination,
+  validateAdminIdempotencyKey,
+  executeWithAdminIdempotency,
+} = require("../shared/adminHelpers");
+const {
+  MAX_ADMIN_AUTH_ATTEMPTS,
+  ADMIN_LOCK_MINUTES,
+  AUTH_REFERENCE_REGEX,
+  ADMIN_P2P_REQUEST_PATH,
+  MIN_P2P_AMOUNT,
+  MAX_P2P_AMOUNT,
+  ADMIN_TOPUP_REQUEST_PATH,
+  ADMIN_WITHDRAW_REQUEST_PATH,
+  MIN_BANK_OP_AMOUNT,
+  MAX_BANK_OP_AMOUNT,
+  UUID_REGEX,
+  sanitizeP2PResponseData,
+} = require("./user.helpers");
 
 const adminUserService = {
   async getStats() {
@@ -162,9 +155,10 @@ const adminUserService = {
   },
 
   async getUsers({ page = 1, limit = 10, search, status }) {
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
-    const offset = (pageNum - 1) * limitNum;
+    const { pageNum, limitNum, offset } = parseAdminPagination(page, limit, {
+      defaultLimit: 10,
+      maxLimit: 100,
+    });
 
     const { total, items } = await adminUserRepository.getUsers({
       search,
@@ -646,9 +640,10 @@ const adminUserService = {
       throw httpError(404, "Không tìm thấy người dùng");
     }
 
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
-    const offset = (pageNum - 1) * limitNum;
+    const { pageNum, limitNum, offset } = parseAdminPagination(page, limit, {
+      defaultLimit: 10,
+      maxLimit: 100,
+    });
 
     const { total, items } = await adminUserRepository.getUserChangeHistory({
       userId,
@@ -780,21 +775,8 @@ const adminUserService = {
     adminPassword,
     idempotencyKey,
   }) {
-    if (!adminId) {
-      throw httpError(401, "Thiếu định danh quản trị viên");
-    }
-
-    if (
-      typeof idempotencyKey !== "string" ||
-      idempotencyKey.trim().length === 0 ||
-      idempotencyKey.trim().length > 100
-    ) {
-      throw httpError(
-        400,
-        "Header Idempotency-Key là bắt buộc và tối đa 100 ký tự"
-      );
-    }
-    const cleanIdempotencyKey = idempotencyKey.trim();
+    assertValidAdminId(adminId);
+    const cleanIdempotencyKey = validateAdminIdempotencyKey(idempotencyKey);
 
     if (!sourceUserId || !destinationUserId) {
       throw httpError(400, "Thiếu định danh người gửi hoặc người nhận");
@@ -870,99 +852,33 @@ const adminUserService = {
       authorizationReference: cleanAuthRef,
     });
 
-    const inserted = await adminUserRepository.tryInsertIdempotencyKey({
+    return executeWithAdminIdempotency({
+      repo: adminUserRepository,
       idempotencyKey: cleanIdempotencyKey,
       actorId: adminId,
-      actorType: "ADMIN",
       requestPath: ADMIN_P2P_REQUEST_PATH,
       requestHash,
+      busyMessage: "Yêu cầu giao dịch đang được xử lý",
+      duplicateBusyMessage:
+        "Yêu cầu giao dịch đang được xử lý, vui lòng không gửi trùng lặp",
+      mismatchMessage:
+        "Mã Idempotency-Key đã được sử dụng với dữ liệu giao dịch khác",
+      sanitizeResponse: sanitizeP2PResponseData,
+      execute: () =>
+        adminUserRepository.executeAdminP2PWithHistory({
+          adminId,
+          sourceUserId: cleanSourceId,
+          destinationUserId: cleanDestId,
+          amount: numAmount,
+          fee: 0,
+          description: cleanDescription,
+          reason: cleanReason,
+          authorizationReference: cleanAuthRef,
+          idempotencyKey: cleanIdempotencyKey,
+          requestHash,
+          requestPath: ADMIN_P2P_REQUEST_PATH,
+        }),
     });
-
-    if (!inserted) {
-      const existingKey = await adminUserRepository.getIdempotencyKey(
-        cleanIdempotencyKey
-      );
-      if (!existingKey) {
-        throw httpError(409, "Yêu cầu giao dịch đang được xử lý");
-      }
-
-      if (
-        String(existingKey.actor_id) !== String(adminId) ||
-        existingKey.request_path !== ADMIN_P2P_REQUEST_PATH ||
-        existingKey.request_hash !== requestHash
-      ) {
-        throw httpError(
-          422,
-          "Mã Idempotency-Key đã được sử dụng với dữ liệu giao dịch khác"
-        );
-      }
-
-      if (existingKey.status === "SUCCESS" && existingKey.response_body) {
-        return {
-          replayed: true,
-          data: sanitizeP2PResponseData(existingKey.response_body),
-          notificationContext: null,
-        };
-      }
-
-      const reclaimed = await adminUserRepository.reclaimIdempotencyKey({
-        idempotencyKey: cleanIdempotencyKey,
-        actorId: adminId,
-        requestPath: ADMIN_P2P_REQUEST_PATH,
-        requestHash,
-      });
-
-      if (!reclaimed) {
-        const latestKey = await adminUserRepository.getIdempotencyKey(
-          cleanIdempotencyKey
-        );
-        if (
-          latestKey &&
-          latestKey.status === "SUCCESS" &&
-          latestKey.response_body &&
-          latestKey.request_hash === requestHash
-        ) {
-          return {
-            replayed: true,
-            data: sanitizeP2PResponseData(latestKey.response_body),
-            notificationContext: null,
-          };
-        }
-        throw httpError(
-          409,
-          "Yêu cầu giao dịch đang được xử lý, vui lòng không gửi trùng lặp"
-        );
-      }
-    }
-
-    try {
-      const txResult = await adminUserRepository.executeAdminP2PWithHistory({
-        adminId,
-        sourceUserId: cleanSourceId,
-        destinationUserId: cleanDestId,
-        amount: numAmount,
-        fee: 0,
-        description: cleanDescription,
-        reason: cleanReason,
-        authorizationReference: cleanAuthRef,
-        idempotencyKey: cleanIdempotencyKey,
-        requestHash,
-        requestPath: ADMIN_P2P_REQUEST_PATH,
-      });
-
-      return {
-        replayed: Boolean(txResult.replayed),
-        data: sanitizeP2PResponseData(txResult.responseBody),
-        notificationContext: txResult.notificationContext || null,
-      };
-    } catch (e) {
-      try {
-        await adminUserRepository.markIdempotencyKeyFailed(cleanIdempotencyKey);
-      } catch (markErr) {
-        console.error("markIdempotencyKeyFailed error:", markErr.message);
-      }
-      throw e;
-    }
   },
 
   computeAdminBankOpRequestHash({
@@ -1000,21 +916,8 @@ const adminUserService = {
     adminPassword,
     idempotencyKey,
   }) {
-    if (!adminId) {
-      throw httpError(401, "Thiếu định danh quản trị viên");
-    }
-
-    if (
-      typeof idempotencyKey !== "string" ||
-      idempotencyKey.trim().length === 0 ||
-      idempotencyKey.trim().length > 100
-    ) {
-      throw httpError(
-        400,
-        "Header Idempotency-Key là bắt buộc và tối đa 100 ký tự"
-      );
-    }
-    const cleanIdempotencyKey = idempotencyKey.trim();
+    assertValidAdminId(adminId);
+    const cleanIdempotencyKey = validateAdminIdempotencyKey(idempotencyKey);
 
     if (!userId) {
       throw httpError(400, "Thiếu định danh người dùng");
@@ -1094,74 +997,19 @@ const adminUserService = {
       authorizationReference: cleanAuthRef,
     });
 
-    const inserted = await adminUserRepository.tryInsertIdempotencyKey({
+    return executeWithAdminIdempotency({
+      repo: adminUserRepository,
       idempotencyKey: cleanIdempotencyKey,
       actorId: adminId,
-      actorType: "ADMIN",
       requestPath,
       requestHash,
-    });
-
-    if (!inserted) {
-      const existingKey = await adminUserRepository.getIdempotencyKey(
-        cleanIdempotencyKey
-      );
-      if (!existingKey) {
-        throw httpError(409, "Yêu cầu giao dịch đang được xử lý");
-      }
-
-      if (
-        String(existingKey.actor_id) !== String(adminId) ||
-        existingKey.request_path !== requestPath ||
-        existingKey.request_hash !== requestHash
-      ) {
-        throw httpError(
-          422,
-          "Mã Idempotency-Key đã được sử dụng với dữ liệu giao dịch khác"
-        );
-      }
-
-      if (existingKey.status === "SUCCESS" && existingKey.response_body) {
-        return {
-          replayed: true,
-          data: existingKey.response_body,
-          notificationContext: null,
-        };
-      }
-
-      const reclaimed = await adminUserRepository.reclaimIdempotencyKey({
-        idempotencyKey: cleanIdempotencyKey,
-        actorId: adminId,
-        requestPath,
-        requestHash,
-      });
-
-      if (!reclaimed) {
-        const latestKey = await adminUserRepository.getIdempotencyKey(
-          cleanIdempotencyKey
-        );
-        if (
-          latestKey &&
-          latestKey.status === "SUCCESS" &&
-          latestKey.response_body &&
-          latestKey.request_hash === requestHash
-        ) {
-          return {
-            replayed: true,
-            data: latestKey.response_body,
-            notificationContext: null,
-          };
-        }
-        throw httpError(
-          409,
-          "Yêu cầu giao dịch đang được xử lý, vui lòng không gửi trùng lặp"
-        );
-      }
-    }
-
-    try {
-      const txResult =
-        await adminUserRepository.executeAdminBankOperationWithHistory({
+      busyMessage: "Yêu cầu giao dịch đang được xử lý",
+      duplicateBusyMessage:
+        "Yêu cầu giao dịch đang được xử lý, vui lòng không gửi trùng lặp",
+      mismatchMessage:
+        "Mã Idempotency-Key đã được sử dụng với dữ liệu giao dịch khác",
+      execute: () =>
+        adminUserRepository.executeAdminBankOperationWithHistory({
           operationType,
           adminId,
           userId: cleanUserId,
@@ -1174,21 +1022,8 @@ const adminUserService = {
           idempotencyKey: cleanIdempotencyKey,
           requestHash,
           requestPath,
-        });
-
-      return {
-        replayed: Boolean(txResult.replayed),
-        data: txResult.responseBody,
-        notificationContext: txResult.notificationContext || null,
-      };
-    } catch (e) {
-      try {
-        await adminUserRepository.markIdempotencyKeyFailed(cleanIdempotencyKey);
-      } catch (markErr) {
-        console.error("markIdempotencyKeyFailed error:", markErr.message);
-      }
-      throw e;
-    }
+        }),
+    });
   },
 
   async executeAdminTopup(params) {

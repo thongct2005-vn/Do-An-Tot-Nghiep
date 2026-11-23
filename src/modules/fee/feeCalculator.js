@@ -1,5 +1,5 @@
-const { httpError } = require("../../utils/httpError");
-const { formatVnd } = require("../../utils/amount");
+const { httpError } = require("../../utils/common/http");
+const { formatVnd } = require("../../utils/common/amount");
 require("dotenv").config();
 
 // Biểu thức chính quy kiểm tra định dạng UUID (v4 / v7) hợp lệ
@@ -9,7 +9,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SYSTEM_FEE_WALLET_ID =
   String(process.env.SYSTEM_FEE_WALLET_ID || "").trim() || undefined;
 
-// Số điện thoại của ví thu phí hệ thống đọc từ biến môi trường (ví dụ: SYS_FEE_01)
+// Số điện thoại của ví thu phí hệ thống đọc từ biến môi trường
 const SYSTEM_FEE_WALLET_PHONE =
   String(process.env.SYSTEM_FEE_WALLET_PHONE || "").trim() || undefined;
 

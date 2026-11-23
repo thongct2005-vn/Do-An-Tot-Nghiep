@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const PDFDocument = require("pdfkit");
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
 const { maskAccountNumber } = require("./transaction.export");
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;

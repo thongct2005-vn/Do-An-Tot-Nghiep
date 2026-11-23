@@ -31,10 +31,10 @@ async function main(){
   try{
     const admin=randomUUID(),merchant=randomUUID(),customer=randomUUID();
     await pool.query("INSERT INTO users(id,role,full_name) VALUES($1,'ADMIN','Local release test'),($2,'MERCHANT','Test Merchant'),($3,'USER','Test Customer')",[admin,merchant,customer]);
-    const tokens=require('../src/utils/jwt').generateAuthTokens({id:admin,role:'ADMIN'});
+    const tokens=require('../src/utils/auth/jwt').generateAuthTokens({id:admin,role:'ADMIN'});
     await pool.query('UPDATE users SET refresh_token=$1 WHERE id=$2',[tokens.refreshToken,admin]);
     await pool.query("INSERT INTO transactions(id,source_user_id,destination_user_id,transaction_type,status,amount,created_at) VALUES('rollout-fixture',$1,$2,'PAYMENT','SUCCESS',100000,'2026-11-01')",[customer,merchant]);
-    await pool.query("INSERT INTO fee_ledger_entries(id,transaction_id,fee_type,amount,fee_wallet_user_id,fee_wallet_balance_before,fee_wallet_balance_after,created_at) VALUES($1,'rollout-fixture','QR_FEE',1000,'00000000-0000-7000-8000-000000000001',0,1000,'2026-11-01')",[randomUUID()]);
+    await pool.query("INSERT INTO fee_ledger_entries(id,transaction_id,fee_type,amount,fee_wallet_user_id,fee_wallet_balance_before,fee_wallet_balance_after,created_at) VALUES($1,'rollout-fixture','QR_FEE',1000,$2,0,1000,'2026-11-01')",[randomUUID(),process.env.SYSTEM_FEE_WALLET_ID]);
     const fingerprint=async()=>(await pool.query("SELECT (SELECT sum(amount)::text FROM transactions) tx,(SELECT sum(amount)::text FROM fee_ledger_entries) fee,(SELECT jsonb_agg(jsonb_build_array(id,balance) ORDER BY id)::text FROM users) balances")).rows[0];
     const original=await fingerprint();
     for(const [name,version,frontend,expectedSheets,expectedHash] of [

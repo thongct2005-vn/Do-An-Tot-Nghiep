@@ -1,5 +1,5 @@
-const { risk, blockAccountByPhone } = require("../utils/risk");
-const { maskPhone } = require("../utils/mask");
+const { risk, blockAccountByPhone } = require("../utils/security/risk");
+const { maskPhone } = require("../utils/common/text");
 const { resolveRiskThreshold } = require("../utils/limits/limitsDb");
 
 // Kiểm tra chế độ "chỉ log, không chặn" từ biến môi trường (RISK_DRY_RUN=true hoặc 1)

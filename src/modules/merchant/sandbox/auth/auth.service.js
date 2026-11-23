@@ -1,96 +1,37 @@
+// auth.service.js: Nghiệp vụ đăng nhập, làm mới phiên, đổi mật khẩu lần đầu và đăng ký Merchant Sandbox.
 const merchantAuthRepository = require("./auth.repository");
 const bcrypt = require("bcrypt");
-const crypto = require("crypto");
 const {
   isValidPhone,
   isValidEmail,
   normalizeMerchantAddress,
-} = require("../../../../utils/validators");
+} = require("../../../../utils/common/validators");
 const { uuidv7 } = require("uuidv7");
-const tokenUtil = require("../../../../utils/jwt");
-const { emitToUser, disconnectUser } = require("../../../../utils/socket");
-const { httpError } = require("../../../../utils/httpError");
+const tokenUtil = require("../../../../utils/auth/jwt");
+const { emitToUser, disconnectUser } = require("../../../../utils/notifications/socket");
+const { httpError } = require("../../../../utils/common/http");
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
-} = require("../../../../utils/keys/apiKeyGenerator");
+} = require("../../../../utils/security/keys");
 const {
   buildFirstLoginChallenge,
   changeFirstLoginPassword,
 } = require("../../shared/firstLoginPassword");
-const { validateCallbackUrlForSave } = require("../../../../utils/url/urlGuard");
-
-
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOGIN_LOCK_MINUTES = 30;
-
-async function checkCredentials(phone, password) {
-  if (!phone || !password) {
-    throw httpError(400, "Thiếu số điện thoại hoặc mật khẩu");
-  }
-
-  if (!isValidPhone(phone)) {
-    throw httpError(400, "Số điện thoại không hợp lệ");
-  }
-
-  const user = await merchantAuthRepository.findMerchantByPhone(phone);
-
-  if (!user) {
-    throw httpError(404, "Số điện thoại chưa đăng ký tài khoản");
-  }
-
-  if (!user.email) {
-    throw httpError(404, "Không tìm thấy email liên kết với số điện thoại");
-  }
-
-  if (user.status !== "ACTIVE") {
-    throw httpError(403, "Tài khoản bị khóa");
-  }
-
-  if (user.role !== "MERCHANT") {
-    throw httpError(403, "Tài khoản không hợp lệ");
-  }
-
-  if (user.locked_until) {
-    if (user.is_locked) {
-      throw httpError(403, "Tài khoản bị tạm khóa");
-    }
-    await merchantAuthRepository.resetFailedLogin(phone);
-    user.failed_login_attempts = 0;
-    user.locked_until = null;
-  }
-
-  if (!user.password_hash) {
-    throw httpError(
-      403,
-      "Tài khoản chưa thiết lập mật khẩu. Vui lòng sử dụng chức năng Quên mật khẩu để kích hoạt tài khoản",
-    );
-  }
-
-  const isCorrectPassword = await bcrypt.compare(password, user.password_hash);
-  if (!isCorrectPassword) {
-    const row = await merchantAuthRepository.registerFailedLogin({
-      phone,
-      maxAttempts: MAX_LOGIN_ATTEMPTS,
-      lockMinutes: LOGIN_LOCK_MINUTES,
-    });
-    const attempts = Number(row?.failed_login_attempts ?? MAX_LOGIN_ATTEMPTS);
-    const isLocked = attempts >= MAX_LOGIN_ATTEMPTS;
-    const err = httpError(
-      isLocked ? 403 : 400,
-      isLocked ? "Tài khoản bị tạm khóa" : "Mật khẩu không chính xác",
-    );
-    err.remainingAttempts = Math.max(MAX_LOGIN_ATTEMPTS - attempts, 0);
-    throw err;
-  }
-
-  await merchantAuthRepository.resetFailedLogin(phone);
-  return user;
-}
+const { validateCallbackUrlForSave } = require("../../../../utils/security/url");
+const {
+  hashPhoneSha256,
+  buildBasicUserInfo,
+} = require("../../../../utils/auth/authHelpers");
+const { checkSandboxMerchantCredentials } = require("./auth.helpers");
 
 const merchantAuthService = {
   async login({ phone, password }) {
-    const user = await checkCredentials(phone, password);
+    const user = await checkSandboxMerchantCredentials(
+      merchantAuthRepository,
+      phone,
+      password,
+    );
 
     if (user.must_change_password === true) {
       return buildFirstLoginChallenge(user);
@@ -111,11 +52,7 @@ const merchantAuthService = {
         access_token: accessToken,
         refresh_token: refreshToken,
       },
-      user_info: {
-        user_id: user.id,
-        phone: user.phone,
-        full_name: user.full_name,
-      },
+      user_info: buildBasicUserInfo(user),
     };
   },
 
@@ -193,7 +130,6 @@ const merchantAuthService = {
       throw httpError(400, "Thiếu mật khẩu");
     }
 
-
     if (!callbackUrl) {
       throw httpError(400, "Thiếu callback");
     }
@@ -221,7 +157,7 @@ const merchantAuthService = {
     const userId = uuidv7();
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
-    const phoneHash = crypto.createHash("sha256").update(phone).digest("hex");
+    const phoneHash = hashPhoneSha256(phone);
     const apiKey = await generateUniqueMerchantApiKey();
     const secretKey = await generateUniqueMerchantSecretKey();
 

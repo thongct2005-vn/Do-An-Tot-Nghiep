@@ -1,4 +1,5 @@
-const { successResponse } = require("../../utils/apiResponse");
+// auth.controller.js: Controller xử lý HTTP xác thực và quản lý phiên đăng nhập Admin.
+const { successResponse } = require("../../utils/common/http");
 const adminAuthService = require("./auth.service");
 
 const adminAuthController = {

@@ -7,14 +7,14 @@ const cases = require('./fixtures/merchant_fee_reference.json');
 
 test('Merchant fee HTTP and PostgreSQL settlement', async t => {
   const target = await createTestDatabase();
-  Object.assign(process.env, { SYSTEM_FEE_WALLET_ID: '00000000-0000-7000-8000-000000000001', SYSTEM_FEE_WALLET_PHONE: 'SYS_FEE_01' });
+  require('dotenv').config();
   const pool = require('../src/config/database');
   const gateway = require('../src/modules/merchant/shared/paymentRequest/paymentRequest.repository');
   const tx = require('../src/modules/transaction/transaction.repository');
   const fees = require('../src/modules/merchant/production/fee/fee.service');
   const limits = require('../src/utils/limits/limitsDb');
   const calculator = require('../src/modules/fee/feeCalculator');
-  const jwt = require('../src/utils/jwt');
+  const jwt = require('../src/utils/auth/jwt');
   let server;
   const merchant = randomUUID(), payer = randomUUID(), admin = randomUUID();
   const tiers = [{ from_amount: 0, rate_bps: 150 }, { from_amount: 200001, rate_bps: 120 }, { from_amount: 1000001, rate_bps: 100 }];
@@ -224,7 +224,7 @@ test('Merchant fee HTTP and PostgreSQL settlement', async t => {
       }
     });
     await t.test('Admin policy to QR settlement to Dashboard, report and Excel reconcile against SQL', async () => {
-      const range = require('../src/utils/dateRange').getCurrentMonthBoundsInVietnam();
+      const range = require('../src/utils/common/dateRange').getCurrentMonthBoundsInVietnam();
       const query = new URLSearchParams({start_date:range.startDate,end_date:range.endDate,merchant_id:merchant});
       const r = await request(`/reports/overview?${query}`,{token:adminTokens.accessToken});
       assert.equal(r.status,200,JSON.stringify(r));

@@ -2,8 +2,8 @@
 const {
   validateCallbackUrlForSave,
   validateCallbackUrlSyntax,
-} = require("../../utils/url/urlGuard");
-const { httpError } = require("../../utils/httpError");
+} = require("../../utils/security/url");
+const { httpError } = require("../../utils/common/http");
 
 module.exports = {
   production: {

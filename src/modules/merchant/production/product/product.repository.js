@@ -1,3 +1,4 @@
+// product.repository.js: Truy vấn thống kê sản phẩm bán chạy theo số lượng và doanh thu ròng của Merchant.
 const pool = require("../../../../config/database");
 
 const productRepository = {

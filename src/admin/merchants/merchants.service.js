@@ -1,59 +1,36 @@
+// merchants.service.js: Nghiệp vụ quản lý hồ sơ, trạng thái, xuất Excel và xem chi tiết/ảnh eKYC Merchant Admin.
+const bcrypt = require("bcrypt");
 const adminMerchantsRepository = require("./merchants.repository");
-const { httpError } = require("../../utils/httpError");
+const { httpError } = require("../../utils/common/http");
+const { UUID_REGEX } = require("../../utils/common/validators");
+const { assertValidAdminId } = require("../shared/adminHelpers");
 const { parseMerchantQuery } = require("./merchants.query");
 const { parseProfilePatch } = require("./merchants.profile");
 const { parseStatusPatch } = require("./merchants.status");
 const { parseCreateMerchantPayload } = require("./merchants.create");
-const socket = require("../../utils/socket");
-const {
-  resolveKycSideSpec,
-  buildAdminKycImageUrl,
-  resolveSafeKycFilePath,
-} = require("../../utils/kycImage");
-
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function formatMerchantCode(id) {
-  const clean = String(id || "").replace(/-/g, "").toUpperCase();
-  return `MER-${clean.slice(-5)}`;
-}
-
-function formatUserCode(id) {
-  const clean = String(id || "").replace(/-/g, "").toUpperCase();
-  return `USR-${clean.slice(-5)}`;
-}
-
-function getInitials(name) {
-  const words = String(name || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length === 0) return "MC";
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
-}
-
-function maskApiKey(apiKey) {
-  if (!apiKey || typeof apiKey !== "string") return null;
-  if (apiKey.length <= 12) {
-    return `${apiKey.slice(0, 4)}...`;
-  }
-  return `${apiKey.slice(0, 10)}...${apiKey.slice(-4)}`;
-}
-
-const bcrypt = require("bcrypt");
-const mailerModule = require("../../utils/mailer");
+const mailerModule = require("../../utils/notifications/mailer");
 const pool = require("../../config/database");
 const { getPositiveIntConfig } = require("../../utils/limits/limitsDb");
 const {
   buildMerchantsAdminXlsx,
   buildMerchantExportFileName,
 } = require("./merchants.export");
+const socket = require("../../utils/notifications/socket");
+const {
+  resolveKycSideSpec,
+  buildAdminKycImageUrl,
+  resolveSafeKycFilePath,
+} = require("../../utils/files/imageStorage");
+const {
+  formatMerchantCode,
+  formatUserCode,
+  getInitials,
+  maskApiKey,
+} = require("./merchants.helpers");
 
 const adminMerchantsService = {
   async createMerchant({ adminId, body, mailer }) {
-    if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
+    assertValidAdminId(adminId);
     const payload = await parseCreateMerchantPayload(body);
     const tempPassword = mailerModule.generateTemporaryPassword();
     const passwordHash = await bcrypt.hash(tempPassword, 10);
@@ -94,7 +71,7 @@ const adminMerchantsService = {
   },
 
   async updateMerchantStatus({ adminId, merchantId, body }) {
-    if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
+    assertValidAdminId(adminId);
     if (typeof merchantId !== "string" || !UUID_REGEX.test(merchantId.trim())) {
       throw httpError(400, "Định danh đối tác merchant không hợp lệ");
     }
@@ -115,7 +92,7 @@ const adminMerchantsService = {
   },
 
   async updateMerchantProfile({ adminId, merchantId, body }) {
-    if (!adminId) throw httpError(401, "Thiếu định danh quản trị viên");
+    assertValidAdminId(adminId);
     if (typeof merchantId !== "string" || !UUID_REGEX.test(merchantId.trim())) {
       throw httpError(400, "Định danh đối tác merchant không hợp lệ");
     }

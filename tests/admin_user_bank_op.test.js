@@ -9,8 +9,8 @@ const pool = require("../src/config/database");
 const adminUserRepository = require("../src/admin/user/user.repository");
 const adminUserService = require("../src/admin/user/user.service");
 const adminUserController = require("../src/admin/user/user.controller");
-const socketUtil = require("../src/utils/socket");
-const firebaseNotification = require("../src/utils/firebaseNotification");
+const socketUtil = require("../src/utils/notifications/socket");
+const firebaseNotification = require("../src/utils/notifications/firebaseNotification");
 const limitsDb = require("../src/utils/limitsDb");
 
 describe("Admin User Bank Operations (Topup & Withdraw) - Comprehensive Test Suite", () => {

@@ -8,13 +8,13 @@ const compression = require("compression");
 const app = express();
 const errorHandler = require("./src/middlewares/errorHandler");
 const router = require("./src/routes/index");
-const { initSocket } = require("./src/utils/socket");
+const { initSocket } = require("./src/utils/notifications/socket");
 const { startBackgroundJobs, stopBackgroundJobs } = require("./src/jobs");
 const connectMongo = require("./src/config/mongo");
 const {
   pageRouter: payPageRouter,
 } = require("./src/modules/paymentPage/paymentPage.routes");
-const { assertPublicBaseUrlConfigured } = require("./src/utils/url/publicUrl");
+const { assertPublicBaseUrlConfigured } = require("./src/utils/security/url");
 const {
   assertSystemFeeWalletConfigured,
 } = require("./src/modules/fee/feeCalculator");

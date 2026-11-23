@@ -1,8 +1,14 @@
-const { successResponse } = require("../../utils/apiResponse");
+// user.controller.js: Controller quản trị danh sách, chi tiết, trạng thái, P2P/Nạp/Rút hộ và tạo người dùng Admin.
+const { successResponse, extractRawBody } = require("../../utils/common/http");
+const {
+  extractAdminIdempotencyKey,
+  emitSocketSafe,
+  sendPushSafe,
+} = require("../shared/adminHelpers");
 const adminUserService = require("./user.service");
-const socketUtil = require("../../utils/socket");
-const firebaseNotification = require("../../utils/firebaseNotification");
-const { resolveRequestBase, sendKycImageFile } = require("../../utils/kycImage");
+const socketUtil = require("../../utils/notifications/socket");
+const firebaseNotification = require("../../utils/notifications/firebaseNotification");
+const { resolveRequestBase, sendKycImageFile } = require("../../utils/files/imageStorage");
 
 const adminUserController = {
   async getStats(req, res, next) {
@@ -188,10 +194,7 @@ const adminUserController = {
     try {
       const { id: sourceUserId } = req.params;
       const adminId = req.user?.user_id;
-      const idempotencyKey =
-        req.headers?.["idempotency-key"] ||
-        req.headers?.["Idempotency-Key"] ||
-        req.idempotencyKey;
+      const idempotencyKey = extractAdminIdempotencyKey(req);
 
       const {
         destination_user_id: destinationUserId,
@@ -217,67 +220,61 @@ const adminUserController = {
       if (!outcome.replayed && outcome.notificationContext) {
         const ctx = outcome.notificationContext;
 
-        try {
-          socketUtil.emitToUser(ctx.sourceUserId, "wallet_balance_updated", {
-            balance: ctx.sourceBalanceAfter,
-            transactionId: ctx.transactionId,
-            type: "SEND",
-          });
-        } catch (socketErr) {
-          console.error(
-            "Emit wallet_balance_updated (source) error:",
-            socketErr.message
-          );
-        }
-
-        try {
-          socketUtil.emitToUser(
-            ctx.destinationUserId,
-            "wallet_balance_updated",
-            {
-              balance: ctx.destBalanceAfter,
-              transactionId: ctx.transactionId,
-              type: "RECEIVE",
-              fromUserName: ctx.sourceUserName,
-            }
-          );
-        } catch (socketErr) {
-          console.error(
-            "Emit wallet_balance_updated (dest) error:",
-            socketErr.message
-          );
-        }
-
-        try {
-          await firebaseNotification.sendPushNotification(ctx.sourceUserId, {
-            title: "Biến động số dư (Hỗ trợ Quản trị viên)",
-            body: `Ví của bạn vừa chuyển -${Number(ctx.amount).toLocaleString("vi-VN")}đ cho ${ctx.destinationUserName}`,
-            data: {
-              type: "SEND_MONEY",
-              transactionId: ctx.transactionId,
+        await emitSocketSafe(
+          () =>
+            socketUtil.emitToUser(ctx.sourceUserId, "wallet_balance_updated", {
               balance: ctx.sourceBalanceAfter,
-            },
-          });
-        } catch (fcmErr) {
-          console.error("Push notification (source) error:", fcmErr.message);
-        }
+              transactionId: ctx.transactionId,
+              type: "SEND",
+            }),
+          "wallet_balance_updated (source)",
+        );
 
-        try {
-          await firebaseNotification.sendPushNotification(
-            ctx.destinationUserId,
-            {
-              title: "Nhận tiền thành công",
-              body: `Bạn vừa nhận +${Number(ctx.amount).toLocaleString("vi-VN")}đ từ ${ctx.sourceUserName}\nNội dung: ${ctx.description || ""}`,
-              data: {
-                type: "RECEIVE_MONEY",
-                transactionId: ctx.transactionId,
+        await emitSocketSafe(
+          () =>
+            socketUtil.emitToUser(
+              ctx.destinationUserId,
+              "wallet_balance_updated",
+              {
                 balance: ctx.destBalanceAfter,
+                transactionId: ctx.transactionId,
+                type: "RECEIVE",
+                fromUserName: ctx.sourceUserName,
               },
-            }
-          );
-        } catch (fcmErr) {
-          console.error("Push notification (dest) error:", fcmErr.message);
-        }
+            ),
+          "wallet_balance_updated (dest)",
+        );
+
+        await sendPushSafe(
+          () =>
+            firebaseNotification.sendPushNotification(ctx.sourceUserId, {
+              title: "Biến động số dư (Hỗ trợ Quản trị viên)",
+              body: `Ví của bạn vừa chuyển -${Number(ctx.amount).toLocaleString("vi-VN")}đ cho ${ctx.destinationUserName}`,
+              data: {
+                type: "SEND_MONEY",
+                transactionId: ctx.transactionId,
+                balance: ctx.sourceBalanceAfter,
+              },
+            }),
+          "source",
+        );
+
+        await sendPushSafe(
+          () =>
+            firebaseNotification.sendPushNotification(
+              ctx.destinationUserId,
+              {
+                title: "Nhận tiền thành công",
+                body: `Bạn vừa nhận +${Number(ctx.amount).toLocaleString("vi-VN")}đ từ ${ctx.sourceUserName}\nNội dung: ${ctx.description || ""}`,
+                data: {
+                  type: "RECEIVE_MONEY",
+                  transactionId: ctx.transactionId,
+                  balance: ctx.destBalanceAfter,
+                },
+              },
+            ),
+          "dest",
+        );
       }
 
       return successResponse(
@@ -295,10 +292,7 @@ const adminUserController = {
     try {
       const { id: userId } = req.params;
       const adminId = req.user?.user_id;
-      const idempotencyKey =
-        req.headers?.["idempotency-key"] ||
-        req.headers?.["Idempotency-Key"] ||
-        req.idempotencyKey;
+      const idempotencyKey = extractAdminIdempotencyKey(req);
 
       const {
         linked_bank_account_id: linkedBankAccountId,
@@ -324,34 +318,31 @@ const adminUserController = {
       if (!outcome.replayed && outcome.notificationContext) {
         const ctx = outcome.notificationContext;
 
-        try {
-          socketUtil.emitToUser(ctx.userId, "wallet_balance_updated", {
-            balance: ctx.balanceAfter,
-            transactionId: ctx.transactionId,
-            type: "TOPUP",
-          });
-        } catch (socketErr) {
-          console.error(
-            "Emit wallet_balance_updated (topup) error:",
-            socketErr.message
-          );
-        }
-
-        try {
-          await firebaseNotification.sendPushNotification(ctx.userId, {
-            title: "Nạp tiền thành công",
-            body: `Ví của bạn vừa được nạp +${Number(ctx.amount).toLocaleString(
-              "vi-VN"
-            )}đ từ ngân hàng ${ctx.bankName}`,
-            data: {
-              type: "TOPUP_MONEY",
-              transactionId: ctx.transactionId,
+        await emitSocketSafe(
+          () =>
+            socketUtil.emitToUser(ctx.userId, "wallet_balance_updated", {
               balance: ctx.balanceAfter,
-            },
-          });
-        } catch (fcmErr) {
-          console.error("Push notification (topup) error:", fcmErr.message);
-        }
+              transactionId: ctx.transactionId,
+              type: "TOPUP",
+            }),
+          "wallet_balance_updated (topup)",
+        );
+
+        await sendPushSafe(
+          () =>
+            firebaseNotification.sendPushNotification(ctx.userId, {
+              title: "Nạp tiền thành công",
+              body: `Ví của bạn vừa được nạp +${Number(ctx.amount).toLocaleString(
+                "vi-VN"
+              )}đ từ ngân hàng ${ctx.bankName}`,
+              data: {
+                type: "TOPUP_MONEY",
+                transactionId: ctx.transactionId,
+                balance: ctx.balanceAfter,
+              },
+            }),
+          "topup",
+        );
       }
 
       return successResponse(
@@ -369,10 +360,7 @@ const adminUserController = {
     try {
       const { id: userId } = req.params;
       const adminId = req.user?.user_id;
-      const idempotencyKey =
-        req.headers?.["idempotency-key"] ||
-        req.headers?.["Idempotency-Key"] ||
-        req.idempotencyKey;
+      const idempotencyKey = extractAdminIdempotencyKey(req);
 
       const {
         linked_bank_account_id: linkedBankAccountId,
@@ -398,34 +386,31 @@ const adminUserController = {
       if (!outcome.replayed && outcome.notificationContext) {
         const ctx = outcome.notificationContext;
 
-        try {
-          socketUtil.emitToUser(ctx.userId, "wallet_balance_updated", {
-            balance: ctx.balanceAfter,
-            transactionId: ctx.transactionId,
-            type: "WITHDRAW",
-          });
-        } catch (socketErr) {
-          console.error(
-            "Emit wallet_balance_updated (withdraw) error:",
-            socketErr.message
-          );
-        }
-
-        try {
-          await firebaseNotification.sendPushNotification(ctx.userId, {
-            title: "Rút tiền thành công",
-            body: `Ví của bạn vừa rút -${Number(ctx.amount).toLocaleString(
-              "vi-VN"
-            )}đ về ngân hàng ${ctx.bankName}`,
-            data: {
-              type: "WITHDRAW_MONEY",
-              transactionId: ctx.transactionId,
+        await emitSocketSafe(
+          () =>
+            socketUtil.emitToUser(ctx.userId, "wallet_balance_updated", {
               balance: ctx.balanceAfter,
-            },
-          });
-        } catch (fcmErr) {
-          console.error("Push notification (withdraw) error:", fcmErr.message);
-        }
+              transactionId: ctx.transactionId,
+              type: "WITHDRAW",
+            }),
+          "wallet_balance_updated (withdraw)",
+        );
+
+        await sendPushSafe(
+          () =>
+            firebaseNotification.sendPushNotification(ctx.userId, {
+              title: "Rút tiền thành công",
+              body: `Ví của bạn vừa rút -${Number(ctx.amount).toLocaleString(
+                "vi-VN"
+              )}đ về ngân hàng ${ctx.bankName}`,
+              data: {
+                type: "WITHDRAW_MONEY",
+                transactionId: ctx.transactionId,
+                balance: ctx.balanceAfter,
+              },
+            }),
+          "withdraw",
+        );
       }
 
       return successResponse(
@@ -443,7 +428,7 @@ const adminUserController = {
     try {
       const result = await adminUserService.createUser({
         adminId: req.user?.user_id,
-        body: Object.hasOwn(req, "rawBodyForRisk") ? req.rawBodyForRisk : req.body,
+        body: extractRawBody(req),
       });
       return successResponse(
         res,

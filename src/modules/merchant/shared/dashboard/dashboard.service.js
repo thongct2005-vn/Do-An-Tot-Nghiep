@@ -1,8 +1,9 @@
+// dashboard.service.js: Factory service quản lý hồ sơ, callback URL và vòng đời khóa API cho Merchant.
 const {
   generateUniqueMerchantApiKey,
   generateUniqueMerchantSecretKey,
-} = require("../../../../utils/keys/apiKeyGenerator");
-const { httpError } = require("../../../../utils/httpError");
+} = require("../../../../utils/security/keys");
+const { httpError } = require("../../../../utils/common/http");
 
 function createDashboardService({ dashboardRepository, validateCallbackUrl }) {
   return {

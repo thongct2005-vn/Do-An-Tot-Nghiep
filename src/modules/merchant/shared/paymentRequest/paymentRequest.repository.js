@@ -1,34 +1,11 @@
+// paymentRequest.repository.js: Truy vấn tạo đơn thanh toán merchant (kèm sản phẩm, audit) và tra cứu theo order_id.
 const webhookRepository = require("../../../../modules/webhook/webhook.repository");
 const pool = require("../../../../config/database");
 const transactionRepository = require("../../../../modules/transaction/transaction.repository");
-const { httpError } = require("../../../../utils/httpError");
-
-const DUPLICATE_ORDER_INDEX = "payment_requests_merchant_order_uk";
-
-// order_id đã tồn tại (UNIQUE destination_user_id + order_id): báo rõ lý do thay vì "Dữ liệu đã tồn tại".
-async function buildDuplicateOrderError({ merchantId, orderId }) {
-  const { rows } = await pool.query(
-    `SELECT status, (expires_at <= NOW()) AS is_expired
-       FROM payment_requests
-      WHERE destination_user_id = $1 AND order_id = $2`,
-    [merchantId, orderId],
-  );
-  const existing = rows[0];
-  if (existing && ["SUCCESS", "PAID"].includes(existing.status)) {
-    return httpError(409, "Đơn hàng này đã được thanh toán");
-  }
-  if (existing?.status === 'CANCELLED') return httpError(409, 'Đơn đã bị hủy do thay đổi khóa tích hợp. Vui lòng tạo mã đơn hàng mới với khóa mới.');
-  if (existing && existing.status === "PENDING" && !existing.is_expired) {
-    return httpError(
-      409,
-      "Đơn hàng này đang chờ thanh toán, vui lòng dùng lại mã thanh toán đã tạo",
-    );
-  }
-  return httpError(
-    409,
-    "Mã đơn hàng này đã được dùng cho một thanh toán đã hết hạn, vui lòng tạo mã đơn hàng mới",
-  );
-}
+const {
+  DUPLICATE_ORDER_INDEX,
+  buildDuplicateOrderError,
+} = require("./paymentRequest.helpers");
 
 const merchantPaymentRequestRepository = {
   async insertMerchantPaymentRequest({
@@ -46,7 +23,7 @@ const merchantPaymentRequestRepository = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const credentials = require('../credentials');
+      const credentials = require("../credentials");
       const merchant = await credentials.lockMerchant(client, destinationUserId);
       await credentials.assertCurrent(merchant, credentialsRevision);
       const result = await client.query(
@@ -130,10 +107,10 @@ const merchantPaymentRequestRepository = {
       await webhookRepository.expireDuePayments(client, { orderId, merchantId });
       const result = await client.query(
         `SELECT pr.*, (pr.expires_at <= NOW()) AS is_expires, u.full_name AS destination_name, u.phone AS destination_phone, u.role
-       FROM payment_requests pr
-       JOIN users u ON u.id = pr.destination_user_id
-       WHERE pr.order_id = $1
-         AND pr.destination_user_id = $2`,
+         FROM payment_requests pr
+         JOIN users u ON u.id = pr.destination_user_id
+         WHERE pr.order_id = $1
+           AND pr.destination_user_id = $2`,
         [orderId, merchantId],
       );
 

@@ -1,5 +1,6 @@
-const { httpError } = require("../../utils/httpError");
+// postpaid.service.js: Nghiệp vụ quản trị Ví trả sau (xem tổng quan, khóa/mở khóa, hạn mức, duyệt chứng minh thu nhập).
 const adminPostpaidRepository = require("./postpaid.repository");
+const { assertValidAdminId: assertSharedAdminId } = require("../shared/adminHelpers");
 const {
   assertValidUuid,
   parseAdminReason,
@@ -9,14 +10,6 @@ const {
   parseLimitAdjustPayload,
   parseProofIndex,
 } = require("./postpaid.validators");
-
-function assertValidAdminId(adminId) {
-  const clean = String(adminId || "").trim();
-  if (!clean) {
-    throw httpError(401, "Không xác định được tài khoản Quản trị viên thực hiện thao tác");
-  }
-  return clean;
-}
 
 const adminPostpaidService = {
   async getOverview() {
@@ -40,7 +33,11 @@ const adminPostpaidService = {
 
   async freezeWallet({ userId, adminId, reason }) {
     const cleanUserId = assertValidUuid(userId, "user_id");
-    const cleanAdminId = assertValidAdminId(adminId);
+    const cleanAdminId = String(adminId || "").trim();
+    assertSharedAdminId(
+      cleanAdminId,
+      "Không xác định được tài khoản Quản trị viên thực hiện thao tác",
+    );
     const cleanReason = parseAdminReason(reason, "Lý do khóa Ví trả sau");
     return adminPostpaidRepository.freezeWallet({
       userId: cleanUserId,
@@ -51,7 +48,11 @@ const adminPostpaidService = {
 
   async unfreezeWallet({ userId, adminId, reason }) {
     const cleanUserId = assertValidUuid(userId, "user_id");
-    const cleanAdminId = assertValidAdminId(adminId);
+    const cleanAdminId = String(adminId || "").trim();
+    assertSharedAdminId(
+      cleanAdminId,
+      "Không xác định được tài khoản Quản trị viên thực hiện thao tác",
+    );
     const cleanReason = parseAdminReason(reason, "Lý do mở khóa Ví trả sau");
     return adminPostpaidRepository.unfreezeWallet({
       userId: cleanUserId,
@@ -62,7 +63,11 @@ const adminPostpaidService = {
 
   async adjustCreditLimit({ userId, adminId, credit_limit, reason }) {
     const cleanUserId = assertValidUuid(userId, "user_id");
-    const cleanAdminId = assertValidAdminId(adminId);
+    const cleanAdminId = String(adminId || "").trim();
+    assertSharedAdminId(
+      cleanAdminId,
+      "Không xác định được tài khoản Quản trị viên thực hiện thao tác",
+    );
     const { creditLimit, reason: cleanReason } = parseLimitAdjustPayload({
       credit_limit,
       reason,
@@ -91,8 +96,15 @@ const adminPostpaidService = {
 
   async approveUnlockRequest({ requestId, adminId, reason }) {
     const cleanRequestId = assertValidUuid(requestId, "request_id");
-    const cleanAdminId = assertValidAdminId(adminId);
-    const cleanReason = parseAdminReason(reason, "Lý do duyệt mở khóa Ví trả sau");
+    const cleanAdminId = String(adminId || "").trim();
+    assertSharedAdminId(
+      cleanAdminId,
+      "Không xác định được tài khoản Quản trị viên thực hiện thao tác",
+    );
+    const cleanReason = parseAdminReason(
+      reason,
+      "Lý do duyệt mở khóa Ví trả sau",
+    );
     return adminPostpaidRepository.approveUnlockRequest({
       requestId: cleanRequestId,
       adminId: cleanAdminId,
@@ -102,8 +114,15 @@ const adminPostpaidService = {
 
   async rejectUnlockRequest({ requestId, adminId, reason }) {
     const cleanRequestId = assertValidUuid(requestId, "request_id");
-    const cleanAdminId = assertValidAdminId(adminId);
-    const cleanReason = parseAdminReason(reason, "Lý do từ chối mở khóa Ví trả sau");
+    const cleanAdminId = String(adminId || "").trim();
+    assertSharedAdminId(
+      cleanAdminId,
+      "Không xác định được tài khoản Quản trị viên thực hiện thao tác",
+    );
+    const cleanReason = parseAdminReason(
+      reason,
+      "Lý do từ chối mở khóa Ví trả sau",
+    );
     return adminPostpaidRepository.rejectUnlockRequest({
       requestId: cleanRequestId,
       adminId: cleanAdminId,

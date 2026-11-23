@@ -11,7 +11,7 @@ const {
 const {
   addDaysToDateStr,
   getCurrentMonthBoundsInVietnam,
-} = require("../src/utils/dateRange");
+} = require("../src/utils/common/dateRange");
 const adminUserService = require("../src/admin/user/user.service");
 
 function parseArgs(argv) {

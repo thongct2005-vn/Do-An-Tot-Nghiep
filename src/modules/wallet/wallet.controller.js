@@ -1,6 +1,7 @@
-const { successResponse } = require("../../utils/apiResponse");
+// wallet.controller.js: Controller xử lý HTTP cho số dư ví, kiểm tra hạn mức khả dụng và xác thực PIN.
+const { successResponse, runWithRiskFailure } = require("../../utils/common/http");
 const walletService = require("./wallet.service");
-const { recordFailure, clearFailure } = require("../../utils/risk");
+const { clearFailure, recordFailure } = require("../../utils/security/risk");
 
 const walletController = {
   async getWalletByUserId(req, res, next) {
@@ -29,14 +30,16 @@ const walletController = {
     try {
       const { user_id: userId } = req.user;
       const { pin, idempotency_key: idempotencyKey, action, params } = req.body;
-      const result = await walletService.checkPin({
-        userId,
-        pin,
-        idempotencyKey,
-        action,
-        params,
-        riskChallenge: Boolean(req.risk?.challenge),
-      });
+      const result = await runWithRiskFailure(req.user?.phone, () =>
+        walletService.checkPin({
+          userId,
+          pin,
+          idempotencyKey,
+          action,
+          params,
+          riskChallenge: Boolean(req.risk?.challenge),
+        }),
+      );
       if (result.is_correct === false) {
         recordFailure(req.user?.phone);
       } else if (!result.challenge_required) {
@@ -44,9 +47,6 @@ const walletController = {
       }
       return successResponse(res, 200, "Kiểm tra mã PIN thành công", result);
     } catch (e) {
-      if (e.statusCode && e.statusCode < 500) {
-        recordFailure(req.user?.phone);
-      }
       next(e);
     }
   },
@@ -54,11 +54,13 @@ const walletController = {
     try {
       const { user_id: userId } = req.user;
       const { otp } = req.body;
-      const result = await walletService.verifyPinChallenge({
-        userId,
-        otpUser: req.otpUser,
-        otp,
-      });
+      const result = await runWithRiskFailure(req.user?.phone, () =>
+        walletService.verifyPinChallenge({
+          userId,
+          otpUser: req.otpUser,
+          otp,
+        }),
+      );
       clearFailure(req.user?.phone);
       return successResponse(
         res,
@@ -67,9 +69,6 @@ const walletController = {
         result,
       );
     } catch (e) {
-      if (e.statusCode && e.statusCode < 500) {
-        recordFailure(req.user?.phone);
-      }
       next(e);
     }
   },
@@ -86,4 +85,5 @@ const walletController = {
     }
   },
 };
+
 module.exports = walletController;

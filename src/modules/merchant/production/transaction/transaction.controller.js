@@ -1,12 +1,13 @@
-const { successResponse } = require("../../../../utils/apiResponse");
-const { sendXlsx } = require("../../../../utils/exportExcel");
+// transaction.controller.js: Controller xử lý HTTP giao dịch, OTP, lịch sử, thống kê và hạn mức cho Merchant Production.
+const { successResponse } = require("../../../../utils/common/http");
+const { sendXlsx } = require("../../../../utils/files/exportExcel");
 const merchantTransactionService = require("./transaction.service");
 const transactionService = require("../../../../modules/transaction/transaction.service");
-const { emitToUser } = require("../../../../utils/socket");
+const { emitToUser } = require("../../../../utils/notifications/socket");
 const {
   sendPushNotification,
-} = require("../../../../utils/firebaseNotification");
-const { recordFailure, clearFailure } = require("../../../../utils/risk");
+} = require("../../../../utils/notifications/firebaseNotification");
+const { recordFailure, clearFailure } = require("../../../../utils/security/risk");
 const merchantTransactionController = {
   async transferMoney(req, res, next) {
     try {

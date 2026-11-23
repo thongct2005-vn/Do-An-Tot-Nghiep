@@ -29,6 +29,7 @@
   "scripts": {
     "start": "node server.js",
     "s": "node --env-file=.env server.js",
+    "presb": "node --env-file=.env.sandbox scripts/create_sandbox_audit_db.js --soft",
     "sb": "node --env-file=.env.sandbox server.js"
   }
 }

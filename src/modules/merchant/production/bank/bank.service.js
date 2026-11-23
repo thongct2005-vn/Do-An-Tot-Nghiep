@@ -44,10 +44,12 @@ const merchantBankService = {
       throw httpError(404, "Không tìm thấy ngân hàng liên kết");
     }
 
+    const isShowBalance = Boolean(account.is_show_balance);
     return {
       linked_bank_account_id: account.id,
       bank_name: account.bank_name,
-      balance: Number(account.balance),
+      is_show_balance: isShowBalance,
+      balance: isShowBalance ? Number(account.balance) : null,
     };
   },
 };

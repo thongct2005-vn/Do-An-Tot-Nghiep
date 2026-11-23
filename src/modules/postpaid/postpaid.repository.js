@@ -17,10 +17,7 @@ const {
   verifySystemWalletInDb,
 } = require("../../utils/systemWallet");
 const {
-  MIN_POSTPAID_CREDIT_LIMIT,
   POSTPAID_LATE_FEE_TIERS,
-  POSTPAID_CONFIG_FIELD_LABELS,
-  parseNonNegIntConfig,
   resolvePostpaidLateFeeTier,
   resolvePostpaidLimitReductionRule,
   normalizePostpaidConfig,
@@ -47,6 +44,7 @@ const SYSTEM_POSTPAID_WALLET_SPEC = Object.freeze({
   inactiveMessage: "Ví nguồn hệ thống Ví trả sau chưa sẵn sàng",
 });
 
+/** Kiểm tra và trả về UUID ví nguồn hệ thống (SYSTEM_POSTPAID_WALLET) từ biến môi trường. */
 function assertSystemPostpaidWalletConfigured() {
   const walletId = String(process.env.SYSTEM_POSTPAID_WALLET_ID || "").trim();
   if (!walletId || !UUID_RE.test(walletId)) {
@@ -55,10 +53,15 @@ function assertSystemPostpaidWalletConfigured() {
   return walletId;
 }
 
+/** Xác thực bản ghi ví nguồn hệ thống (đúng role SYSTEM, trạng thái ACTIVE...). */
 function assertValidSystemPostpaidWalletRow(wallet) {
   return assertValidSystemWalletRow(wallet, SYSTEM_POSTPAID_WALLET_SPEC);
 }
 
+/**
+ * Chuyển timestamp UTC (ms) sang thông tin ngày/tháng/giờ theo múi giờ Việt Nam (UTC+7),
+ * đồng thời tính trước mã kỳ (`YYYY-MM`), ngày hiện tại (`YYYY-MM-DD`) và tháng kế tiếp.
+ */
 function getVnDateMeta(nowMs = Date.now()) {
   const vnNow = new Date(nowMs + VN_OFFSET_MS);
   const year = vnNow.getUTCFullYear();
@@ -81,18 +84,21 @@ function getVnDateMeta(nowMs = Date.now()) {
   };
 }
 
+/** Tạo chuỗi ngày đáo hạn chuẩn `YYYY-MM-DD`, giới hạn ngày từ 1..28 để hợp lệ mọi tháng. */
 function buildDueDateStr(year, month, dueDay) {
   const clampedDay = Math.min(28, Math.max(1, Number(dueDay) || 5));
   const pad2 = (n) => String(n).padStart(2, "0");
   return `${year}-${pad2(month)}-${pad2(clampedDay)}`;
 }
 
+/** Đổi mã kỳ từ `YYYY-MM` sang `MM/YYYY` để hiển thị cho người dùng (vd: `2026-11` -> `11/2026`). */
 function formatCycleMonthDisplay(cycleMonth) {
   const raw = String(cycleMonth || "").trim();
   const match = /^(\d{4})-(\d{2})$/.exec(raw);
   return match ? `${match[2]}/${match[1]}` : raw;
 }
 
+/** Chuẩn hóa giá trị Date/String bất kỳ về chuỗi ngày `YYYY-MM-DD` (theo giờ Việt Nam nếu cần). */
 function toYmdStr(val) {
   if (!val) return null;
   if (typeof val === "string") {
@@ -112,6 +118,7 @@ function toYmdStr(val) {
   return null;
 }
 
+/** Tính số ngày chênh lệch chính xác (`laterVal - earlierVal`) theo lịch dương UTC để tránh lệch DST/giờ. */
 function diffDaysYmd(laterVal, earlierVal) {
   const laterYmd = toYmdStr(laterVal);
   const earlierYmd = toYmdStr(earlierVal);
@@ -123,6 +130,7 @@ function diffDaysYmd(laterVal, earlierVal) {
   return Math.floor((utcA - utcB) / 86400000);
 }
 
+/** Đổi chuỗi ngày `YYYY-MM-DD` sang định dạng Việt Nam `DD/MM/YYYY` để đưa vào câu thông báo. */
 function formatVnDateFromYmd(ymd) {
   const raw = toYmdStr(ymd) || String(ymd || "").trim();
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
@@ -149,6 +157,7 @@ const {
   normalizePostpaidReminderConfig,
 } = require("./postpaidReminderConfig");
 
+/** Thay các biến dạng `{{key}}` trong template nhắc nợ bằng giá trị thực tế tương ứng. */
 function renderReminderTemplate(templateText, vars) {
   return String(templateText).replace(/\{\{([a-z0-9_]+)\}\}/gi, (match, rawKey) => {
     const key = String(rawKey || "").toLowerCase();
@@ -239,6 +248,7 @@ function buildMonthlyDebtReminderNotification(
   };
 }
 
+/** Chuẩn hóa danh mục từ điển (trạng thái / loại biến động) đọc từ `system_configs` thành { codes, labels }. */
 function normalizePostpaidCatalog(raw, categoryLabel) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw httpError(500, `Cấu hình ${categoryLabel} trong hệ thống không hợp lệ`);
@@ -263,6 +273,7 @@ function normalizePostpaidCatalog(raw, categoryLabel) {
   };
 }
 
+/** Lấy mã code trong danh mục đã chuẩn hóa; ném lỗi 500 nếu thiếu cấu hình trong DB. */
 function requireCatalogCode(codes, key, categoryLabel) {
   if (!codes || !Object.prototype.hasOwnProperty.call(codes, key)) {
     throw httpError(500, `Hệ thống chưa thiết lập đầy đủ ${categoryLabel}`);
@@ -270,6 +281,7 @@ function requireCatalogCode(codes, key, categoryLabel) {
   return codes[key];
 }
 
+/** Khóa (`SELECT ... FOR UPDATE`) danh sách bản ghi `users` theo thứ tự UUID tăng dần để chống deadlock. */
 async function lockUsersByIdsOrdered(client, rawIds) {
   const ids = [...new Set(rawIds.map((x) => String(x)).filter(Boolean))].sort();
   if (ids.length === 0) return new Map();
@@ -289,6 +301,10 @@ async function lockUsersByIdsOrdered(client, rawIds) {
   return byId;
 }
 
+/**
+ * Đánh giá người dùng đã đủ toàn bộ điều kiện kích hoạt Ví trả sau chưa
+ * (tính năng đang bật, tài khoản USER ACTIVE, đã eKYC, có ngân hàng ACTIVE, đủ tuổi tài khoản tối thiểu).
+ */
 function resolveActivationEligibility({
   user,
   isKyc,
@@ -367,6 +383,7 @@ async function lockSystemPostpaidWalletTx(client, postpaidWalletId) {
   return assertValidSystemPostpaidWalletRow(res.rows[0]);
 }
 
+/** Ghi nhận sự kiện kiểm toán bất đồng bộ vào bảng `audit_outbox` trong cùng DB transaction. */
 async function recordAudit(client, eventType, payload) {
   await client.query(
     `INSERT INTO audit_outbox (id, event_type, payload) VALUES ($1::uuid, $2, $3::jsonb)`,
@@ -374,16 +391,22 @@ async function recordAudit(client, eventType, payload) {
   );
 }
 
+/** Định dạng số tiền VNĐ có dấu chấm ngăn cách hàng nghìn + hậu tố `đ` (vd: `1.500.000đ`). */
 function formatVndDot(amount) {
   const num = Math.trunc(Number(amount) || 0);
   return `${String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}đ`;
 }
 
+/** Chuyển tỷ lệ bps (vd: 525 bps = 5.25%) sang chuỗi phần trăm gọn gàng để hiển thị. */
 function formatPercentFromBps(bps) {
   const pct = Number(bps) / 100;
   return Number.isInteger(pct) ? String(pct) : String(Number(pct.toFixed(2)));
 }
 
+/**
+ * Dựng payload quy tắc, biểu phí 4 bậc, thứ tự ưu tiên trả nợ và điều kiện mở Ví trả sau
+ * cho endpoint `GET /postpaid/info` từ dữ liệu cấu hình thực tế trong `system_configs`.
+ */
 function buildPostpaidInfoPayload(catalog) {
   const { config, statusLabels, entryActionLabels } = catalog;
   const pastDueLabel = statusLabels.PAST_DUE || "PAST_DUE";
@@ -498,6 +521,7 @@ function buildPostpaidInfoPayload(catalog) {
   };
 }
 
+/** Loại bỏ dấu tiếng Việt và chuyển chữ thường để hỗ trợ tìm kiếm không dấu theo từ khóa. */
 function removePostpaidDiacritics(str) {
   return String(str || "")
     .normalize("NFD")
@@ -507,6 +531,10 @@ function removePostpaidDiacritics(str) {
     .toLowerCase();
 }
 
+/**
+ * Chuẩn hóa tham số lọc `action` (hỗ trợ danh sách phân tách dấu phẩy và nhóm gộp `REPAY`)
+ * đối chiếu với danh mục biến động hợp lệ trong DB.
+ */
 function resolvePostpaidEntryActionFilter(rawAction, entryActions) {
   if (!rawAction || !String(rawAction).trim()) return null;
   const available = new Set(
@@ -545,6 +573,7 @@ function resolvePostpaidEntryActionFilter(rawAction, entryActions) {
   return Array.from(resolved);
 }
 
+/** Tìm danh sách mã `action` có tên nhãn tiếng Việt (không dấu) hoặc mã khớp với từ khóa tìm kiếm. */
 function findMatchingPostpaidActions(entryActionLabels, keyword) {
   if (!keyword || !entryActionLabels) return null;
   const cleanKw = removePostpaidDiacritics(keyword.trim());
@@ -562,6 +591,7 @@ function findMatchingPostpaidActions(entryActionLabels, keyword) {
 }
 
 const postpaidRepository = {
+  /** Đọc và chuẩn hóa bộ 3 cấu hình hệ thống (`POSTPAID_CONFIG`, `POSTPAID_STATUS`, `POSTPAID_ENTRY_ACTIONS`). */
   async getSystemCatalog(db = pool) {
     const keys = [
       POSTPAID_SYSTEM_CONFIG_KEYS.CONFIG,
@@ -605,6 +635,7 @@ const postpaidRepository = {
     };
   },
 
+  /** Kiểm tra ví nguồn `SYSTEM_POSTPAID_WALLET` tồn tại, đúng role và không trùng với ví thu phí. */
   async verifySystemPostpaidWallet(db = pool) {
     return verifySystemWalletInDb(db, {
       walletId: assertSystemPostpaidWalletConfigured(),
@@ -615,11 +646,13 @@ const postpaidRepository = {
     });
   },
 
+  /** Lấy nhanh cấu hình tham số nghiệp vụ `POSTPAID_CONFIG` từ `system_configs`. */
   async getConfig(db = pool) {
     const catalog = await postpaidRepository.getSystemCatalog(db);
     return catalog.config;
   },
 
+  /** Lấy và kiểm tra hợp lệ cấu hình nhắc nợ hàng tháng (`POSTPAID_REMINDER_CONFIG`). */
   async getReminderConfig(db = pool) {
     const res = await db.query(
       `SELECT value FROM system_configs WHERE key = $1 LIMIT 1`,
@@ -631,12 +664,19 @@ const postpaidRepository = {
     return normalizePostpaidReminderConfig(res.rows[0].value);
   },
 
+  /** Trả về bộ quy tắc, biểu phí và điều kiện sử dụng cho API `GET /postpaid/info`. */
   async getWalletInfo(db = pool) {
     const catalog = await postpaidRepository.getSystemCatalog(db);
     return buildPostpaidInfoPayload(catalog);
   },
 
+  /**
+   * Tổng hợp toàn bộ trạng thái, số dư/dư nợ và điều kiện mở Ví trả sau của một user
+   * để hiển thị màn hình Ví trả sau trên App (hoặc trả lại snapshot mới nhất sau khi cập nhật ví).
+   */
   async getWalletOverview(userId, db = pool) {
+    // 1. Truy vấn song song 7 nguồn dữ liệu: cấu hình hệ thống, thông tin user (+ tuổi tài khoản),
+    //    trạng thái eKYC, ngân hàng liên kết, dữ liệu ví trả sau, yêu cầu mở khóa gần nhất và ví nguồn hệ thống
     const [catalog, userRes, kycRes, bankRes, walletRes, latestUnlockRes] = await Promise.all([
       postpaidRepository.getSystemCatalog(db),
       db.query(
@@ -675,6 +715,7 @@ const postpaidRepository = {
       postpaidRepository.verifySystemPostpaidWallet(db),
     ]);
 
+    // 2. Xác thực user tồn tại và kiểm tra đủ 3 điều kiện mở ví (eKYC, liên kết ngân hàng, tuổi tài khoản)
     const { config, statuses, statusLabels, entryActionLabels } = catalog;
     const user = userRes.rows[0];
     if (!user) {
@@ -691,6 +732,7 @@ const postpaidRepository = {
       config,
     });
 
+    // 3. Chuẩn hóa trạng thái ví & tính toán hạn mức, từng cấu phần dư nợ / phí / hạn mức còn lại
     const inactiveStatus = requireCatalogCode(
       statuses,
       "INACTIVE",
@@ -703,6 +745,7 @@ const postpaidRepository = {
     );
     const isActivated = Boolean(pw && pw.status !== inactiveStatus);
 
+    // Nếu chưa kích hoạt: tạm hiển thị hạn mức mặc định theo cấu hình hệ thống và đưa dư nợ về 0
     const creditLimit = isActivated
       ? Number(pw.credit_limit)
       : config.default_credit_limit;
@@ -710,6 +753,7 @@ const postpaidRepository = {
     const billedAmount = isActivated ? Number(pw.billed_amount) : 0;
     const serviceFeeAmount = isActivated ? Number(pw.service_fee_amount) : 0;
     const lateFeeAmount = isActivated ? Number(pw.late_fee_amount) : 0;
+    // Dư nợ kỳ mới phát sinh (chưa chốt sao kê) = phần dư còn lại sau khi trừ gốc đã chốt và các khoản phí
     const unbilledAmount = isActivated
       ? Math.max(0, usedAmount - billedAmount - serviceFeeAmount - lateFeeAmount)
       : 0;
@@ -720,6 +764,8 @@ const postpaidRepository = {
       currentStatus,
       STATUS_CATALOG_LABEL,
     );
+
+    // 4. Tính ngày đáo hạn hiệu lực (ưu tiên hạn gốc kỳ quá hạn nếu có) và số ngày trễ theo giờ VN
     const vnToday = getVnDateMeta().todayDateStr;
     const effectiveDueDateStr = isActivated
       ? toYmdStr(pw.overdue_cycle_due_date || pw.due_date)
@@ -731,6 +777,8 @@ const postpaidRepository = {
       effectiveDueDateStr < vnToday
         ? diffDaysYmd(vnToday, effectiveDueDateStr)
         : 0;
+
+    // 5. Chuẩn hóa thông tin yêu cầu gửi ảnh chứng minh thu nhập gần nhất (khi bị khóa OVERDUE_REPEAT)
     const latestReqRow = latestUnlockRes.rows[0] || null;
     const latestUnlockRequest = latestReqRow
       ? {
@@ -749,6 +797,7 @@ const postpaidRepository = {
         }
       : null;
 
+    // 6. Trả về object tổng quan gồm trạng thái, chỉ số tài chính, số dư ví chính, config và bộ nhãn hiển thị
     return {
       activated: isActivated,
       is_kyc: isKyc,
@@ -782,6 +831,11 @@ const postpaidRepository = {
     };
   },
 
+  /**
+   * Kích hoạt Ví trả sau cho người dùng:
+   * - Kiểm tra tính năng bật, khóa user theo thứ tự UUID, xác minh 3 điều kiện (eKYC, ngân hàng, tuổi tài khoản).
+   * - Tạo dòng mới trong `postpaid_wallets` hoặc kích hoạt lại nếu ví từng đóng (`INACTIVE`), ghi audit và trả về overview mới.
+   */
   async activateWallet({ userId }) {
     const [{ config, statuses }] = await Promise.all([
       postpaidRepository.getSystemCatalog(pool),
@@ -797,6 +851,7 @@ const postpaidRepository = {
     try {
       await client.query("BEGIN");
 
+      // 1. Khóa bản ghi user và kiểm tra điều kiện eKYC + ngân hàng liên kết + tuổi tài khoản
       const usersMap = await lockUsersByIdsOrdered(client, [userId]);
       const user = usersMap.get(String(userId));
       if (!user) {
@@ -824,6 +879,7 @@ const postpaidRepository = {
         throw httpError(eligibility.statusCode, eligibility.ineligibleReason);
       }
 
+      // 2. Khóa ví trả sau hiện có (nếu từng tạo trước đó) để tránh kích hoạt trùng
       const existingRes = await client.query(
         `SELECT user_id, status FROM postpaid_wallets WHERE user_id = $1 FOR UPDATE`,
         [userId],
@@ -833,6 +889,7 @@ const postpaidRepository = {
         throw httpError(409, "Ví trả sau đã được kích hoạt trước đó");
       }
 
+      // 3. Nếu từng hủy ví -> khôi phục sạch về hạn mức mặc định; ngược lại -> INSERT bản ghi mới
       if (existingWallet) {
         await client.query(
           `UPDATE postpaid_wallets
@@ -880,6 +937,10 @@ const postpaidRepository = {
     return postpaidRepository.getWalletOverview(userId);
   },
 
+  /**
+   * Helper dùng chung để chuyển trạng thái vòng đời Ví trả sau của user (tạm khóa / mở khóa / đóng ví)
+   * trong cùng DB transaction: khóa user -> khóa `postpaid_wallets` -> chạy `validateWallet` -> UPDATE -> ghi audit.
+   */
   async transitionWalletLifecycle({
     userId,
     nextStatusKey,
@@ -958,6 +1019,7 @@ const postpaidRepository = {
     return postpaidRepository.getWalletOverview(userId);
   },
 
+  /** User tự tạm khóa Ví trả sau (`FROZEN` với lý do `USER_FREEZE`); chặn nếu ví chưa mở hoặc đang quá hạn. */
   async freezeWallet({ userId }) {
     return postpaidRepository.transitionWalletLifecycle({
       userId,
@@ -989,6 +1051,7 @@ const postpaidRepository = {
     });
   },
 
+  /** User tự mở khóa Ví trả sau (chỉ cho phép khi bị khóa bởi `USER_FREEZE`, chặn `OVERDUE_REPEAT` và `ADMIN_FREEZE`). */
   async unfreezeWallet({ userId }) {
     return postpaidRepository.transitionWalletLifecycle({
       userId,
@@ -1025,6 +1088,7 @@ const postpaidRepository = {
     });
   },
 
+  /** User đóng (hủy) Ví trả sau về `INACTIVE` và xóa thông tin kỳ hiện tại khi toàn bộ dư nợ/phí đều bằng 0. */
   async closeWallet({ userId, reason = "" }) {
     return postpaidRepository.transitionWalletLifecycle({
       userId,
@@ -1062,6 +1126,11 @@ const postpaidRepository = {
       },
     });
   },
+
+  /**
+   * Lấy danh sách lịch sử biến động sổ cái Ví trả sau (`postpaid_entries`) của user
+   * hỗ trợ phân trang cursor `(created_at, id)`, lọc theo `action`, khoảng ngày (giờ VN) và tìm kiếm không dấu.
+   */
   async getEntries(
     userId,
     {
@@ -1074,6 +1143,7 @@ const postpaidRepository = {
     } = {},
     db = pool,
   ) {
+    // 1. Chuẩn hóa giới hạn phân trang và kiểm tra cursor_id (UUID hợp lệ)
     const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 50);
     const validCursorId =
       cursorId && String(cursorId).trim() !== "" ? String(cursorId).trim() : null;
@@ -1082,6 +1152,7 @@ const postpaidRepository = {
     }
     const hasCursor = Boolean(validCursorId);
 
+    // 2. Escape ký tự đặc biệt cho tìm kiếm ILIKE và đánh dấu lọc ngày
     const trimmedKeyword = keyword && String(keyword).trim() ? String(keyword).trim() : null;
     const hasKeyword = Boolean(trimmedKeyword);
     const safeKeyword = hasKeyword
@@ -1091,6 +1162,7 @@ const postpaidRepository = {
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
 
+    // 3. Lấy danh mục action tiếng Việt để ánh xạ bộ lọc & tìm kiếm không dấu theo tên loại giao dịch
     const catalog = await postpaidRepository.getSystemCatalog(db);
     const { entryActions, entryActionLabels } = catalog;
     const filteredActions = resolvePostpaidEntryActionFilter(action, entryActions);
@@ -1099,6 +1171,7 @@ const postpaidRepository = {
       ? findMatchingPostpaidActions(entryActionLabels, trimmedKeyword)
       : null;
 
+    // 4. Truy vấn keyset pagination trên postpaid_entries (join thêm counterparty & order_id của QR)
     const res = await db.query(
       `WITH cursor_ref AS (
          SELECT c.created_at
@@ -1192,6 +1265,13 @@ const postpaidRepository = {
     };
   },
 
+  /**
+   * Thanh toán đơn QR (`payment_requests`) bằng nguồn tiền Ví trả sau:
+   * - Kiểm tra đơn QR, eKYC, trạng thái ví ACTIVE, hạn mức khả dụng và hạn mức giao dịch/ngày.
+   * - Trích tiền từ `SYSTEM_POSTPAID_WALLET` chuyển cho merchant (trừ phí merchant nếu có), tăng `used_amount`.
+   * - Ghi nhận `transactions`, `fee_ledger_entries`, `postpaid_entries` (`PURCHASE`), đánh dấu QR đã thanh toán,
+   *   gửi webhook + audit; nếu thất bại thì ghi giao dịch `FAILED` an toàn.
+   */
   async processPostpaidQRPayment({ sourceUserId, referenceCode, idempotencyKey }) {
     const { config, statuses, entryActions } =
       await postpaidRepository.getSystemCatalog(pool);
@@ -1333,6 +1413,7 @@ const postpaidRepository = {
         throw httpError(422, "Hạn mức Ví trả sau khả dụng không đủ");
       }
 
+      // Kiểm tra hạn mức chi tiêu theo ngày và tính phí merchant + kiểm tra trần số dư ví nhận
       await assertDailyLimit(client, {
         userId: sourceUserId,
         role: sourceUser.role,
@@ -1396,6 +1477,7 @@ const postpaidRepository = {
         [usedAfter, sourceUserId],
       );
 
+      // Lưu giao dịch thanh toán tổng, thu phí merchant (nếu có) và ghi sổ cái PURCHASE
       const description =
         paymentRequest.description || `Thanh toán QR ${referenceCode}`;
       const txInsertRes = await client.query(
@@ -1531,6 +1613,13 @@ const postpaidRepository = {
     return resultPayload;
   },
 
+  /**
+   * Thanh toán (trả nợ) Ví trả sau từ Ví chính (`MAIN_WALLET`) hoặc Ngân hàng liên kết (`BANK`):
+   * - Phân bổ tiền trả theo thứ tự ưu tiên cố định: (1) Phí trễ hạn -> (2) Phí dịch vụ -> (3) Gốc đã chốt -> (4) Gốc kỳ mới.
+   * - Trừ tiền ví người trả / ngân hàng; cộng lại tiền gốc vào `SYSTEM_POSTPAID_WALLET` và phí vào `SYSTEM_FEE_WALLET`.
+   * - Khi tất toán sạch kỳ đang quá hạn: tự động hạ hạn mức từ ngày trễ thứ 5 theo 4 bậc, đồng thời mở lại `ACTIVE`
+   *   nếu là lần quá hạn 1 hoặc chuyển `FROZEN (OVERDUE_REPEAT)` nếu `overdue_count >= 2` (kèm dọn 3 cột `overdue_cycle_*`).
+   */
   async repayDebt({
     userId,
     amount,
@@ -1673,6 +1762,7 @@ const postpaidRepository = {
         throw httpError(400, "Số tiền thanh toán vượt quá tổng dư nợ hiện tại");
       }
 
+      // 1. Tính phân bổ số tiền trả theo thứ tự: phí trễ hạn -> phí dịch vụ -> gốc đã chốt -> gốc kỳ mới
       const paidLateFee = Math.min(repayAmount, oldLateFee);
       const remainingAfterLateFee = repayAmount - paidLateFee;
       const paidServiceFee = Math.min(remainingAfterLateFee, oldServiceFee);
@@ -1690,6 +1780,7 @@ const postpaidRepository = {
         ...(isBankFunded ? { repay_funding_source: "BANK" } : {}),
       };
 
+      // 2. Xác minh và tính trước số dư nguồn tiền trả nợ (ngân hàng liên kết hoặc ví chính)
       const userBefore = Number(user.balance);
       let userAfter = userBefore;
       let bankBalanceBefore = null;
@@ -1723,6 +1814,9 @@ const postpaidRepository = {
       const isSettlingDebtCycle =
         newLateFee === 0 && newServiceFee === 0 && newBilled === 0;
       const effectiveDueDateStr = toYmdStr(pw.overdue_cycle_due_date || pw.due_date);
+      // 3. Nếu tất toán sạch kỳ quá hạn (gốc đã chốt + phí = 0):
+      //    cập nhật overdue_count (chống cộng trùng kỳ), tính giảm hạn mức từ ngày trễ thứ 5,
+      //    mở khóa ACTIVE (lần 1) hoặc chuyển FROZEN/OVERDUE_REPEAT (từ lần 2) và xóa 3 cột overdue_cycle_*
       const effectiveOverdueCycle =
         pw.overdue_cycle_month || pw.current_cycle_month || vnMeta.cycleMonth;
       const daysOverdue =
@@ -2074,6 +2168,12 @@ const postpaidRepository = {
     return resultPayload;
   },
 
+  /**
+   * Hoàn tiền một giao dịch thanh toán QR Ví trả sau (`PURCHASE`) về phía người mua:
+   * - Bù trừ tối đa vào phần dư nợ gốc ví trả sau còn lại (`principalDebtRemaining`), trả tiền từ merchant về `SYSTEM_POSTPAID_WALLET`.
+   * - Nếu người mua đã trả bớt nợ nên tiền hoàn vượt dư nợ gốc còn lại, phần dôi dư (`excessToMainWallet`) hoàn thẳng về ví chính.
+   * - Cập nhật `used_amount` / `billed_amount`, ghi bút toán `REFUND` vào `postpaid_entries` và tự mở khóa ví nếu hết nợ quá hạn.
+   */
   async refundPostpaidTransaction({
     originalTxId,
     refundAmount = null,
@@ -2207,6 +2307,7 @@ const postpaidRepository = {
         throw httpError(422, "Số dư của cửa hàng không đủ để thực hiện hoàn tiền");
       }
 
+      // 1. Chia số tiền hoàn: trừ tối đa phần dư nợ gốc ví trả sau còn lại, phần dôi dư hoàn về ví chính
       const oldUsed = Number(pw.used_amount);
       const oldBilled = Number(pw.billed_amount);
       const oldServiceFee = Number(pw.service_fee_amount);
@@ -2220,7 +2321,7 @@ const postpaidRepository = {
       const excessToMainWallet = actualRefundAmount - creditToReduce;
       const newUsed = oldUsed - creditToReduce;
 
-      // Kiểm tra giao dịch mua gốc đã nằm trước lần chốt sao kê gần nhất chưa
+      // Kiểm tra giao dịch mua gốc đã nằm trước lần chốt sao kê gần nhất chưa để giảm billed_amount tương ứng
       const stmtRes = await client.query(
         `SELECT created_at
            FROM postpaid_entries
@@ -2272,6 +2373,7 @@ const postpaidRepository = {
         });
       }
 
+      // 2. Thực hiện chuyển tiền hoàn từ merchant -> SYSTEM_POSTPAID_WALLET (hoàn nợ) & ví chính user (nếu dư)
       let merchantCursorBalance = merchantBefore;
       let primaryRefundTxId = null;
       let excessTxId = null;
@@ -2589,6 +2691,7 @@ const postpaidRepository = {
 
           if (newBilled <= 0 && !qualifiesServiceFee) continue;
 
+          // 1. Tránh chốt trùng 2 lần cùng kỳ nhờ kiểm tra và unique index (user_id, cycle_month)
           const existingStmtRes = await client.query(
             `SELECT 1
                FROM postpaid_entries
@@ -2600,6 +2703,7 @@ const postpaidRepository = {
           );
           if (existingStmtRes.rows[0]) continue;
 
+          // 2. Thu phí dịch vụ tháng nếu kỳ này có giao dịch mới & đã vượt số giao dịch miễn phí đầu
           let serviceFeeAdded = 0;
           if (qualifiesServiceFee) {
             const feeInsert = await client.query(
@@ -2626,6 +2730,7 @@ const postpaidRepository = {
             }
           }
 
+          // 3. Ghi bút toán chốt sao kê STATEMENT_CLOSE (delta_used = 0) và cập nhật kỳ/hạn trả
           const usedAfterServiceFee = usedBefore + serviceFeeAdded;
           const stmtInsert = await client.query(
             `INSERT INTO postpaid_entries (
@@ -2648,6 +2753,7 @@ const postpaidRepository = {
 
           if (!stmtInsert.rows[0]) continue;
 
+          // Bảo toàn ngày đáo hạn cũ nếu kỳ trước vẫn đang quá hạn (chống job chốt kỳ mới ghi đè due_date)
           const keepExistingDueDate =
             row.status === pastDueStatus || Boolean(row.overdue_cycle_due_date);
           const nextDueDate = keepExistingDueDate
@@ -2749,6 +2855,7 @@ const postpaidRepository = {
         }
 
         for (const row of batchRes.rows) {
+          // 1. Xác định kỳ quá hạn hiệu lực, hạn trả gốc và bậc phí theo số ngày trễ thực tế
           const usedBefore = Number(row.used_amount);
           const billed = Number(row.billed_amount);
           const serviceFee = Number(row.service_fee_amount);
@@ -2760,6 +2867,7 @@ const postpaidRepository = {
           const tierSpec = resolvePostpaidLateFeeTier(daysOverdue, config);
           if (!tierSpec) continue;
 
+          // 2. Nếu là kỳ mới chưa từng đếm -> tăng overdue_count +1 và chụp snapshot overdue_cycle_principal
           const isNewOverdueCycle = row.last_overdue_counted_cycle !== effectiveCycle;
           const nextOverdueCount = Number(row.overdue_count || 0) + (isNewOverdueCycle ? 1 : 0);
           const snapshotPrincipal = isNewOverdueCycle
@@ -2769,6 +2877,7 @@ const postpaidRepository = {
                 : billed);
           const nextRowStatus = row.status === frozenStatus ? frozenStatus : pastDueStatus;
 
+          // 3. Tính mức phí trễ theo bậc hiện tại và chỉ thu bù phần chênh lệch so với các bậc đã thu trước đó
           const existingFeesRes = await client.query(
             `SELECT COALESCE(SUM(amount), 0)::bigint AS total_charged,
                     BOOL_OR(late_fee_tier = $3) AS tier_exists
@@ -2993,6 +3102,11 @@ const postpaidRepository = {
     };
   },
 
+  /**
+   * User gửi yêu cầu mở khóa Ví trả sau khi bị khóa `FROZEN` do quá hạn lặp lại (`OVERDUE_REPEAT`):
+   * - Bắt buộc kèm 1–3 ảnh chứng minh thu nhập, đã tất toán sạch dư nợ kỳ sao kê và chưa có đơn `PENDING`.
+   * - Lưu snapshot `overdue_count` và `credit_limit` vào `postpaid_unlock_requests` để Admin xét duyệt.
+   */
   async createUnlockRequest({ userId, userNote = "", proofFileNames = [] }) {
     if (!Array.isArray(proofFileNames) || proofFileNames.length === 0 || proofFileNames.length > 3) {
       throw httpError(400, "Vui lòng gửi từ 1 đến 3 ảnh chứng minh thu nhập");
@@ -3106,6 +3220,7 @@ const postpaidRepository = {
     }
   },
 
+  /** Lấy yêu cầu mở khóa Ví trả sau (`postpaid_unlock_requests`) mới nhất của một người dùng. */
   async getLatestUnlockRequest(userId, db = pool) {
     const res = await db.query(
       `SELECT id, user_id, status, user_note, proof_image_paths,

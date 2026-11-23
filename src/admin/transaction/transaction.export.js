@@ -138,10 +138,10 @@ async function buildTransactionsAdminXlsx({
 
   // 4. Ghi chú thống kê tài chính
   ws.getCell(4, 1).value =
-    "* Thống kê trên các giao dịch được xuất trong báo cáo này (chỉ cộng dồn các giao dịch THÀNH CÔNG; P2P thông thường tách riêng khỏi Hoàn tiền P2P):";
+    "* Thống kê trên các giao dịch được xuất trong báo cáo này (chỉ cộng dồn các giao dịch THÀNH CÔNG; P2P thông thường tách riêng khỏi Hoàn tiền thanh toán Merchant):";
   ws.getCell(4, 1).font = { size: 10, italic: true, color: { argb: "FF555555" } };
 
-  // 5. Tính toán KPI độc lập (tách riêng TRANSFER thông thường và Hoàn tiền P2P REVERSAL)
+  // 5. Tính toán KPI độc lập (tách riêng TRANSFER thông thường và Hoàn tiền thanh toán Merchant REVERSAL)
   let totalTopup = 0;
   let totalWithdraw = 0;
   let totalTransfer = 0;
@@ -206,13 +206,13 @@ async function buildTransactionsAdminXlsx({
   ws.getCell(6, 8).numFmt = MONEY_FMT;
   ws.getCell(6, 8).font = { bold: true };
 
-  ws.getCell(7, 4).value = "Số giao dịch hoàn tiền P2P:";
+  ws.getCell(7, 4).value = "Số giao dịch hoàn tiền Merchant:";
   ws.getCell(7, 4).font = { bold: true };
   ws.getCell(7, 5).value = reversalCount;
   ws.getCell(7, 5).numFmt = "#,##0";
   ws.getCell(7, 5).font = { bold: true };
 
-  ws.getCell(7, 7).value = "Tổng hoàn tiền P2P (REVERSAL):";
+  ws.getCell(7, 7).value = "Tổng hoàn tiền thanh toán Merchant (REVERSAL):";
   ws.getCell(7, 7).font = { bold: true };
   ws.getCell(7, 8).value = totalReversal;
   ws.getCell(7, 8).numFmt = MONEY_FMT;
@@ -310,7 +310,7 @@ async function buildTransactionsAdminXlsx({
         : rowAmount;
 
     const txTypeDisplay = isReversalExportRow(r)
-      ? "Hoàn tiền P2P (REVERSAL)"
+      ? "Hoàn tiền thanh toán Merchant (REVERSAL)"
       : TYPE_LABEL[r.transaction_type] || r.transaction_type;
 
     const cells = [

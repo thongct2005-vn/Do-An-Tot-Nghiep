@@ -5,11 +5,58 @@ const {
   computeHybridWindow,
 } = require("../dashboard/dashboardRollup");
 const TransactionRepository = require("../../modules/transaction/transaction.repository");
+const postpaidRepository = require("../../modules/postpaid/postpaid.repository");
 const { httpError } = require("../../utils/httpError");
 const { maskPhone } = require("../../utils/mask");
 
 const ADMIN_FINANCIAL_ACTIONS_SQL =
   "'ADMIN_OP_P2P', 'ADMIN_OP_TOPUP', 'ADMIN_OP_WITHDRAW', 'ADMIN_OP_REVERSAL'";
+
+const ADMIN_TX_AUDIT_MAP_SQL = `
+  SELECT DISTINCT ON (tx_id)
+    id,
+    tx_id AS transaction_id,
+    action,
+    admin_id,
+    reason,
+    created_at,
+    admin_auth_ref,
+    admin_execution_mode,
+    admin_original_transaction_id,
+    admin_dispute_id
+  FROM (
+    SELECT
+      ach.id,
+      ach.new_values->>'transaction_id' AS tx_id,
+      ach.action,
+      ach.admin_id,
+      ach.reason,
+      ach.created_at,
+      ach.new_values->>'authorization_reference' AS admin_auth_ref,
+      ach.new_values->>'execution_mode' AS admin_execution_mode,
+      ach.new_values->>'original_transaction_id' AS admin_original_transaction_id,
+      ach.new_values->>'dispute_id' AS admin_dispute_id
+    FROM admin_user_change_history ach
+    WHERE ach.new_values->>'transaction_id' IS NOT NULL
+      AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
+    UNION ALL
+    SELECT
+      ach.id,
+      ach.new_values->>'excess_transaction_id' AS tx_id,
+      ach.action,
+      ach.admin_id,
+      ach.reason,
+      ach.created_at,
+      ach.new_values->>'authorization_reference' AS admin_auth_ref,
+      ach.new_values->>'execution_mode' AS admin_execution_mode,
+      ach.new_values->>'original_transaction_id' AS admin_original_transaction_id,
+      ach.new_values->>'dispute_id' AS admin_dispute_id
+    FROM admin_user_change_history ach
+    WHERE ach.action = 'ADMIN_OP_REVERSAL'
+      AND ach.new_values->>'excess_transaction_id' IS NOT NULL
+  ) mapped
+  ORDER BY tx_id, created_at DESC, id DESC
+`;
 
 function resolveActiveDisputeIdFromEvents(disputeEvents) {
   const disputeStatusMap = {};
@@ -167,15 +214,7 @@ function buildDirectCountQuery(filters) {
     joins.push("LEFT JOIN users du ON t.destination_user_id = du.id");
   }
   if (needAudit) {
-    joins.push(`LEFT JOIN (
-        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
-          ach.id,
-          ach.new_values->>'transaction_id' AS transaction_id
-        FROM admin_user_change_history ach
-        WHERE ach.new_values->>'transaction_id' IS NOT NULL
-          AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
-        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
-      ) ach ON ach.transaction_id = t.id::TEXT`);
+    joins.push(`LEFT JOIN (${ADMIN_TX_AUDIT_MAP_SQL}) ach ON ach.transaction_id = t.id::TEXT`);
   }
 
   return {
@@ -320,15 +359,7 @@ const adminTransactionRepository = {
       filterJoins.push("LEFT JOIN users du ON t.destination_user_id = du.id");
     }
     if (needAuditInFilter) {
-      filterJoins.push(`LEFT JOIN (
-        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
-          ach.id,
-          ach.new_values->>'transaction_id' AS transaction_id
-        FROM admin_user_change_history ach
-        WHERE ach.new_values->>'transaction_id' IS NOT NULL
-          AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
-        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
-      ) ach ON ach.transaction_id = t.id::TEXT`);
+      filterJoins.push(`LEFT JOIN (${ADMIN_TX_AUDIT_MAP_SQL}) ach ON ach.transaction_id = t.id::TEXT`);
     }
 
     const query = `
@@ -352,16 +383,35 @@ const adminTransactionRepository = {
         LIMIT $${limitIdx} OFFSET $${offsetIdx}
       ),
       paged_audit AS (
-        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
-          ach.id,
-          ach.new_values->>'transaction_id' AS transaction_id,
-          ach.action,
-          ach.admin_id
-        FROM admin_user_change_history ach
-        WHERE (ach.new_values->>'transaction_id') IN (SELECT p.id::TEXT FROM paged_tx p)
-          AND (ach.new_values->>'transaction_id') IS NOT NULL
-          AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
-        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
+        SELECT DISTINCT ON (tx_id)
+          id,
+          tx_id AS transaction_id,
+          action,
+          admin_id
+        FROM (
+          SELECT
+            ach.id,
+            ach.new_values->>'transaction_id' AS tx_id,
+            ach.action,
+            ach.admin_id,
+            ach.created_at
+          FROM admin_user_change_history ach
+          WHERE (ach.new_values->>'transaction_id') IN (SELECT p.id::TEXT FROM paged_tx p)
+            AND (ach.new_values->>'transaction_id') IS NOT NULL
+            AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
+          UNION ALL
+          SELECT
+            ach.id,
+            ach.new_values->>'excess_transaction_id' AS tx_id,
+            ach.action,
+            ach.admin_id,
+            ach.created_at
+          FROM admin_user_change_history ach
+          WHERE (ach.new_values->>'excess_transaction_id') IN (SELECT p.id::TEXT FROM paged_tx p)
+            AND ach.action = 'ADMIN_OP_REVERSAL'
+            AND (ach.new_values->>'excess_transaction_id') IS NOT NULL
+        ) mapped
+        ORDER BY tx_id, created_at DESC, id DESC
       )
       SELECT
         p.id,
@@ -406,6 +456,8 @@ const adminTransactionRepository = {
         pe.user_id AS buyer_user_id,
         u.full_name AS buyer_name,
         u.phone AS buyer_phone,
+        u.status AS buyer_user_status,
+        u.role AS buyer_user_role,
         pw.status AS buyer_wallet_status,
         pe.amount AS purchase_amount,
         pe.cycle_month,
@@ -494,23 +546,7 @@ const adminTransactionRepository = {
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      LEFT JOIN (
-        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
-          ach.id,
-          ach.new_values->>'transaction_id' AS transaction_id,
-          ach.action,
-          ach.admin_id,
-          ach.reason,
-          ach.created_at,
-          ach.new_values->>'authorization_reference' AS admin_auth_ref,
-          ach.new_values->>'execution_mode' AS admin_execution_mode,
-          ach.new_values->>'original_transaction_id' AS admin_original_transaction_id,
-          ach.new_values->>'dispute_id' AS admin_dispute_id
-        FROM admin_user_change_history ach
-        WHERE ach.new_values->>'transaction_id' IS NOT NULL
-          AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
-        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
-      ) ach ON ach.transaction_id = t.id::TEXT
+      LEFT JOIN (${ADMIN_TX_AUDIT_MAP_SQL}) ach ON ach.transaction_id = t.id::TEXT
       LEFT JOIN users au ON ach.admin_id = au.id
       LEFT JOIN (
         SELECT DISTINCT ON (r.new_values->>'original_transaction_id')
@@ -604,21 +640,7 @@ const adminTransactionRepository = {
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
-      LEFT JOIN (
-        SELECT DISTINCT ON (ach.new_values->>'transaction_id')
-          ach.id,
-          ach.new_values->>'transaction_id' AS transaction_id,
-          ach.action,
-          ach.admin_id,
-          ach.reason,
-          ach.created_at,
-          ach.new_values->>'authorization_reference' AS admin_auth_ref,
-          ach.new_values->>'original_transaction_id' AS admin_original_transaction_id
-        FROM admin_user_change_history ach
-        WHERE ach.new_values->>'transaction_id' IS NOT NULL
-          AND ach.action IN (${ADMIN_FINANCIAL_ACTIONS_SQL})
-        ORDER BY (ach.new_values->>'transaction_id'), ach.created_at DESC, ach.id DESC
-      ) ach ON ach.transaction_id = t.id::TEXT
+      LEFT JOIN (${ADMIN_TX_AUDIT_MAP_SQL}) ach ON ach.transaction_id = t.id::TEXT
       LEFT JOIN users au ON ach.admin_id = au.id
       WHERE ${whereClause}
       ORDER BY t.created_at DESC, t.id DESC
@@ -752,6 +774,7 @@ const adminTransactionRepository = {
        FROM admin_user_change_history ach
        LEFT JOIN users u ON ach.admin_id = u.id
        WHERE (ach.new_values->>'transaction_id') = $1::TEXT
+          OR (ach.action = 'ADMIN_OP_REVERSAL' AND (ach.new_values->>'excess_transaction_id') = $1::TEXT)
           OR (ach.action = 'ADMIN_OP_REVERSAL' AND (ach.new_values->>'original_transaction_id') = $1::TEXT)
        ORDER BY ach.created_at ASC`,
       [id]
@@ -768,7 +791,7 @@ const adminTransactionRepository = {
         if (String(ach.new_values?.original_transaction_id) === String(id)) {
           title = `Giao dịch đã được hoàn tiền toàn bộ (tạo bù trừ ${ach.new_values?.transaction_id || ""})`;
         } else {
-          title = `Thực thi giao dịch hoàn tiền P2P (giao dịch gốc ${ach.new_values?.original_transaction_id || ""})`;
+          title = `Thực thi giao dịch hoàn tiền thanh toán Merchant (giao dịch gốc ${ach.new_values?.original_transaction_id || ""})`;
         }
       }
 
@@ -952,10 +975,10 @@ const adminTransactionRepository = {
         throw httpError(404, "Không tìm thấy giao dịch gốc");
       }
 
-      if (txRow.transaction_type !== "TRANSFER") {
+      if (txRow.transaction_type !== "PAYMENT") {
         throw httpError(
           422,
-          "Chỉ hỗ trợ hoàn tiền cho giao dịch chuyển tiền P2P (TRANSFER)"
+          "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán Merchant (PAYMENT)"
         );
       }
       if (txRow.status !== "SUCCESS") {
@@ -964,32 +987,16 @@ const adminTransactionRepository = {
           "Chỉ được hoàn tiền giao dịch đang ở trạng thái Thành công (SUCCESS)"
         );
       }
-      if (txRow.linked_bank_account_id) {
-        throw httpError(
-          422,
-          "Không hỗ trợ hoàn tiền giao dịch có liên kết tài khoản ngân hàng"
-        );
-      }
-      if (Number(txRow.merchant_fee || 0) > 0) {
-        throw httpError(
-          422,
-          "Không hỗ trợ hoàn tiền giao dịch phát sinh phí Merchant"
-        );
-      }
       if (txRow.fee_rate_snapshot?.operation_type === "REVERSAL") {
         throw httpError(
           422,
           "Không thể hoàn tiền đối với giao dịch bù trừ hoàn tiền"
         );
       }
-      if (
-        !txRow.source_user_id ||
-        !txRow.destination_user_id ||
-        String(txRow.source_user_id) === String(txRow.destination_user_id)
-      ) {
+      if (!txRow.destination_user_id) {
         throw httpError(
           422,
-          "Giao dịch không có cặp ví nguồn và ví đích hợp lệ khác nhau"
+          "Giao dịch thanh toán không có tài khoản cửa hàng Merchant nhận tiền hợp lệ"
         );
       }
 
@@ -1009,6 +1016,35 @@ const adminTransactionRepository = {
         throw err;
       }
 
+      const purchaseRes = await client.query(
+        `
+        SELECT id, user_id, amount, cycle_month, created_at
+        FROM postpaid_entries
+        WHERE tx_id = $1 AND action = 'PURCHASE'
+        LIMIT 1
+        `,
+        [String(txRow.id)]
+      );
+      const purchaseEntry = purchaseRes.rows[0] || null;
+      const originalFundingSource = purchaseEntry
+        ? "POSTPAID"
+        : txRow.linked_bank_account_id
+          ? "BANK"
+          : "MAIN_WALLET";
+      const merchantId = String(txRow.destination_user_id);
+      const buyerUserId = purchaseEntry
+        ? String(purchaseEntry.user_id)
+        : txRow.source_user_id
+          ? String(txRow.source_user_id)
+          : null;
+
+      if (!buyerUserId || buyerUserId === merchantId) {
+        throw httpError(
+          422,
+          "Giao dịch không có cặp tài khoản khách hàng và cửa hàng Merchant hợp lệ khác nhau"
+        );
+      }
+
       const disputeEvents =
         await adminTransactionRepository.getDisputeEventsByTransactionId(
           String(txRow.id),
@@ -1017,10 +1053,7 @@ const adminTransactionRepository = {
       const activeDisputeId = resolveActiveDisputeIdFromEvents(disputeEvents);
 
       // Khóa hai ví theo thứ tự UUID tăng dần để tránh deadlock.
-      const sortedIds = [
-        String(txRow.source_user_id),
-        String(txRow.destination_user_id),
-      ].sort();
+      const sortedIds = [merchantId, buyerUserId].sort();
 
       const lockedUsersRes = await client.query(
         `
@@ -1032,54 +1065,74 @@ const adminTransactionRepository = {
         `,
         [sortedIds]
       );
-      const userA = lockedUsersRes.rows.find(
-        (u) => String(u.id) === String(txRow.source_user_id)
+      const merchantUser = lockedUsersRes.rows.find(
+        (u) => String(u.id) === merchantId
       );
-      const userB = lockedUsersRes.rows.find(
-        (u) => String(u.id) === String(txRow.destination_user_id)
+      const buyerUser = lockedUsersRes.rows.find(
+        (u) => String(u.id) === buyerUserId
       );
 
-      if (!userA || !userB) {
+      if (!merchantUser || !buyerUser) {
         throw httpError(
           404,
-          "Không tìm thấy thông tin ví người gửi hoặc ví người nhận"
+          "Không tìm thấy thông tin ví cửa hàng Merchant hoặc tài khoản khách hàng"
         );
       }
-      if (userA.role !== "USER" || userB.role !== "USER") {
+      if (merchantUser.role !== "MERCHANT") {
         throw httpError(
           422,
-          "Chỉ hỗ trợ hoàn tiền giao dịch P2P giữa hai tài khoản USER"
+          "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán tại cửa hàng Merchant"
         );
       }
-      if (userA.status !== "ACTIVE" || userB.status !== "ACTIVE") {
+      if (buyerUser.role === "SYSTEM") {
+        throw httpError(
+          422,
+          "Không thể xác định tài khoản khách hàng hợp lệ cho giao dịch thanh toán này"
+        );
+      }
+      if (merchantUser.status !== "ACTIVE" || buyerUser.status !== "ACTIVE") {
         throw httpError(
           403,
-          "Cả ví người gửi cũ và ví người nhận cũ đều phải đang ở trạng thái ACTIVE"
+          "Cả tài khoản khách hàng và ví Merchant đều phải đang ở trạng thái ACTIVE"
         );
       }
 
-      const reversalTx = await TransactionRepository.executeReversalTransfer(
-        client,
-        {
-          sourceUser: userB,
-          destUser: userA,
-          amount: Number(txRow.amount),
-          originalTransactionId: String(txRow.id),
-          idempotencyKey,
-          description: `Hoàn tiền giao dịch ${txRow.id}`,
-        }
-      );
+      const reversalTx =
+        originalFundingSource === "POSTPAID"
+          ? await postpaidRepository.executePostpaidReversalWithinTx(client, {
+              txRow,
+              purchaseEntry,
+              merchantUser,
+              buyerUser,
+              reason,
+              idempotencyKey,
+            })
+          : await TransactionRepository.executeMerchantPaymentReversal(client, {
+              merchantUser,
+              customerUser: buyerUser,
+              amount: Number(txRow.amount),
+              originalTransactionId: String(txRow.id),
+              originalTransactionType: txRow.transaction_type,
+              originalFundingSource,
+              idempotencyKey,
+              description: `Hoàn tiền thanh toán Merchant cho giao dịch ${txRow.id}`,
+            });
 
       const oldValues = {
         balance_before: Number(reversalTx.sourceBalanceBefore),
       };
       const newValues = {
         transaction_id: String(reversalTx.transactionId),
+        excess_transaction_id: reversalTx.excessTransactionId || null,
         original_transaction_id: String(txRow.id),
-        destination_user_id: String(userA.id),
+        destination_user_id: String(buyerUser.id),
+        original_funding_source: originalFundingSource,
         amount: Number(reversalTx.amount),
         reversal_type: "FULL",
         balance_after: Number(reversalTx.sourceBalanceAfter),
+        credited_to_postpaid: Number(reversalTx.creditedToPostpaid || 0),
+        credited_to_main_wallet: Number(reversalTx.creditedToMainWallet || 0),
+        postpaid_status: reversalTx.postpaidStatus || null,
         dispute_id: activeDisputeId || null,
       };
 
@@ -1088,7 +1141,7 @@ const adminTransactionRepository = {
         historyRow =
           await adminTransactionRepository.insertReversalAuditHistory(client, {
             adminId,
-            userId: userB.id,
+            userId: merchantUser.id,
             reason,
             oldValues,
             newValues,
@@ -1104,8 +1157,10 @@ const adminTransactionRepository = {
 
       const responseBody = {
         transaction_id: String(reversalTx.transactionId),
+        excess_transaction_id: reversalTx.excessTransactionId || null,
         original_transaction_id: String(txRow.id),
         transaction_type: "TRANSFER",
+        original_funding_source: originalFundingSource,
         action: "ADMIN_OP_REVERSAL",
         reversal_type: "FULL",
         status: reversalTx.status || "SUCCESS",
@@ -1114,14 +1169,25 @@ const adminTransactionRepository = {
         merchant_fee: 0,
         description: reversalTx.description,
         reason,
-        debited_user_id: String(userB.id),
-        debited_user_name: userB.full_name,
-        debited_phone_masked: maskPhone(userB.phone),
+        debited_user_id: String(merchantUser.id),
+        debited_user_name: merchantUser.full_name,
+        debited_phone_masked: maskPhone(merchantUser.phone),
         debited_balance_before: Number(reversalTx.sourceBalanceBefore),
         debited_balance_after: Number(reversalTx.sourceBalanceAfter),
-        refunded_user_id: String(userA.id),
-        refunded_user_name: userA.full_name,
-        refunded_phone_masked: maskPhone(userA.phone),
+        refunded_user_id: String(buyerUser.id),
+        refunded_user_name: buyerUser.full_name,
+        refunded_phone_masked: maskPhone(buyerUser.phone),
+        credited_to_postpaid: Number(reversalTx.creditedToPostpaid || 0),
+        credited_to_main_wallet: Number(reversalTx.creditedToMainWallet || 0),
+        used_amount_after:
+          reversalTx.usedAmountAfter !== undefined
+            ? reversalTx.usedAmountAfter
+            : null,
+        billed_amount_after:
+          reversalTx.billedAmountAfter !== undefined
+            ? reversalTx.billedAmountAfter
+            : null,
+        postpaid_status: reversalTx.postpaidStatus || null,
         dispute_id: activeDisputeId || null,
         audit_log_id: historyRow?.id || null,
         created_at: reversalTx.createdAt,
@@ -1145,11 +1211,16 @@ const adminTransactionRepository = {
         responseBody,
         notificationContext: {
           reversalTransactionId: String(reversalTx.transactionId),
+          excessTransactionId: reversalTx.excessTransactionId || null,
           originalTransactionId: String(txRow.id),
+          originalFundingSource,
           amount: Number(reversalTx.amount),
-          debitedUserId: String(userB.id),
+          creditedToPostpaid: Number(reversalTx.creditedToPostpaid || 0),
+          creditedToMainWallet: Number(reversalTx.creditedToMainWallet || 0),
+          postpaidStatus: reversalTx.postpaidStatus || null,
+          debitedUserId: String(merchantUser.id),
           debitedBalanceAfter: Number(reversalTx.sourceBalanceAfter),
-          refundedUserId: String(userA.id),
+          refundedUserId: String(buyerUser.id),
           refundedBalanceAfter: Number(reversalTx.destBalanceAfter),
         },
       };

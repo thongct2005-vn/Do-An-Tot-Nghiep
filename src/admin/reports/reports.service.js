@@ -44,6 +44,7 @@ WITH events AS MATERIALIZED (
   JOIN users u ON u.id=t.destination_user_id AND u.role='MERCHANT'
   WHERE l.fee_type='QR_FEE' AND t.status IN ('SUCCESS','COMPLETED')
     AND t.transaction_type IN ('PAYMENT','TRANSFER')
+    AND COALESCE(t.fee_rate_snapshot->>'operation_type','') <> 'REVERSAL'
     AND l.created_at >= $1 AND l.created_at < $2
     AND ($3::uuid IS NULL OR u.id=$3) AND ($4::text IS NULL OR t.transaction_type::text=$4)
   UNION ALL
@@ -52,6 +53,7 @@ WITH events AS MATERIALIZED (
     0::bigint, t.amount, 1::bigint
   FROM transactions t JOIN users u ON u.id=t.destination_user_id AND u.role='MERCHANT'
   WHERE t.status IN ('SUCCESS','COMPLETED') AND t.transaction_type IN ('PAYMENT','TRANSFER')
+    AND COALESCE(t.fee_rate_snapshot->>'operation_type','') <> 'REVERSAL'
     AND t.created_at >= $1 AND t.created_at < $2
     AND ($3::uuid IS NULL OR u.id=$3) AND ($4::text IS NULL OR t.transaction_type::text=$4)
 ), totals AS (

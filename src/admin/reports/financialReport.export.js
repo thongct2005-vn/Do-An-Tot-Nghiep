@@ -5,7 +5,7 @@ const MONEY='#,##0 "₫";[Red]-#,##0 "₫";0 "₫"';
 const NUMBER='#,##0';
 const PERCENT='0.0000%';
 const feeNames={QR_FEE_PAYMENT:'Phí Merchant — Thanh toán',QR_FEE_TRANSFER:'Phí Merchant — Chuyển tiền',USER_FEE:'Phí người dùng',WITHDRAW_FEE:'Phí rút tiền',MONTHLY_PLAN_FEE:'Phí gói dịch vụ',POSTPAID_SERVICE_FEE:'Phí dịch vụ Ví trả sau',POSTPAID_LATE_FEE:'Phí trễ hạn Ví trả sau'};
-const typeNames={TOPUP:'Nạp tiền',WITHDRAW:'Rút tiền',TRANSFER:'Chuyển tiền',TRANSFER_REVERSAL:'Hoàn tiền P2P',PAYMENT:'Thanh toán'};
+const typeNames={TOPUP:'Nạp tiền',WITHDRAW:'Rút tiền',TRANSFER:'Chuyển tiền',PAYMENT_REVERSAL:'Hoàn tiền thanh toán Merchant',PAYMENT:'Thanh toán'};
 const ratio=(a,b)=>b?a/b:null;
 const day=s=>new Date(`${s}T00:00:00Z`);
 const stamp=s=>new Date(s).toISOString();

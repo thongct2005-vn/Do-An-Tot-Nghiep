@@ -2074,24 +2074,51 @@ const postpaidRepository = {
     return resultPayload;
   },
 
-  async refundPostpaidTransaction({
-    originalTxId,
-    refundAmount = null,
-    reason = "",
-    actorId = null,
-    idempotencyKey = null,
-  }) {
-    if (!originalTxId || !String(originalTxId).trim()) {
-      throw httpError(400, "Thiếu mã giao dịch gốc để hoàn tiền");
+  async executePostpaidReversalWithinTx(
+    client,
+    {
+      txRow,
+      purchaseEntry = null,
+      merchantUser,
+      buyerUser,
+      reason = "",
+      idempotencyKey,
+    },
+  ) {
+    if (!client || typeof client.query !== "function") {
+      throw httpError(500, "Thiếu kết nối transaction để hoàn tiền Ví trả sau");
     }
-    const cleanTxId = String(originalTxId).trim();
-    const effectiveIdemKey = idempotencyKey || `postpaid_refund_${uuidv7()}`;
+    if (!txRow || !txRow.id) {
+      throw httpError(404, "Không tìm thấy giao dịch gốc");
+    }
+    if (txRow.status !== "SUCCESS" || txRow.transaction_type !== "PAYMENT") {
+      throw httpError(422, "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán Merchant đã thành công");
+    }
+    if (!idempotencyKey) {
+      throw httpError(400, "Thiếu Idempotency-Key cho giao dịch hoàn tiền");
+    }
+    if (!merchantUser?.id || !buyerUser?.id) {
+      throw httpError(404, "Không tìm thấy tài khoản liên quan để hoàn tiền");
+    }
+    if (merchantUser.role !== "MERCHANT") {
+      throw httpError(422, "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán tại cửa hàng Merchant");
+    }
+    if (buyerUser.role === "SYSTEM") {
+      throw httpError(422, "Không thể hoàn tiền về tài khoản hệ thống");
+    }
+    if (merchantUser.status !== "ACTIVE" || buyerUser.status !== "ACTIVE") {
+      throw httpError(
+        403,
+        "Cả tài khoản khách hàng và ví Merchant đều phải đang ở trạng thái ACTIVE",
+      );
+    }
 
+    const cleanTxId = String(txRow.id);
     const { statuses, entryActions } =
-      await postpaidRepository.getSystemCatalog(pool);
+      await postpaidRepository.getSystemCatalog(client);
     const pastDueStatus = requireCatalogCode(statuses, "PAST_DUE", STATUS_CATALOG_LABEL);
     const activeStatus = requireCatalogCode(statuses, "ACTIVE", STATUS_CATALOG_LABEL);
-    const inactiveStatus = requireCatalogCode(statuses, "INACTIVE", STATUS_CATALOG_LABEL);
+    const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
     const purchaseAction = requireCatalogCode(
       entryActions,
       "PURCHASE",
@@ -2109,6 +2136,371 @@ const postpaidRepository = {
     );
     const postpaidWalletId = assertSystemPostpaidWalletConfigured();
 
+    let resolvedPurchaseEntry = purchaseEntry;
+    if (!resolvedPurchaseEntry) {
+      const purchaseRes = await client.query(
+        `SELECT id, user_id, amount, cycle_month, created_at
+           FROM postpaid_entries
+          WHERE tx_id = $1 AND action = $2
+          LIMIT 1`,
+        [cleanTxId, purchaseAction],
+      );
+      resolvedPurchaseEntry = purchaseRes.rows[0] || null;
+      if (!resolvedPurchaseEntry) {
+        throw httpError(422, "Giao dịch này không phải giao dịch thanh toán bằng Ví trả sau");
+      }
+    }
+
+    const refundedSumRes = await client.query(
+      `SELECT COALESCE(SUM(amount), 0)::bigint AS refunded_total
+         FROM postpaid_entries
+        WHERE ref_tx_id = $1 AND action = $2`,
+      [cleanTxId, refundAction],
+    );
+    const alreadyRefunded = Number(refundedSumRes.rows[0]?.refunded_total || 0);
+    const originalAmount = Number(txRow.amount);
+    const remainingRefundable = originalAmount - alreadyRefunded;
+    if (remainingRefundable <= 0) {
+      const err = httpError(409, "Giao dịch Ví trả sau này đã được hoàn đủ trước đó");
+      err.code = "POSTPAID_ALREADY_FULLY_REFUNDED";
+      throw err;
+    }
+
+    // Luôn hoàn 100% giá trị còn lại cho giao dịch Ví trả sau
+    const actualRefundAmount = remainingRefundable;
+    const merchantId = String(merchantUser.id);
+    const buyerUserId = String(buyerUser.id);
+
+    const pwRes = await client.query(
+      `SELECT user_id, status, lock_reason, overdue_count, credit_limit,
+              used_amount, billed_amount, service_fee_amount, late_fee_amount
+         FROM postpaid_wallets
+        WHERE user_id = $1
+        FOR UPDATE`,
+      [buyerUserId],
+    );
+    const pw = pwRes.rows[0];
+    if (!pw) {
+      throw httpError(404, "Không tìm thấy Ví trả sau của người mua");
+    }
+
+    const merchantBefore = Number(merchantUser.balance);
+    if (!Number.isFinite(merchantBefore) || !Number.isFinite(Number(buyerUser.balance))) {
+      throw httpError(500, "Dữ liệu số dư ví không hợp lệ");
+    }
+    if (merchantBefore < actualRefundAmount) {
+      const err = httpError(
+        422,
+        "Ví Merchant hiện không đủ số dư để thực hiện hoàn tiền 100% giá trị giao dịch",
+      );
+      err.code = "INSUFFICIENT_BALANCE_FOR_REVERSAL";
+      throw err;
+    }
+
+    const oldUsed = Number(pw.used_amount);
+    const oldBilled = Number(pw.billed_amount);
+    const oldServiceFee = Number(pw.service_fee_amount);
+    const oldLateFee = Number(pw.late_fee_amount);
+
+    const principalDebtRemaining = Math.max(
+      0,
+      oldUsed - oldServiceFee - oldLateFee,
+    );
+    const creditToReduce = Math.min(actualRefundAmount, principalDebtRemaining);
+    const excessToMainWallet = actualRefundAmount - creditToReduce;
+    const newUsed = oldUsed - creditToReduce;
+
+    const stmtRes = await client.query(
+      `SELECT created_at
+         FROM postpaid_entries
+        WHERE user_id = $1 AND action = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [buyerUserId, statementCloseAction],
+    );
+    const lastStatementCloseAt = stmtRes.rows[0]?.created_at
+      ? new Date(stmtRes.rows[0].created_at).getTime()
+      : null;
+    const purchaseTime = new Date(txRow.created_at).getTime();
+    const maxAllowedBilled = Math.max(0, newUsed - oldServiceFee - oldLateFee);
+
+    let newBilled = oldBilled;
+    if (lastStatementCloseAt !== null && purchaseTime <= lastStatementCloseAt) {
+      newBilled = Math.max(0, oldBilled - Math.min(creditToReduce, oldBilled));
+    }
+    if (newBilled > maxAllowedBilled) {
+      newBilled = maxAllowedBilled;
+    }
+
+    const isClearingPastDueViaRefund =
+      pw.status === pastDueStatus &&
+      oldLateFee === 0 &&
+      oldServiceFee === 0 &&
+      newBilled === 0;
+    let newStatus = pw.status;
+    let newLockReason = pw.lock_reason || null;
+    if (isClearingPastDueViaRefund) {
+      if (Number(pw.overdue_count || 0) >= 2) {
+        newStatus = frozenStatus;
+        newLockReason = "OVERDUE_REPEAT";
+      } else {
+        newStatus = activeStatus;
+        newLockReason = null;
+      }
+    }
+
+    const buyerBefore = Number(buyerUser.balance);
+    if (excessToMainWallet > 0) {
+      await assertWalletCapacity(client, {
+        userId: buyerUserId,
+        role: buyerUser.role,
+        currentBalance: buyerBefore,
+        inboundAmount: excessToMainWallet,
+        isRecipient: true,
+      });
+    }
+
+    const baseSnapshot = {
+      operation_type: "REVERSAL",
+      reversal_of_transaction_id: cleanTxId,
+      exempt_reason: "ADMIN_REVERSAL",
+      original_funding_source: "POSTPAID",
+      postpaid_split: {
+        credit_to_postpaid: creditToReduce,
+        excess_to_main_wallet: excessToMainWallet,
+      },
+    };
+
+    let merchantCursorBalance = merchantBefore;
+    let primaryRefundTxId = null;
+    let primaryRefundCreatedAt = null;
+    let primaryRefundStatus = "SUCCESS";
+    let excessTxId = null;
+    const refundNote =
+      (reason && String(reason).trim()) ||
+      `Hoàn tiền thanh toán Merchant (Ví trả sau) cho giao dịch ${cleanTxId}`;
+
+    if (creditToReduce > 0) {
+      const sysWallet = await lockSystemPostpaidWalletTx(
+        client,
+        postpaidWalletId,
+      );
+      const sysBefore = Number(sysWallet.balance);
+      const mBefore = merchantCursorBalance;
+      const mAfter = mBefore - creditToReduce;
+      merchantCursorBalance = mAfter;
+      const sAfter = sysBefore + creditToReduce;
+
+      await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
+        sAfter,
+        postpaidWalletId,
+      ]);
+
+      const tx1Snapshot = {
+        ...baseSnapshot,
+        postpaid_leg: "DEBT_RESTORATION",
+      };
+      const tx1Res = await client.query(
+        `INSERT INTO transactions (
+           transaction_type,
+           source_user_id, source_balance_before, source_balance_after,
+           destination_user_id, dest_balance_before, dest_balance_after,
+           amount, user_fee, merchant_fee, fee_rate_snapshot,
+           description, idempotency_key, status, linked_bank_account_id
+         )
+         VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8::jsonb, $9, $10, 'SUCCESS', NULL)
+         RETURNING id, status, created_at`,
+        [
+          merchantId,
+          mBefore,
+          mAfter,
+          postpaidWalletId,
+          sysBefore,
+          sAfter,
+          creditToReduce,
+          serializeFeeRateSnapshot(tx1Snapshot),
+          refundNote,
+          excessToMainWallet > 0 ? `${idempotencyKey}:postpaid` : idempotencyKey,
+        ],
+      );
+      primaryRefundTxId = tx1Res.rows[0].id;
+      primaryRefundStatus = tx1Res.rows[0].status || "SUCCESS";
+      primaryRefundCreatedAt = tx1Res.rows[0].created_at;
+    }
+
+    if (excessToMainWallet > 0) {
+      const mBefore = merchantCursorBalance;
+      const mAfter = mBefore - excessToMainWallet;
+      merchantCursorBalance = mAfter;
+      const bAfter = buyerBefore + excessToMainWallet;
+
+      await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
+        bAfter,
+        buyerUserId,
+      ]);
+
+      const tx2Snapshot = {
+        ...baseSnapshot,
+        postpaid_leg: "EXCESS_MAIN_WALLET",
+      };
+      const tx2Res = await client.query(
+        `INSERT INTO transactions (
+           transaction_type,
+           source_user_id, source_balance_before, source_balance_after,
+           destination_user_id, dest_balance_before, dest_balance_after,
+           amount, user_fee, merchant_fee, fee_rate_snapshot,
+           description, idempotency_key, status, linked_bank_account_id
+         )
+         VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8::jsonb, $9, $10, 'SUCCESS', NULL)
+         RETURNING id, status, created_at`,
+        [
+          merchantId,
+          mBefore,
+          mAfter,
+          buyerUserId,
+          buyerBefore,
+          bAfter,
+          excessToMainWallet,
+          serializeFeeRateSnapshot(tx2Snapshot),
+          `${refundNote} (phần dư về ví chính)`,
+          creditToReduce > 0 ? `${idempotencyKey}:excess` : idempotencyKey,
+        ],
+      );
+      excessTxId = tx2Res.rows[0].id;
+      if (!primaryRefundTxId) {
+        primaryRefundTxId = excessTxId;
+        primaryRefundStatus = tx2Res.rows[0].status || "SUCCESS";
+        primaryRefundCreatedAt = tx2Res.rows[0].created_at;
+      }
+    }
+
+    await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
+      merchantCursorBalance,
+      merchantId,
+    ]);
+
+    await client.query(
+      `UPDATE postpaid_wallets
+          SET used_amount = $1,
+              billed_amount = $2,
+              status = $3,
+              lock_reason = $4,
+              due_date = CASE WHEN $5::boolean THEN NULL ELSE due_date END,
+              overdue_cycle_month = CASE WHEN $5::boolean THEN NULL ELSE overdue_cycle_month END,
+              overdue_cycle_due_date = CASE WHEN $5::boolean THEN NULL ELSE overdue_cycle_due_date END,
+              overdue_cycle_principal = CASE WHEN $5::boolean THEN 0 ELSE overdue_cycle_principal END,
+              updated_at = NOW()
+        WHERE user_id = $6`,
+      [newUsed, newBilled, newStatus, newLockReason, isClearingPastDueViaRefund, buyerUserId],
+    );
+
+    await client.query(
+      `INSERT INTO postpaid_entries (
+         id, user_id, tx_id, ref_tx_id, action, amount, delta_used,
+         used_before, used_after, cycle_month, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        uuidv7(),
+        buyerUserId,
+        primaryRefundTxId,
+        cleanTxId,
+        refundAction,
+        actualRefundAmount,
+        -creditToReduce,
+        oldUsed,
+        newUsed,
+        resolvedPurchaseEntry.cycle_month,
+        refundNote,
+      ],
+    );
+
+    await recordAudit(client, "POSTPAID_REFUND", {
+      original_tx_id: cleanTxId,
+      refund_tx_id: primaryRefundTxId,
+      excess_tx_id: excessTxId,
+      original_funding_source: "POSTPAID",
+      buyer_user_id: buyerUserId,
+      merchant_id: merchantId,
+      refund_amount: actualRefundAmount,
+      credited_to_postpaid: creditToReduce,
+      credited_to_main_wallet: excessToMainWallet,
+      used_before: oldUsed,
+      used_after: newUsed,
+      billed_after: newBilled,
+    });
+
+    await recordAudit(client, "ADMIN_OP_REVERSAL", {
+      transaction_id: primaryRefundTxId,
+      excess_transaction_id: excessTxId,
+      original_transaction_id: cleanTxId,
+      transaction_type: "TRANSFER",
+      original_funding_source: "POSTPAID",
+      status: primaryRefundStatus,
+      source_user_id: merchantId,
+      destination_user_id: buyerUserId,
+      amount: actualRefundAmount,
+      credited_to_postpaid: creditToReduce,
+      credited_to_main_wallet: excessToMainWallet,
+      postpaid_status: newStatus,
+      fee: 0,
+      merchant_fee: 0,
+      fee_rate_snapshot: baseSnapshot,
+      net_amount: actualRefundAmount,
+      source_balance_before: merchantBefore,
+      source_balance_after: merchantCursorBalance,
+      dest_balance_before: buyerBefore,
+      dest_balance_after: buyerBefore + excessToMainWallet,
+      idempotency_key: idempotencyKey,
+    });
+
+    return {
+      transactionId: String(primaryRefundTxId),
+      excessTransactionId: excessTxId ? String(excessTxId) : null,
+      status: primaryRefundStatus,
+      createdAt: primaryRefundCreatedAt,
+      amount: actualRefundAmount,
+      fee: 0,
+      merchantFee: 0,
+      netAmount: actualRefundAmount,
+      feeRateSnapshot: baseSnapshot,
+      originalFundingSource: "POSTPAID",
+      creditedToPostpaid: creditToReduce,
+      creditedToMainWallet: excessToMainWallet,
+      postpaidStatus: newStatus,
+      usedAmountAfter: newUsed,
+      billedAmountAfter: newBilled,
+      description: refundNote,
+      sourceUserId: merchantId,
+      sourceUserName: merchantUser.full_name,
+      destinationId: buyerUserId,
+      destinationUserName: buyerUser.full_name,
+      sourceBalanceBefore: merchantBefore,
+      sourceBalanceAfter: merchantCursorBalance,
+      destBalanceBefore: buyerBefore,
+      destBalanceAfter: buyerBefore + excessToMainWallet,
+    };
+  },
+
+  async refundPostpaidTransaction({
+    originalTxId,
+    refundAmount = null,
+    reason = "",
+    actorId = null,
+    idempotencyKey = null,
+  }) {
+    if (!originalTxId || !String(originalTxId).trim()) {
+      throw httpError(400, "Thiếu mã giao dịch gốc để hoàn tiền");
+    }
+    if (refundAmount !== null && refundAmount !== undefined) {
+      throw httpError(
+        400,
+        "Nghiệp vụ chỉ hỗ trợ hoàn tiền 100% giá trị giao dịch qua luồng hoàn tiền thống nhất",
+      );
+    }
+    const cleanTxId = String(originalTxId).trim();
+    const effectiveIdemKey = idempotencyKey || `postpaid_refund_${uuidv7()}`;
+
     const client = await pool.connect();
     let resultPayload;
 
@@ -2123,14 +2515,17 @@ const postpaidRepository = {
           FOR UPDATE`,
         [cleanTxId],
       );
-      const origTx = txRes.rows[0];
-      if (!origTx) {
+      const txRow = txRes.rows[0];
+      if (!txRow) {
         throw httpError(404, "Không tìm thấy giao dịch gốc");
       }
-      if (origTx.status !== "SUCCESS" || origTx.transaction_type !== "PAYMENT") {
-        throw httpError(400, "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán đã thành công");
-      }
 
+      const { entryActions } = await postpaidRepository.getSystemCatalog(client);
+      const purchaseAction = requireCatalogCode(
+        entryActions,
+        "PURCHASE",
+        ACTION_CATALOG_LABEL,
+      );
       const purchaseRes = await client.query(
         `SELECT id, user_id, amount, cycle_month, created_at
            FROM postpaid_entries
@@ -2140,293 +2535,49 @@ const postpaidRepository = {
       );
       const purchaseEntry = purchaseRes.rows[0];
       if (!purchaseEntry) {
-        throw httpError(400, "Giao dịch này không phải giao dịch thanh toán bằng Ví trả sau");
+        throw httpError(422, "Giao dịch này không phải giao dịch thanh toán bằng Ví trả sau");
       }
 
-      const refundedSumRes = await client.query(
-        `SELECT COALESCE(SUM(amount), 0)::bigint AS refunded_total
-           FROM postpaid_entries
-          WHERE ref_tx_id = $1 AND action = $2`,
-        [cleanTxId, refundAction],
-      );
-      const alreadyRefunded = Number(refundedSumRes.rows[0]?.refunded_total || 0);
-      const originalAmount = Number(origTx.amount);
-      const remainingRefundable = originalAmount - alreadyRefunded;
-      if (remainingRefundable <= 0) {
-        throw httpError(409, "Giao dịch này đã được hoàn đủ trước đó");
-      }
-
-      const actualRefundAmount =
-        refundAmount === null || refundAmount === undefined
-          ? remainingRefundable
-          : Number(refundAmount);
-      if (
-        !Number.isSafeInteger(actualRefundAmount) ||
-        actualRefundAmount <= 0
-      ) {
-        throw httpError(400, "Số tiền hoàn không hợp lệ");
-      }
-      if (actualRefundAmount > remainingRefundable) {
-        throw httpError(400, "Số tiền hoàn vượt quá số tiền còn có thể hoàn");
-      }
-
-      const merchantId = origTx.destination_user_id;
+      const merchantId = txRow.destination_user_id;
       const buyerUserId = purchaseEntry.user_id;
       if (!merchantId) {
-        throw httpError(400, "Giao dịch gốc không có tài khoản cửa hàng nhận tiền");
+        throw httpError(422, "Giao dịch gốc không có tài khoản cửa hàng nhận tiền");
       }
 
-      // Khóa ví merchant và người mua theo thứ tự UUID tăng dần;
-      // SYSTEM_POSTPAID_WALLET khóa ở cuối transaction sau khi kiểm tra xong điều kiện hoàn tiền.
       const usersMap = await lockUsersByIdsOrdered(client, [
         merchantId,
         buyerUserId,
       ]);
-      const merchant = usersMap.get(String(merchantId));
-      const buyer = usersMap.get(String(buyerUserId));
+      const merchantUser = usersMap.get(String(merchantId));
+      const buyerUser = usersMap.get(String(buyerUserId));
 
-      if (!merchant || !buyer) {
-        throw httpError(404, "Không tìm thấy tài khoản liên quan để hoàn tiền");
-      }
-
-      const pwRes = await client.query(
-        `SELECT user_id, status, lock_reason, overdue_count, credit_limit,
-                used_amount, billed_amount, service_fee_amount, late_fee_amount
-           FROM postpaid_wallets
-          WHERE user_id = $1
-          FOR UPDATE`,
-        [buyerUserId],
+      const reversalRes = await postpaidRepository.executePostpaidReversalWithinTx(
+        client,
+        {
+          txRow,
+          purchaseEntry,
+          merchantUser,
+          buyerUser,
+          reason,
+          idempotencyKey: effectiveIdemKey,
+        },
       );
-      const pw = pwRes.rows[0];
-      if (!pw) {
-        throw httpError(404, "Không tìm thấy Ví trả sau của người mua");
-      }
-
-      const merchantBefore = Number(merchant.balance);
-      if (merchantBefore < actualRefundAmount) {
-        throw httpError(422, "Số dư của cửa hàng không đủ để thực hiện hoàn tiền");
-      }
-
-      const oldUsed = Number(pw.used_amount);
-      const oldBilled = Number(pw.billed_amount);
-      const oldServiceFee = Number(pw.service_fee_amount);
-      const oldLateFee = Number(pw.late_fee_amount);
-
-      const principalDebtRemaining = Math.max(
-        0,
-        oldUsed - oldServiceFee - oldLateFee,
-      );
-      const creditToReduce = Math.min(actualRefundAmount, principalDebtRemaining);
-      const excessToMainWallet = actualRefundAmount - creditToReduce;
-      const newUsed = oldUsed - creditToReduce;
-
-      // Kiểm tra giao dịch mua gốc đã nằm trước lần chốt sao kê gần nhất chưa
-      const stmtRes = await client.query(
-        `SELECT created_at
-           FROM postpaid_entries
-          WHERE user_id = $1 AND action = $2
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [buyerUserId, statementCloseAction],
-      );
-      const lastStatementCloseAt = stmtRes.rows[0]?.created_at
-        ? new Date(stmtRes.rows[0].created_at).getTime()
-        : null;
-      const purchaseTime = new Date(origTx.created_at).getTime();
-      const maxAllowedBilled = Math.max(0, newUsed - oldServiceFee - oldLateFee);
-
-      let newBilled = oldBilled;
-      if (lastStatementCloseAt !== null && purchaseTime <= lastStatementCloseAt) {
-        newBilled = Math.max(0, oldBilled - Math.min(creditToReduce, oldBilled));
-      }
-      if (newBilled > maxAllowedBilled) {
-        newBilled = maxAllowedBilled;
-      }
-
-      const isClearingPastDueViaRefund =
-        pw.status === pastDueStatus &&
-        oldLateFee === 0 &&
-        oldServiceFee === 0 &&
-        newBilled === 0;
-      const frozenStatus = requireCatalogCode(statuses, "FROZEN", STATUS_CATALOG_LABEL);
-      let newStatus = pw.status;
-      let newLockReason = pw.lock_reason || null;
-      if (isClearingPastDueViaRefund) {
-        if (Number(pw.overdue_count || 0) >= 2) {
-          newStatus = frozenStatus;
-          newLockReason = "OVERDUE_REPEAT";
-        } else {
-          newStatus = activeStatus;
-          newLockReason = null;
-        }
-      }
-
-      const buyerBefore = Number(buyer.balance);
-      if (excessToMainWallet > 0) {
-        await assertWalletCapacity(client, {
-          userId: buyerUserId,
-          role: buyer.role,
-          currentBalance: buyerBefore,
-          inboundAmount: excessToMainWallet,
-          isRecipient: true,
-        });
-      }
-
-      let merchantCursorBalance = merchantBefore;
-      let primaryRefundTxId = null;
-      let excessTxId = null;
-      const refundNote =
-        (reason && String(reason).trim()) ||
-        `Hoàn tiền giao dịch Ví trả sau #${cleanTxId}`;
-
-      if (creditToReduce > 0) {
-        const sysWallet = await lockSystemPostpaidWalletTx(
-          client,
-          postpaidWalletId,
-        );
-        const sysBefore = Number(sysWallet.balance);
-        const mBefore = merchantCursorBalance;
-        const mAfter = mBefore - creditToReduce;
-        merchantCursorBalance = mAfter;
-        const sAfter = sysBefore + creditToReduce;
-
-        await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
-          sAfter,
-          postpaidWalletId,
-        ]);
-
-        const tx1Res = await client.query(
-          `INSERT INTO transactions (
-             transaction_type,
-             source_user_id, source_balance_before, source_balance_after,
-             destination_user_id, dest_balance_before, dest_balance_after,
-             amount, user_fee, merchant_fee, description, idempotency_key, status
-           )
-           VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, 'SUCCESS')
-           RETURNING id`,
-          [
-            merchantId,
-            mBefore,
-            mAfter,
-            postpaidWalletId,
-            sysBefore,
-            sAfter,
-            creditToReduce,
-            refundNote,
-            excessToMainWallet > 0 ? `${effectiveIdemKey}:postpaid` : effectiveIdemKey,
-          ],
-        );
-        primaryRefundTxId = tx1Res.rows[0].id;
-      }
-
-      if (excessToMainWallet > 0) {
-        const mBefore = merchantCursorBalance;
-        const mAfter = mBefore - excessToMainWallet;
-        merchantCursorBalance = mAfter;
-        const bAfter = buyerBefore + excessToMainWallet;
-
-        await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
-          bAfter,
-          buyerUserId,
-        ]);
-
-        const tx2Res = await client.query(
-          `INSERT INTO transactions (
-             transaction_type,
-             source_user_id, source_balance_before, source_balance_after,
-             destination_user_id, dest_balance_before, dest_balance_after,
-             amount, user_fee, merchant_fee, description, idempotency_key, status
-           )
-           VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, 'SUCCESS')
-           RETURNING id`,
-          [
-            merchantId,
-            mBefore,
-            mAfter,
-            buyerUserId,
-            buyerBefore,
-            bAfter,
-            excessToMainWallet,
-            `${refundNote} (phần dư về ví chính)`,
-            creditToReduce > 0 ? `${effectiveIdemKey}:excess` : effectiveIdemKey,
-          ],
-        );
-        excessTxId = tx2Res.rows[0].id;
-        if (!primaryRefundTxId) {
-          primaryRefundTxId = excessTxId;
-        }
-      }
-
-      await client.query(`UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2`, [
-        merchantCursorBalance,
-        merchantId,
-      ]);
-
-      await client.query(
-        `UPDATE postpaid_wallets
-            SET used_amount = $1,
-                billed_amount = $2,
-                status = $3,
-                lock_reason = $4,
-                due_date = CASE WHEN $5::boolean THEN NULL ELSE due_date END,
-                overdue_cycle_month = CASE WHEN $5::boolean THEN NULL ELSE overdue_cycle_month END,
-                overdue_cycle_due_date = CASE WHEN $5::boolean THEN NULL ELSE overdue_cycle_due_date END,
-                overdue_cycle_principal = CASE WHEN $5::boolean THEN 0 ELSE overdue_cycle_principal END,
-                updated_at = NOW()
-          WHERE user_id = $6`,
-        [newUsed, newBilled, newStatus, newLockReason, isClearingPastDueViaRefund, buyerUserId],
-      );
-
-      await client.query(
-        `INSERT INTO postpaid_entries (
-           id, user_id, tx_id, ref_tx_id, action, amount, delta_used,
-           used_before, used_after, cycle_month, note
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [
-          uuidv7(),
-          buyerUserId,
-          primaryRefundTxId,
-          cleanTxId,
-          refundAction,
-          actualRefundAmount,
-          -creditToReduce,
-          oldUsed,
-          newUsed,
-          purchaseEntry.cycle_month,
-          refundNote,
-        ],
-      );
-
-      await recordAudit(client, "POSTPAID_REFUND", {
-        original_tx_id: cleanTxId,
-        refund_tx_id: primaryRefundTxId,
-        excess_tx_id: excessTxId,
-        actor_id: actorId,
-        buyer_user_id: buyerUserId,
-        merchant_id: merchantId,
-        refund_amount: actualRefundAmount,
-        credited_to_postpaid: creditToReduce,
-        credited_to_main_wallet: excessToMainWallet,
-        used_before: oldUsed,
-        used_after: newUsed,
-        billed_after: newBilled,
-      });
 
       await client.query("COMMIT");
 
       resultPayload = {
         originalTransactionId: cleanTxId,
-        refundTransactionId: primaryRefundTxId,
-        excessTransactionId: excessTxId,
-        buyerUserId,
-        merchantId,
-        refundAmount: actualRefundAmount,
-        creditedToPostpaid: creditToReduce,
-        creditedToMainWallet: excessToMainWallet,
-        usedAmountAfter: newUsed,
-        billedAmountAfter: newBilled,
-        postpaidStatus: newStatus,
+        refundTransactionId: reversalRes.transactionId,
+        excessTransactionId: reversalRes.excessTransactionId,
+        buyerUserId: String(buyerUserId),
+        merchantId: String(merchantId),
+        actorId: actorId || null,
+        refundAmount: reversalRes.amount,
+        creditedToPostpaid: reversalRes.creditedToPostpaid,
+        creditedToMainWallet: reversalRes.creditedToMainWallet,
+        usedAmountAfter: reversalRes.usedAmountAfter,
+        billedAmountAfter: reversalRes.billedAmountAfter,
+        postpaidStatus: reversalRes.postpaidStatus,
       };
     } catch (e) {
       await client.query("ROLLBACK");

@@ -239,6 +239,32 @@ test('financial aggregates preserve scope, source fees, boundaries and compariso
         const emptyBook=new (require('exceljs').Workbook)();await emptyBook.xlsx.load(empty.buffer);
         assert.equal(emptyBook.worksheets.length,9);assert.equal(emptyBook.getWorksheet('01_Tong_quan').getCell('A9').value,0);
         assert.equal(dto.merchant.merchants.length,0);assert.ok(dto.reconciliation.every(r=>r.status==='Khớp'));
+
+        // Reversal transactions (operation_type = 'REVERSAL') must be categorized as PAYMENT_REVERSAL,
+        // labeled 'Hoàn tiền thanh toán Merchant' in Excel, excluded from TRANSFER and Merchant revenue/gross, and reconcile with difference = 0.
+        const revId = randomUUID();
+        await db.query(
+          `INSERT INTO transactions(id,transaction_type,amount,status,source_user_id,destination_user_id,fee_rate_snapshot,created_at)
+           VALUES($1,'TRANSFER',300000,'SUCCESS',$2,$3,$4::jsonb,'2026-11-01T14:00:00+07:00')`,
+          [revId, merchant, merchant, JSON.stringify({ operation_type: 'REVERSAL', reversal_of_transaction_id: payment, original_funding_source: 'MAIN_WALLET' })],
+        );
+        const revData = await repo.readFinancialData(db, f);
+        const payRevRow = revData.cashflow.find(r => r.type === 'PAYMENT_REVERSAL');
+        assert.ok(payRevRow);
+        assert.equal(payRevRow.gross, 300000);
+        assert.equal(revData.cashflow.some(r => r.type === 'TRANSFER_REVERSAL'), false);
+        assert.equal(revData.cashflow.find(r => r.type === 'TRANSFER').gross, 500000);
+        assert.equal(sum(revData.system_series, 'payment_reversal'), 300000);
+        assert.equal(revData.merchant.overview.gross, 1640000);
+        const revChecks = reconcile({ ...revData, filters: { merchant_id: null, transaction_type: 'ALL' }, logins: { available: false } });
+        assert.equal(revChecks.find(c => c.name === 'Số giao dịch theo nghiệp vụ').difference, 0);
+        const revBook = await buildWorkbook({ ...revData, period: f.period, filters: { merchant_id: null, transaction_type: 'ALL', role: 'ALL' }, growth: dto.growth, logins: dto.logins, metadata: dto.metadata, previous_period: dto.previous_period, reconciliation: revChecks });
+        let foundMerchantRevLabel = false;
+        revBook.getWorksheet('02_Dong_tien').eachRow(row => {
+          if (row.getCell(1).value === 'Hoàn tiền thanh toán Merchant') foundMerchantRevLabel = true;
+        });
+        assert.equal(foundMerchantRevLabel, true);
+
         await db.query('ALTER TABLE fee_ledger_entries RENAME TO missing_ledger_fixture');
         try { await assert.rejects(exportFinancialReport(input,customer,options),e=>e.code==='42P01'); }
         finally {await db.query('ALTER TABLE missing_ledger_fixture RENAME TO fee_ledger_entries');}

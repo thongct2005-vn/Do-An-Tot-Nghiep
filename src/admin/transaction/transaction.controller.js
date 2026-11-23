@@ -6,7 +6,6 @@ const {
   buildTransactionReceiptPdf,
   sendReceiptPdfResponse,
 } = require("./transaction.receipt");
-const postpaidService = require("../../modules/postpaid/postpaid.service");
 const socketUtil = require("../../utils/socket");
 const firebaseNotification = require("../../utils/firebaseNotification");
 
@@ -182,32 +181,6 @@ const adminTransactionController = {
     }
   },
 
-  async refundPostpaid(req, res, next) {
-    try {
-      const { id } = req.params;
-      const { amount, reason } = req.body || {};
-      const actorId = req.user?.user_id || req.user?.id || null;
-      const idempotencyKey = req.headers["idempotency-key"] || null;
-
-      const result = await postpaidService.refundPostpaidTransaction({
-        originalTxId: id,
-        refundAmount: amount ?? null,
-        reason: reason || "",
-        actorId,
-        idempotencyKey,
-      });
-
-      return successResponse(
-        res,
-        200,
-        "Hoàn tiền giao dịch Ví trả sau thành công",
-        result
-      );
-    } catch (e) {
-      next(e);
-    }
-  },
-
   async reverseTransaction(req, res, next) {
     try {
       const { id } = req.params;
@@ -265,28 +238,31 @@ const adminTransactionController = {
           );
         }
 
-        try {
-          socketUtil.emitToUser(ctx.refundedUserId, "wallet_balance_updated", {
-            balance: ctx.refundedBalanceAfter,
-            transactionId: ctx.reversalTransactionId,
-            originalTransactionId: ctx.originalTransactionId,
-            type: "REVERSAL_REFUND",
-          });
-        } catch (socketErr) {
-          console.error(
-            "Emit wallet_balance_updated (reversal refunded) error:",
-            socketErr.message
-          );
+        if (Number(ctx.creditedToMainWallet || 0) > 0) {
+          try {
+            socketUtil.emitToUser(ctx.refundedUserId, "wallet_balance_updated", {
+              balance: ctx.refundedBalanceAfter,
+              transactionId: ctx.excessTransactionId || ctx.reversalTransactionId,
+              originalTransactionId: ctx.originalTransactionId,
+              type: "REVERSAL_REFUND",
+            });
+          } catch (socketErr) {
+            console.error(
+              "Emit wallet_balance_updated (reversal refunded) error:",
+              socketErr.message
+            );
+          }
         }
 
         try {
           await firebaseNotification.sendPushNotification(ctx.debitedUserId, {
-            title: "Biến động số dư (Hoàn tiền giao dịch)",
-            body: `Ví của bạn vừa được khấu trừ -${Number(ctx.amount).toLocaleString("vi-VN")}đ để hoàn trả giao dịch ${ctx.originalTransactionId}`,
+            title: "Biến động số dư (Hoàn tiền đơn hàng Merchant)",
+            body: `Ví Merchant của bạn vừa được khấu trừ -${Number(ctx.amount).toLocaleString("vi-VN")}đ để hoàn trả giao dịch ${ctx.originalTransactionId}`,
             data: {
               type: "ADMIN_OP_REVERSAL_DEBIT",
               transactionId: String(ctx.reversalTransactionId),
               originalTransactionId: String(ctx.originalTransactionId),
+              originalFundingSource: String(ctx.originalFundingSource || ""),
               balance: String(ctx.debitedBalanceAfter),
             },
           });
@@ -294,14 +270,35 @@ const adminTransactionController = {
           console.error("Push notification (reversal debited) error:", fcmErr.message);
         }
 
+        let customerTitle = "Hoàn tiền thanh toán thành công";
+        let customerBody = `Bạn đã được hoàn +${Number(ctx.amount).toLocaleString("vi-VN")}đ vào Ví chính từ giao dịch thanh toán Merchant ${ctx.originalTransactionId}`;
+        if (ctx.originalFundingSource === "POSTPAID") {
+          customerTitle = "Hoàn tiền giao dịch Ví trả sau thành công";
+          const totalFmt = Number(ctx.amount).toLocaleString("vi-VN");
+          const postpaidFmt = Number(ctx.creditedToPostpaid || 0).toLocaleString("vi-VN");
+          const excessFmt = Number(ctx.creditedToMainWallet || 0).toLocaleString("vi-VN");
+          if (Number(ctx.creditedToPostpaid || 0) > 0 && Number(ctx.creditedToMainWallet || 0) > 0) {
+            customerBody = `Giao dịch ${ctx.originalTransactionId} đã được hoàn ${totalFmt}đ (giảm ${postpaidFmt}đ dư nợ Ví trả sau và cộng ${excessFmt}đ vào Ví chính)`;
+          } else if (Number(ctx.creditedToPostpaid || 0) > 0) {
+            customerBody = `Giao dịch ${ctx.originalTransactionId} đã được hoàn ${totalFmt}đ để giảm dư nợ Ví trả sau của bạn`;
+          } else {
+            customerBody = `Bạn đã được hoàn +${totalFmt}đ vào Ví chính từ giao dịch Ví trả sau ${ctx.originalTransactionId}`;
+          }
+        } else if (ctx.originalFundingSource === "BANK") {
+          customerBody = `Bạn đã được hoàn +${Number(ctx.amount).toLocaleString("vi-VN")}đ vào Ví chính Mio từ giao dịch thanh toán Merchant ${ctx.originalTransactionId}`;
+        }
+
         try {
           await firebaseNotification.sendPushNotification(ctx.refundedUserId, {
-            title: "Hoàn tiền giao dịch thành công",
-            body: `Bạn đã được hoàn +${Number(ctx.amount).toLocaleString("vi-VN")}đ từ giao dịch ${ctx.originalTransactionId}`,
+            title: customerTitle,
+            body: customerBody,
             data: {
               type: "ADMIN_OP_REVERSAL_REFUND",
-              transactionId: String(ctx.reversalTransactionId),
+              transactionId: String(ctx.excessTransactionId || ctx.reversalTransactionId),
               originalTransactionId: String(ctx.originalTransactionId),
+              originalFundingSource: String(ctx.originalFundingSource || ""),
+              creditedToPostpaid: String(ctx.creditedToPostpaid || 0),
+              creditedToMainWallet: String(ctx.creditedToMainWallet || 0),
               balance: String(ctx.refundedBalanceAfter),
             },
           });
@@ -313,7 +310,7 @@ const adminTransactionController = {
       return successResponse(
         res,
         200,
-        "Hoàn tiền giao dịch P2P thành công",
+        "Hoàn tiền giao dịch Merchant thành công",
         outcome.data
       );
     } catch (e) {

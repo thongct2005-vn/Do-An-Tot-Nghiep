@@ -1,6 +1,7 @@
 const { risk, blockAccountByPhone } = require("../utils/security/risk");
 const { maskPhone } = require("../utils/common/text");
 const { resolveRiskThreshold } = require("../utils/limits/limitsDb");
+const { recordSecurityEvent } = require("../models/mongo/securityEvent.model");
 
 // Kiểm tra chế độ "chỉ log, không chặn" từ biến môi trường (RISK_DRY_RUN=true hoặc 1)
 function isEnvDryRun() {
@@ -42,6 +43,10 @@ function riskGuard(options = {}) {
             ? "DRY_RUN_WOULD_BLOCK"
             : "BLOCK"
           : "CHALLENGE";
+        const safePath = String(req.originalUrl || req.url || "").split("?", 1)[0];
+        const maskedPhone = maskPhone(metrics?.phone);
+        const userId =
+          req.user?.user_id == null ? null : String(req.user.user_id);
 
         const divider = "-".repeat(60);
         console.warn(
@@ -51,10 +56,10 @@ function riskGuard(options = {}) {
                 tag: "RISK_GUARD",
                 action,
                 method: req.method,
-                path: req.originalUrl || req.url,
+                path: safePath,
                 ip: metrics?.ip,
-                phone: maskPhone(metrics?.phone),
-                userId: req.user?.user_id ?? null,
+                phone: maskedPhone,
+                userId,
                 score,
                 threshold: { challenge, block },
                 reasons,
@@ -64,6 +69,19 @@ function riskGuard(options = {}) {
             ) +
             `\n${divider}`,
         );
+
+        void recordSecurityEvent({
+          action,
+          method: req.method,
+          path: safePath,
+          ip: metrics?.ip ?? null,
+          phone: maskedPhone,
+          user_id: userId,
+          score,
+          threshold: { challenge, block },
+          reasons,
+          occurred_at: new Date(),
+        });
       }
 
       if (shouldBlock && !isDryRun) {

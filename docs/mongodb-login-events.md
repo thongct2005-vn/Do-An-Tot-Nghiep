@@ -2,7 +2,7 @@
 
 Backend dùng `MONGODB_URI` để lưu sự kiện vào collection `user_login_events`.
 URI phải chỉ rõ database. Production, sandbox và kiểm thử dùng database riêng.
-Trong cùng database, collection `admin_action_logs` lưu dấu vết API quản trị viên.
+Trong cùng database, collection `admin_action_logs` lưu dấu vết API quản trị viên và collection `security_events` lưu các sự kiện cảnh báo bảo mật từ middleware `riskGuard`.
 
 ## Cấu hình môi trường
 
@@ -65,6 +65,22 @@ Thao tác chỉ diễn ra trong trình duyệt và không gọi API sẽ không 
 backend. MongoDB ghi audit theo cách không chặn phản hồi; khi MongoDB lỗi,
 document có thể bị bỏ lỡ. Các bản ghi `admin_user_change_history` và
 `audit_outbox` trong PostgreSQL tiếp tục là nguồn kiểm toán nghiệp vụ giao dịch.
+
+## Sự kiện cảnh báo bảo mật (`security_events`)
+
+Khi middleware `riskGuard` (`backend/src/middlewares/riskGuard.js`) chấm điểm rủi
+ro từ 7 nhóm tín hiệu và phát hiện yêu cầu chạm ngưỡng `CHALLENGE`, `BLOCK` hoặc
+`DRY_RUN_WOULD_BLOCK`, hệ thống ghi một document vào collection `security_events`
+(`backend/src/models/mongo/securityEvent.model.js`) gồm 10 trường:
+`action`, `method`, `path`, `ip`, `phone`, `user_id`, `score`,
+`threshold` (`{ challenge, block }`), `reasons` và `occurred_at`.
+
+Yêu cầu có điểm rủi ro dưới ngưỡng `challenge` không ghi vào `security_events`.
+Số điện thoại luôn được che bớt qua `maskPhone`, `path` được cắt bỏ query string,
+không lưu mật khẩu/PIN/OTP/token/body thô và `reasons` không trả về phía client.
+Thao tác ghi chạy bất đồng bộ theo cơ chế fail-safe (fire-and-forget): khi
+MongoDB ngắt kết nối hoặc ghi lỗi, `riskGuard` chỉ cảnh báo qua `warnMongoAudit`
+và vẫn tiếp tục xử lý/chặn yêu cầu bình thường, tách hoàn toàn khỏi PostgreSQL.
 
 ## Phạm vi dữ liệu và mốc bắt đầu thu thập
 

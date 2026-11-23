@@ -14,6 +14,7 @@ const TYPE_LABEL = {
   TOPUP: "Nạp tiền vào ví",
   WITHDRAW: "Rút tiền về ngân hàng",
   PAYMENT: "Thanh toán QR Merchant",
+  REFUND: "Hoàn tiền thanh toán Merchant",
 };
 
 const STATUS_LABEL = {
@@ -188,15 +189,15 @@ async function buildTransactionReceiptPdf({
 
     // 3. Các bên tham gia
     drawSectionHeading(doc, "3. CÁC BÊN THAM GIA & KÊNH LIÊN KẾT");
-    if (detail.transaction_type === "TRANSFER") {
+    if (detail.transaction_type === "TRANSFER" || detail.transaction_type === "REFUND") {
       drawKeyValueRow(
         doc,
-        "Người gửi",
+        detail.transaction_type === "REFUND" ? "Bên hoàn tiền (Merchant)" : "Người gửi",
         `${detail.sender?.full_name || "—"} (${detail.sender?.phone || "—"})`,
       );
       drawKeyValueRow(
         doc,
-        "Người nhận",
+        detail.transaction_type === "REFUND" ? "Người nhận hoàn tiền" : "Người nhận",
         `${detail.receiver?.full_name || "—"} (${detail.receiver?.phone || "—"})`,
       );
     } else if (detail.transaction_type === "PAYMENT") {

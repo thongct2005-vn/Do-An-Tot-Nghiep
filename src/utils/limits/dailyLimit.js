@@ -67,6 +67,7 @@ async function getDailyUsedByBuckets(db, userId) {
        COALESCE(SUM(amount + user_fee) FILTER (
          WHERE transaction_type IN ('TRANSFER', 'PAYMENT')
            AND (transaction_type <> 'PAYMENT' OR destination_user_id IS NOT NULL)
+           AND COALESCE(fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'
        ), 0)::BIGINT AS transfer_used,
        COALESCE(SUM(amount + user_fee) FILTER (
          WHERE transaction_type = 'TOPUP'
@@ -99,6 +100,7 @@ async function getDailyUsed(db, userId, type) {
       WHERE source_user_id = $1
         AND transaction_type IN (${types})
         AND (transaction_type <> 'PAYMENT' OR destination_user_id IS NOT NULL)
+        AND COALESCE(fee_rate_snapshot->>'operation_type', '') <> 'REVERSAL'
         AND status = 'SUCCESS'
         AND created_at >= (NOW() AT TIME ZONE $2::text)::date AT TIME ZONE $2::text`,
     [userId, timezone],

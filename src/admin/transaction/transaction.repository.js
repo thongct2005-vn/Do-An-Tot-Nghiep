@@ -108,7 +108,7 @@ function buildFilterConditions({
       case "BALANCE_MISMATCH":
         conditions.push(`(
           t.status = 'SUCCESS' AND (
-            (t.transaction_type IN ('TRANSFER', 'PAYMENT')
+            (t.transaction_type IN ('TRANSFER', 'PAYMENT', 'REFUND')
              AND t.destination_user_id IS NOT NULL
              AND t.source_balance_before IS NOT NULL 
              AND t.source_balance_after IS NOT NULL 
@@ -147,7 +147,7 @@ function buildFilterConditions({
           t.status = 'SUCCESS' AND (
             t.source_balance_before IS NULL 
             OR t.source_balance_after IS NULL 
-            OR (t.transaction_type IN ('TRANSFER', 'PAYMENT') AND t.destination_user_id IS NOT NULL AND (t.dest_balance_before IS NULL OR t.dest_balance_after IS NULL))
+            OR (t.transaction_type IN ('TRANSFER', 'PAYMENT', 'REFUND') AND t.destination_user_id IS NOT NULL AND (t.dest_balance_before IS NULL OR t.dest_balance_after IS NULL))
           )
         )`);
         break;
@@ -1159,7 +1159,7 @@ const adminTransactionRepository = {
         transaction_id: String(reversalTx.transactionId),
         excess_transaction_id: reversalTx.excessTransactionId || null,
         original_transaction_id: String(txRow.id),
-        transaction_type: "TRANSFER",
+        transaction_type: "REFUND",
         original_funding_source: originalFundingSource,
         action: "ADMIN_OP_REVERSAL",
         reversal_type: "FULL",

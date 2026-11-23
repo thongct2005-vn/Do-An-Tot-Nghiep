@@ -1,6 +1,10 @@
 const pool = require("../../../../config/database");
 const { httpError } = require("../../../../utils/httpError");
 const { assertDailyLimit } = require("../../../../utils/limits/dailyLimit");
+const {
+  buildEffectiveTransactionTypeSql,
+  buildEffectiveTransactionTypeFilterSql,
+} = require("../../../../utils/historyFilters");
 const transactionRepository = require("../../../transaction/transaction.repository");
 
 // Giao dịch QR bằng Ví trả sau ghi source_user_id là SYSTEM_POSTPAID_WALLET; join sang
@@ -263,7 +267,7 @@ const merchantTransactionRepository = {
       `
       SELECT
         t.id,
-        t.transaction_type,
+        ${buildEffectiveTransactionTypeSql("t")} AS transaction_type,
         CASE WHEN pp.user_id IS NOT NULL THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
         COALESCE(
           pp.full_name,
@@ -342,10 +346,7 @@ const merchantTransactionRepository = {
           $9::boolean = false
           OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
         )
-        AND (
-          $11::boolean = false
-          OR t.transaction_type = ($12::text)::transaction_type_enum
-        )
+        AND ${buildEffectiveTransactionTypeFilterSql("$11", "$12", "t")}
         AND (
           $13::boolean = false
           OR EXISTS (
@@ -428,7 +429,7 @@ const merchantTransactionRepository = {
       `
       SELECT
         t.id,
-        t.transaction_type,
+        ${buildEffectiveTransactionTypeSql("t")} AS transaction_type,
         CASE WHEN pp.user_id IS NOT NULL THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
         COALESCE(
           pp.full_name,
@@ -498,10 +499,7 @@ const merchantTransactionRepository = {
         )
         AND t.created_at >= (($4::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
         AND t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        AND (
-          $6::boolean = false
-          OR t.transaction_type = ($7::text)::transaction_type_enum
-        )
+        AND ${buildEffectiveTransactionTypeFilterSql("$6", "$7", "t")}
         AND (
           $9::boolean = false
           OR EXISTS (
@@ -526,7 +524,7 @@ const merchantTransactionRepository = {
       `
       SELECT
         t.id,
-        t.transaction_type,
+        ${buildEffectiveTransactionTypeSql("t")} AS transaction_type,
         t.status,
         t.amount,
         t.user_fee AS fee,
@@ -611,15 +609,12 @@ const merchantTransactionRepository = {
       `
      SELECT
     COALESCE(SUM(CASE
-      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + user_fee
-      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + user_fee
-      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + user_fee
+      WHEN transaction_type IN ('WITHDRAW', 'TRANSFER', 'PAYMENT', 'REFUND') AND source_user_id = $1 THEN amount + user_fee
       ELSE 0
     END), 0) AS total_expense,
     COALESCE(SUM(CASE
       WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
-      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
+      WHEN transaction_type IN ('TRANSFER', 'PAYMENT', 'REFUND') AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
       ELSE 0
     END), 0) AS total_income
   FROM transactions

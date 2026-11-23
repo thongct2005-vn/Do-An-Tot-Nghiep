@@ -259,6 +259,7 @@ const VALID_TRANSACTION_TYPES = [
   "TOPUP",
   "WITHDRAW",
   "PAYMENT",
+  "REFUND",
 ];
 const VALID_TRANSACTION_STATUSES = ["ALL", "SUCCESS", "PENDING", "FAILED"];
 const VALID_INITIATED_BY = ["ALL", "USER", "ADMIN", "SYSTEM"];
@@ -407,6 +408,7 @@ function calculateIntegrityAndAnomalies(t) {
   if (isSuccess) {
     if (
       t.transaction_type === "TRANSFER" ||
+      t.transaction_type === "REFUND" ||
       (t.transaction_type === "PAYMENT" && t.destination_user_id)
     ) {
       const sourcePresent = hasSourceBefore && hasSourceAfter;
@@ -574,7 +576,7 @@ function calculateIntegrityAndAnomalies(t) {
  */
 function resolveAdminNetAmount({ transactionType, amount, merchantFee }) {
   const type = String(transactionType || "").toUpperCase();
-  if (type === "PAYMENT" || type === "TRANSFER") {
+  if (type === "PAYMENT" || type === "TRANSFER" || type === "REFUND") {
     return Math.max(0, amount - merchantFee);
   }
   return amount;
@@ -915,7 +917,8 @@ const adminTransactionService = {
     };
 
     switch (t.transaction_type) {
-      case "TRANSFER": {
+      case "TRANSFER":
+      case "REFUND": {
         return {
           ...baseData,
           is_balance_consistent: isConsistent,

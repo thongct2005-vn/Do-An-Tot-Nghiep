@@ -9,6 +9,7 @@ const TYPE_LABEL = {
   TOPUP: "Nạp tiền ví",
   WITHDRAW: "Rút tiền về NH",
   PAYMENT: "Thanh toán QR",
+  REFUND: "Hoàn tiền thanh toán Merchant",
 };
 
 const STATUS_LABEL = {
@@ -87,7 +88,8 @@ const COLUMNS = [
 
 function isReversalExportRow(row) {
   return Boolean(
-    row?.fee_rate_snapshot?.operation_type === "REVERSAL" ||
+    row?.transaction_type === "REFUND" ||
+      row?.fee_rate_snapshot?.operation_type === "REVERSAL" ||
       row?.admin_action === "ADMIN_OP_REVERSAL"
   );
 }
@@ -158,7 +160,10 @@ async function buildTransactionsAdminXlsx({
       totalFee += f + mf;
       if (r.transaction_type === "TOPUP") totalTopup += amt;
       else if (r.transaction_type === "WITHDRAW") totalWithdraw += amt;
-      else if (r.transaction_type === "TRANSFER") {
+      else if (r.transaction_type === "REFUND") {
+        totalReversal += amt;
+        reversalCount += 1;
+      } else if (r.transaction_type === "TRANSFER") {
         if (isReversalExportRow(r)) {
           totalReversal += amt;
           reversalCount += 1;
@@ -305,13 +310,18 @@ async function buildTransactionsAdminXlsx({
     const rowFee = Number(r.fee) || 0;
     const rowMerchantFee = Number(r.merchant_fee) || 0;
     const rowNetDest =
-      r.transaction_type === "PAYMENT" || r.transaction_type === "TRANSFER"
+      r.transaction_type === "PAYMENT" ||
+      r.transaction_type === "TRANSFER" ||
+      r.transaction_type === "REFUND"
         ? Math.max(0, rowAmount - rowMerchantFee)
         : rowAmount;
 
-    const txTypeDisplay = isReversalExportRow(r)
-      ? "Hoàn tiền thanh toán Merchant (REVERSAL)"
-      : TYPE_LABEL[r.transaction_type] || r.transaction_type;
+    const txTypeDisplay =
+      r.transaction_type === "REFUND"
+        ? "Hoàn tiền thanh toán Merchant (REFUND)"
+        : isReversalExportRow(r)
+          ? "Hoàn tiền thanh toán Merchant (REVERSAL)"
+          : TYPE_LABEL[r.transaction_type] || r.transaction_type;
 
     const cells = [
       idx + 1, // 1. STT

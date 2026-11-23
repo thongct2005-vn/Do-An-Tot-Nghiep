@@ -4,6 +4,11 @@ const webhookRepository = require("../webhook/webhook.repository");
 const { httpError } = require("../../utils/httpError");
 const { assertBankFundingMinAmount } = require("../../utils/amount");
 const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
+const {
+  buildLegacyRefundPredicateSql,
+  buildEffectiveTransactionTypeSql,
+  buildEffectiveTransactionTypeFilterSql,
+} = require("../../utils/historyFilters");
 const { assertKyc } = require("../kyc/kyc.guard");
 const { uuidv7 } = require("uuidv7");
 const merchantFeeService = require("../merchant/production/fee/fee.service");
@@ -632,7 +637,7 @@ const TransactionRepository = {
   },
 
   /**
-   * Thực thi giao dịch bù trừ hoàn tiền thanh toán Merchant (`TRANSFER` từ ví MERCHANT -> Ví chính khách hàng)
+   * Thực thi giao dịch bù trừ hoàn tiền thanh toán Merchant (`REFUND` từ ví MERCHANT -> Ví chính khách hàng)
    * bên trong PostgreSQL transaction do caller quản lý (đã giữ khóa `FOR UPDATE` trên hai ví).
    * - Không tính lại `user_fee` hay `merchant_fee` (luôn = 0) và giữ nguyên `SYSTEM_FEE_WALLET`.
    * - Miễn kiểm tra hạn mức chi trong ngày cho ví Merchant.
@@ -772,7 +777,7 @@ const TransactionRepository = {
         amount, user_fee, merchant_fee, fee_rate_snapshot,
         description, idempotency_key, status, linked_bank_account_id
       )
-      VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8::jsonb, $9, $10, 'SUCCESS', NULL)
+      VALUES ('REFUND', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8::jsonb, $9, $10, 'SUCCESS', NULL)
       RETURNING id, status, created_at`,
       [
         merchantUser.id,
@@ -795,7 +800,7 @@ const TransactionRepository = {
       payload: {
         transaction_id: createdTxId,
         original_transaction_id: String(originalTransactionId),
-        transaction_type: "TRANSFER",
+        transaction_type: "REFUND",
         original_funding_source: originalFundingSource,
         status: insertResult.rows[0]?.status || "SUCCESS",
         source_user_id: merchantUser.id,
@@ -1155,20 +1160,20 @@ const TransactionRepository = {
     sourceUserId,
     referenceCode,
     idempotencyKey,
-    transactionType,
+    transactionType = null,
+    description: customDescription = null,
     linkedBankAccountId = null,
     fundingSource = "MAIN_WALLET",
   }) {
+    const isBankFunded =
+      String(fundingSource || "").trim().toUpperCase() === "BANK" ||
+      Boolean(linkedBankAccountId);
     const failureCtx = {
       transactionType: transactionType || "PAYMENT",
       sourceUserId,
       destinationUserId: null,
       amount: null,
-      linkedBankAccountId:
-        String(fundingSource || "").trim().toUpperCase() === "BANK" ||
-        Boolean(linkedBankAccountId)
-          ? linkedBankAccountId
-          : null,
+      linkedBankAccountId: isBankFunded ? linkedBankAccountId : null,
       feeRateSnapshot: null,
       sourceBalance: null,
       shouldRecordFailure: true,
@@ -1177,13 +1182,24 @@ const TransactionRepository = {
     const client = await pool.connect();
     let transferResult;
     let paymentResult;
+    let effectiveTransactionType = transactionType || "PAYMENT";
 
     try {
       await client.query("BEGIN");
 
       // All participating paths lock users before payment rows.
-      const target = await client.query('SELECT destination_user_id FROM payment_requests WHERE reference_code=$1', [referenceCode]);
+      const target = await client.query(
+        `SELECT pr.destination_user_id, u.role AS destination_role
+           FROM payment_requests pr
+           JOIN users u ON u.id = pr.destination_user_id
+          WHERE pr.reference_code = $1`,
+        [referenceCode],
+      );
+      let isMerchantQr = true;
       if (target.rows[0]) {
+        isMerchantQr = target.rows[0].destination_role === "MERCHANT";
+        effectiveTransactionType = isMerchantQr ? "PAYMENT" : "TRANSFER";
+        failureCtx.transactionType = effectiveTransactionType;
         failureCtx.destinationUserId = target.rows[0].destination_user_id;
         await client.query('SELECT id FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[sourceUserId, target.rows[0].destination_user_id]]);
       }
@@ -1198,12 +1214,34 @@ const TransactionRepository = {
       }
       failureCtx.destinationUserId = paymentRequest.destination_user_id;
       failureCtx.amount = Number(paymentRequest.amount);
-      if (paymentRequest.order_id || failureCtx.linkedBankAccountId) {
-        failureCtx.feeRateSnapshot = {
-          ...(failureCtx.linkedBankAccountId ? { funding_source: "BANK" } : {}),
-          ...(paymentRequest.order_id ? { order_id: paymentRequest.order_id } : {}),
-        };
+
+      const prDesc =
+        paymentRequest.description != null && String(paymentRequest.description).trim()
+          ? String(paymentRequest.description).trim()
+          : null;
+      const overrideDesc =
+        customDescription != null && String(customDescription).trim()
+          ? String(customDescription).trim().slice(0, 100)
+          : null;
+      // QR động của USER là giao dịch chuyển tiền, không tự gắn nội dung "Thanh toán QR ..."
+      const resolvedDescription = isMerchantQr
+        ? prDesc || `Thanh toán QR ${referenceCode}`
+        : prDesc ?? overrideDesc ?? "";
+
+      if (isMerchantQr) {
+        if (paymentRequest.order_id || failureCtx.linkedBankAccountId) {
+          failureCtx.feeRateSnapshot = {
+            ...(failureCtx.linkedBankAccountId ? { funding_source: "BANK" } : {}),
+            ...(paymentRequest.order_id ? { order_id: paymentRequest.order_id } : {}),
+          };
+        }
+      } else {
+        failureCtx.feeRateSnapshot = TransactionRepository.buildTransferFailureSnapshot({
+          isBankFunded,
+          userMessage: resolvedDescription || null,
+        });
       }
+
       await assertKyc(sourceUserId);
       if (paymentRequest.status !== 'PENDING') {
         throw httpError(409, "Mã QR không còn chờ thanh toán");
@@ -1214,20 +1252,19 @@ const TransactionRepository = {
       if (String(sourceUserId) === String(paymentRequest.destination_user_id)) {
         throw httpError(400, "Không thể chuyển tiền cho chính mình");
       }
-      if (
-        String(fundingSource || "").trim().toUpperCase() === "BANK" ||
-        Boolean(linkedBankAccountId)
-      ) {
-        assertBankFundingMinAmount(paymentRequest.amount, "thanh toán");
+      if (isBankFunded) {
+        assertBankFundingMinAmount(
+          paymentRequest.amount,
+          isMerchantQr ? "thanh toán" : "chuyển tiền",
+        );
       }
 
       transferResult = await TransactionRepository.executeTransfer(client, {
         sourceUserId: sourceUserId,
         destinationUserId: paymentRequest.destination_user_id,
         amount: paymentRequest.amount,
-        description:
-          paymentRequest.description || `Thanh toán QR ${referenceCode}`,
-        transactionType: transactionType,
+        description: resolvedDescription,
+        transactionType: effectiveTransactionType,
         idempotencyKey: idempotencyKey,
         linkedBankAccountId,
         fundingSource,
@@ -1242,24 +1279,26 @@ const TransactionRepository = {
         throw httpError(409, "Mã QR này đã được thanh toán hoặc hết hạn");
       }
 
-      await webhookRepository.enqueue(client, {
-        paymentRequestId: paymentResult.id,
-        eventType: "payment.success",
-      });
+      if (isMerchantQr) {
+        await webhookRepository.enqueue(client, {
+          paymentRequestId: paymentResult.id,
+          eventType: "payment.success",
+        });
 
-      await TransactionRepository.recordAudit(client, {
-        eventType: "PAYMENT_PAID",
-        payload: {
-          payment_id: paymentResult.id,
-          order_id: paymentResult.order_id ?? null,
-          merchant_id: paymentResult.destination_user_id,
-          payer_user_id: sourceUserId,
-          transaction_id: transferResult.transactionId,
-          amount: Number(paymentResult.amount),
-          merchant_fee: Number(transferResult.merchantFee || 0),
-          net_amount: Number(transferResult.netAmount ?? paymentResult.amount),
-        },
-      });
+        await TransactionRepository.recordAudit(client, {
+          eventType: "PAYMENT_PAID",
+          payload: {
+            payment_id: paymentResult.id,
+            order_id: paymentResult.order_id ?? null,
+            merchant_id: paymentResult.destination_user_id,
+            payer_user_id: sourceUserId,
+            transaction_id: transferResult.transactionId,
+            amount: Number(paymentResult.amount),
+            merchant_fee: Number(transferResult.merchantFee || 0),
+            net_amount: Number(transferResult.netAmount ?? paymentResult.amount),
+          },
+        });
+      }
 
       await client.query("COMMIT");
     } catch (e) {
@@ -1275,7 +1314,10 @@ const TransactionRepository = {
       client.release();
     }
 
-    return transferResult;
+    return {
+      ...transferResult,
+      transactionType: effectiveTransactionType,
+    };
   },
 
   async getTransferHistory(
@@ -1338,7 +1380,7 @@ const TransactionRepository = {
              AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
              AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
              AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
-             AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+             AND ${buildEffectiveTransactionTypeFilterSql("$11", "$12", "t")}
              AND ($15::boolean = false OR t.status = $16::text)
              AND ($17::boolean = false OR t.amount >= $18::bigint)
              AND ($19::boolean = false OR t.amount <= $20::bigint)
@@ -1353,7 +1395,7 @@ const TransactionRepository = {
              AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
              AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
              AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
-             AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+             AND ${buildEffectiveTransactionTypeFilterSql("$11", "$12", "t")}
              AND ($15::boolean = false OR t.status = $16::text)
              AND ($17::boolean = false OR t.amount >= $18::bigint)
              AND ($19::boolean = false OR t.amount <= $20::bigint)
@@ -1376,7 +1418,7 @@ const TransactionRepository = {
                  AND ($2::boolean = false OR (t.created_at, t.id) < ((SELECT created_at FROM cursor_ref), $3::varchar))
                  AND ($7::boolean = false OR t.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
                  AND ($9::boolean = false OR t.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
-                 AND ($11::boolean = false OR t.transaction_type = ($12::text)::transaction_type_enum)
+                 AND ${buildEffectiveTransactionTypeFilterSql("$11", "$12", "t")}
                  AND ($15::boolean = false OR t.status = $16::text)
                  AND ($17::boolean = false OR t.amount >= $18::bigint)
                  AND ($19::boolean = false OR t.amount <= $20::bigint)
@@ -1387,7 +1429,7 @@ const TransactionRepository = {
       )
       SELECT
         t.id,
-        t.transaction_type,
+        ${buildEffectiveTransactionTypeSql("t")} AS transaction_type,
         CASE WHEN pp.action = 'PURCHASE' THEN pp.user_id ELSE t.source_user_id END AS source_user_id,
         CASE
           WHEN pp.action = 'PURCHASE' THEN pp.payer_name
@@ -1429,6 +1471,10 @@ const TransactionRepository = {
         t.created_at,
         b.name AS bank_name,
         COALESCE(pr.order_id, t.fee_rate_snapshot->>'order_id') AS order_id,
+        COALESCE(
+          NULLIF(t.fee_rate_snapshot->>'reversal_of_transaction_id', ''),
+          CASE WHEN pp.action = 'REFUND' THEN pp.ref_tx_id::text ELSE NULL END
+        ) AS original_transaction_id,
         CASE
           WHEN pp.user_id IS NOT NULL OR (t.fee_rate_snapshot->>'funding_source') = 'POSTPAID' THEN 'POSTPAID'
           WHEN t.linked_bank_account_id IS NOT NULL THEN 'BANK'
@@ -1554,6 +1600,17 @@ const TransactionRepository = {
                 ''
               ))) ILIKE '%' || unaccent($6) || '%'
             ))
+            OR ((t.transaction_type = 'REFUND' OR ${buildLegacyRefundPredicateSql("t")}) AND (
+              ('hoan tien tu ' || unaccent(COALESCE(su.full_name, ''))) ILIKE '%' || unaccent($6) || '%'
+              OR ('hoan tien den ' || unaccent(COALESCE(
+                CASE
+                  WHEN du.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
+                  WHEN du.role = 'SYSTEM' THEN 'Hệ thống'
+                  ELSE du.full_name
+                END,
+                ''
+              ))) ILIKE '%' || unaccent($6) || '%'
+            ))
           )
         )
         AND (
@@ -1640,7 +1697,7 @@ const TransactionRepository = {
       `
       SELECT
         t.id,
-        t.transaction_type,
+        ${buildEffectiveTransactionTypeSql("t")} AS transaction_type,
         t.source_user_id,
         CASE
           WHEN su.full_name = 'SYSTEM_POSTPAID_WALLET' THEN 'Ví trả sau'
@@ -1719,8 +1776,9 @@ const TransactionRepository = {
             OR COALESCE(pr.order_id, '') ILIKE '%' || $3::text || '%'
             OR (t.transaction_type = 'TOPUP' AND ('nap tien vao vi' ILIKE '%' || unaccent($3::text) || '%' OR 'nap tien' ILIKE '%' || unaccent($3::text) || '%'))
             OR (t.transaction_type = 'WITHDRAW' AND ('rut tien tu vi' ILIKE '%' || unaccent($3::text) || '%' OR 'rut tien' ILIKE '%' || unaccent($3::text) || '%'))
-            OR (t.transaction_type = 'TRANSFER' AND ('chuyen tien' ILIKE '%' || unaccent($3::text) || '%' OR 'nhan tien' ILIKE '%' || unaccent($3::text) || '%'))
+            OR (t.transaction_type = 'TRANSFER' AND NOT ${buildLegacyRefundPredicateSql("t")} AND ('chuyen tien' ILIKE '%' || unaccent($3::text) || '%' OR 'nhan tien' ILIKE '%' || unaccent($3::text) || '%'))
             OR (t.transaction_type = 'PAYMENT' AND ('thanh toan' ILIKE '%' || unaccent($3::text) || '%'))
+            OR ((t.transaction_type = 'REFUND' OR ${buildLegacyRefundPredicateSql("t")}) AND ('hoan tien' ILIKE '%' || unaccent($3::text) || '%' OR 'hoan tien giao dich' ILIKE '%' || unaccent($3::text) || '%'))
           )
         )
         AND t.created_at >= (($4::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
@@ -1739,15 +1797,12 @@ const TransactionRepository = {
       `
      SELECT
     COALESCE(SUM(CASE
-      WHEN transaction_type = 'WITHDRAW' AND source_user_id = $1 THEN amount + user_fee
-      WHEN transaction_type = 'TRANSFER' AND source_user_id = $1 THEN amount + user_fee
-      WHEN transaction_type = 'PAYMENT' AND source_user_id = $1 THEN amount + user_fee
+      WHEN transaction_type IN ('WITHDRAW', 'TRANSFER', 'PAYMENT', 'REFUND') AND source_user_id = $1 THEN amount + user_fee
       ELSE 0
     END), 0) AS total_expense,
     COALESCE(SUM(CASE
       WHEN transaction_type = 'TOPUP' AND source_user_id = $1 THEN amount
-      WHEN transaction_type = 'TRANSFER' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
-      WHEN transaction_type = 'PAYMENT' AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
+      WHEN transaction_type IN ('TRANSFER', 'PAYMENT', 'REFUND') AND destination_user_id = $1 THEN (amount - COALESCE(merchant_fee, 0))
       ELSE 0
     END), 0) AS total_income
   FROM transactions

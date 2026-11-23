@@ -80,7 +80,7 @@ CREATE TABLE user_transaction_limits (
   UNIQUE (user_id, transaction_type)
 );
 CREATE SEQUENCE transaction_ref_seq START 1000001;
-CREATE TYPE transaction_type_enum AS ENUM ('PAYMENT', 'TRANSFER', 'TOPUP', 'WITHDRAW');
+CREATE TYPE transaction_type_enum AS ENUM ('PAYMENT', 'TRANSFER', 'TOPUP', 'WITHDRAW', 'REFUND', 'REVERSAL');
 CREATE TABLE transactions (
   id varchar PRIMARY KEY DEFAULT (nextval('transaction_ref_seq'))::varchar,
   transaction_type transaction_type_enum NOT NULL,

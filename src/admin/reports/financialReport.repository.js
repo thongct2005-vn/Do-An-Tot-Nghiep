@@ -36,7 +36,8 @@ function numericRows(rows, keys) {
 async function queryCashflowRaw(db, filters) {
   const { rows } = await db.query(`SELECT
     CASE
-      WHEN transaction_type='TRANSFER' AND COALESCE(fee_rate_snapshot->>'operation_type','')='REVERSAL'
+      WHEN transaction_type='REFUND'
+        OR (transaction_type='TRANSFER' AND COALESCE(fee_rate_snapshot->>'operation_type','')='REVERSAL')
       THEN 'PAYMENT_REVERSAL'
       ELSE transaction_type::text
     END AS type,
@@ -64,7 +65,10 @@ async function cashflow(db, filters, dashRollupUntil = null) {
     const { rows } = await db.query(
       `WITH tx_events AS (
         SELECT
-          d.transaction_type::text AS type,
+          CASE
+            WHEN d.transaction_type = 'REFUND' THEN 'PAYMENT_REVERSAL'
+            ELSE d.transaction_type::text
+          END AS type,
           d.status::text AS status,
           d.tx_count::bigint AS tx_count,
           d.total_amount::numeric AS total_amount
@@ -91,7 +95,8 @@ async function cashflow(db, filters, dashRollupUntil = null) {
         UNION ALL
         SELECT
           CASE
-            WHEN t.transaction_type='TRANSFER' AND COALESCE(t.fee_rate_snapshot->>'operation_type','')='REVERSAL'
+            WHEN t.transaction_type='REFUND'
+              OR (t.transaction_type='TRANSFER' AND COALESCE(t.fee_rate_snapshot->>'operation_type','')='REVERSAL')
             THEN 'PAYMENT_REVERSAL'
             ELSE t.transaction_type::text
           END AS type,
@@ -228,7 +233,7 @@ async function querySystemSeriesRaw(db, filters) {
         coalesce(sum(amount) FILTER (WHERE transaction_type='WITHDRAW'),0) AS withdraw,
         coalesce(sum(amount) FILTER (WHERE transaction_type='PAYMENT'),0) AS payment,
         coalesce(sum(amount) FILTER (WHERE transaction_type='TRANSFER' AND COALESCE(fee_rate_snapshot->>'operation_type','') <> 'REVERSAL'),0) AS transfer,
-        coalesce(sum(amount) FILTER (WHERE transaction_type='TRANSFER' AND fee_rate_snapshot->>'operation_type'='REVERSAL'),0) AS payment_reversal
+        coalesce(sum(amount) FILTER (WHERE transaction_type='REFUND' OR (transaction_type='TRANSFER' AND fee_rate_snapshot->>'operation_type'='REVERSAL')),0) AS payment_reversal
       FROM transactions WHERE created_at >= $1 AND created_at < $2 AND status IN ${SUCCESS} GROUP BY 1
     ), buckets AS (
       SELECT generate_series(date_trunc($3,$1::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh'),
@@ -304,7 +309,7 @@ async function systemSeries(db, filters, rollupUntil = null, verifiedQrRollup = 
           coalesce(sum(amount) FILTER (WHERE transaction_type='WITHDRAW'),0) AS withdraw,
           coalesce(sum(amount) FILTER (WHERE transaction_type='PAYMENT'),0) AS payment,
           coalesce(sum(amount) FILTER (WHERE transaction_type='TRANSFER' AND COALESCE(fee_rate_snapshot->>'operation_type','') <> 'REVERSAL'),0) AS transfer,
-          coalesce(sum(amount) FILTER (WHERE transaction_type='TRANSFER' AND fee_rate_snapshot->>'operation_type'='REVERSAL'),0) AS payment_reversal
+          coalesce(sum(amount) FILTER (WHERE transaction_type='REFUND' OR (transaction_type='TRANSFER' AND fee_rate_snapshot->>'operation_type'='REVERSAL')),0) AS payment_reversal
         FROM transactions WHERE created_at >= $1 AND created_at < $2 AND status IN ${SUCCESS} GROUP BY 1
       ),
       buckets AS (
@@ -574,7 +579,10 @@ async function queryCombinedTransactions(db, filters, feeMap, dashRollupUntil = 
         `WITH tx_events AS (
           SELECT
             date_trunc($3, d.bucket_hour AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
-            d.transaction_type::text AS type,
+            CASE
+              WHEN d.transaction_type = 'REFUND' THEN 'PAYMENT_REVERSAL'
+              ELSE d.transaction_type::text
+            END AS type,
             d.status::text AS status,
             d.tx_count::bigint AS tx_count,
             d.total_amount::numeric AS total_amount
@@ -604,7 +612,8 @@ async function queryCombinedTransactions(db, filters, feeMap, dashRollupUntil = 
           SELECT
             date_trunc($3, t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
             CASE
-              WHEN t.transaction_type='TRANSFER' AND COALESCE(t.fee_rate_snapshot->>'operation_type','')='REVERSAL'
+              WHEN t.transaction_type='REFUND'
+                OR (t.transaction_type='TRANSFER' AND COALESCE(t.fee_rate_snapshot->>'operation_type','')='REVERSAL')
               THEN 'PAYMENT_REVERSAL'
               ELSE t.transaction_type::text
             END AS type,
@@ -643,7 +652,8 @@ async function queryCombinedTransactions(db, filters, feeMap, dashRollupUntil = 
         SELECT
           date_trunc($3, created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket_ts,
           CASE
-            WHEN transaction_type='TRANSFER' AND COALESCE(fee_rate_snapshot->>'operation_type','')='REVERSAL'
+            WHEN transaction_type='REFUND'
+              OR (transaction_type='TRANSFER' AND COALESCE(fee_rate_snapshot->>'operation_type','')='REVERSAL')
             THEN 'PAYMENT_REVERSAL'
             ELSE transaction_type::text
           END AS type,

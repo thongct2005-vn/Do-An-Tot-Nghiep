@@ -11,7 +11,7 @@ const {
   maskAccountNumber,
 } = require("../../../../utils/mask");
 const { isValidPhone } = require("../../../../utils/validators");
-const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
+const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT", "REFUND"];
 const CONFIGURABLE_LIMIT_TYPES = ["TRANSFER", "WITHDRAW", "TOPUP"];
 const {
   parseAmountInRange,
@@ -573,11 +573,17 @@ const merchantTransactionService = {
 
     const filters = [];
     if (normalizedType) {
-      filters.push(
-        normalizedType === "TRANSFER" && normalizedDirection
-          ? `dịch vụ ${normalizedDirection === "OUT" ? "Chuyển tiền" : "Nhận tiền"}`
-          : `loại ${normalizedType}`,
-      );
+      if (normalizedType === "TRANSFER" && normalizedDirection) {
+        filters.push(
+          `dịch vụ ${normalizedDirection === "OUT" ? "Chuyển tiền" : "Nhận tiền"}`,
+        );
+      } else if (normalizedType === "REFUND" && normalizedDirection) {
+        filters.push(
+          `dịch vụ ${normalizedDirection === "OUT" ? "Hoàn tiền cho khách" : "Nhận hoàn tiền"}`,
+        );
+      } else {
+        filters.push(`loại ${normalizedType}`);
+      }
     }
     if (normalizedStatus) filters.push(`trạng thái ${normalizedStatus}`);
     if (normalizedFundingSource) {

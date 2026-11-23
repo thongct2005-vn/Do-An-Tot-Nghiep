@@ -34,7 +34,7 @@ const {
   normalizeFundingSourceFilter,
 } = require("../../utils/historyFilters");
 
-const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT"];
+const TRANSACTION_TYPES = ["TRANSFER", "TOPUP", "WITHDRAW", "PAYMENT", "REFUND"];
 const TRANSACTION_DIRECTIONS = ["IN", "OUT"];
 const USER_FUNDING_ALIAS_MAP = {
   LUMAPAY: "LUMAPAY",
@@ -70,6 +70,12 @@ const TransactionService = {
     const normalizedFunding = String(fundingSource || (linkedBankAccountId ? "BANK" : "MAIN_WALLET"))
       .trim()
       .toUpperCase();
+    if (normalizedFunding === "POSTPAID") {
+      throw httpError(
+        400,
+        "Ví trả sau chỉ áp dụng thanh toán mã QR của cửa hàng (Merchant)",
+      );
+    }
     const isBankFunded = normalizedFunding === "BANK" || Boolean(linkedBankAccountId);
     const candidateAmount = transactionRepository.parsePositiveAmountForFailure(amount);
 
@@ -222,6 +228,7 @@ const TransactionService = {
     sourceUserId,
     idempotencyKey,
     referenceCode,
+    description = null,
     fundingSource = "MAIN_WALLET",
     linkedBankAccountId = null,
   }) {
@@ -256,7 +263,7 @@ const TransactionService = {
       sourceUserId,
       idempotencyKey,
       referenceCode,
-      transactionType: "PAYMENT",
+      description,
       status: "SUCCESS",
       fundingSource: normalizedFunding,
       linkedBankAccountId:
@@ -470,6 +477,7 @@ const TransactionService = {
 
     let resolvedMerchantId = merchantUserId || null;
     let resolvedAmount = amount;
+    let effectiveTransactionType = transactionType;
 
     if (referenceCode && typeof referenceCode === "string" && referenceCode.trim()) {
       const pr = await paymentRequestRepository.findByReferenceCode(
@@ -479,17 +487,20 @@ const TransactionService = {
         throw httpError(404, "Không tìm thấy mã thanh toán QR");
       }
       resolvedMerchantId = pr.destination_user_id;
+      if (pr.role !== "MERCHANT") {
+        effectiveTransactionType = "TRANSFER";
+      }
       if (resolvedAmount === undefined || resolvedAmount === null) {
         resolvedAmount = Number(pr.amount);
       }
     }
 
     const isQrType = ["PAYMENT", "QR_PAYMENT"].includes(
-      String(transactionType || "").trim().toUpperCase(),
+      String(effectiveTransactionType || "").trim().toUpperCase(),
     );
 
     return merchantFeeService.previewTransactionFee({
-      transactionType,
+      transactionType: effectiveTransactionType,
       amount: resolvedAmount,
       actorUser: { id: userId, role },
       merchantUserId: resolvedMerchantId,

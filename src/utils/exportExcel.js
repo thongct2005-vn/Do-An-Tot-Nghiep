@@ -9,6 +9,7 @@ const TYPE_LABEL = {
   TOPUP: "Nạp tiền",
   WITHDRAW: "Rút tiền",
   PAYMENT: "Thanh toán QR",
+  REFUND: "Hoàn tiền",
 };
 const STATUS_LABEL = {
   SUCCESS: "Thành công",

@@ -265,6 +265,24 @@ test('financial aggregates preserve scope, source fees, boundaries and compariso
         });
         assert.equal(foundMerchantRevLabel, true);
 
+        // New REFUND transactions (transaction_type = 'REFUND') must also be categorized as PAYMENT_REVERSAL,
+        // excluded from TRANSFER and Merchant revenue/gross, and reconcile cleanly.
+        const refundTxId = randomUUID();
+        await db.query(
+          `INSERT INTO transactions(id,transaction_type,amount,status,source_user_id,destination_user_id,fee_rate_snapshot,created_at)
+           VALUES($1,'REFUND',200000,'SUCCESS',$2,$3,$4::jsonb,'2026-11-01T15:00:00+07:00')`,
+          [refundTxId, merchant, customer, JSON.stringify({ operation_type: 'REVERSAL', reversal_of_transaction_id: payment, original_funding_source: 'MAIN_WALLET' })],
+        );
+        const refundData = await repo.readFinancialData(db, f);
+        const payRefundRow = refundData.cashflow.find(r => r.type === 'PAYMENT_REVERSAL');
+        assert.ok(payRefundRow);
+        assert.equal(payRefundRow.gross, 500000);
+        assert.equal(refundData.cashflow.find(r => r.type === 'TRANSFER').gross, 500000);
+        assert.equal(sum(refundData.system_series, 'payment_reversal'), 500000);
+        assert.equal(refundData.merchant.overview.gross, 1640000);
+        const refundChecks = reconcile({ ...refundData, filters: { merchant_id: null, transaction_type: 'ALL' }, logins: { available: false } });
+        assert.equal(refundChecks.find(c => c.name === 'Số giao dịch theo nghiệp vụ').difference, 0);
+
         await db.query('ALTER TABLE fee_ledger_entries RENAME TO missing_ledger_fixture');
         try { await assert.rejects(exportFinancialReport(input,customer,options),e=>e.code==='42P01'); }
         finally {await db.query('ALTER TABLE missing_ledger_fixture RENAME TO fee_ledger_entries');}

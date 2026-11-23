@@ -152,6 +152,7 @@ const transactionController = {
       const { user_id: sourceUserId } = req.user;
       const {
         reference_code: referenceCode,
+        description = null,
         funding_source: fundingSource = "MAIN_WALLET",
         linked_bank_account_id: linkedBankAccountId = null,
       } = req.body;
@@ -160,9 +161,12 @@ const transactionController = {
         sourceUserId,
         idempotencyKey,
         referenceCode,
+        description,
         fundingSource,
         linkedBankAccountId,
       });
+
+      const isTransferQr = result.transactionType === "TRANSFER";
 
       if (result.fundingSource === "POSTPAID") {
         emitToUser(sourceUserId, "postpaid_wallet_updated", {
@@ -187,9 +191,12 @@ const transactionController = {
       });
 
       sendPushNotification(sourceUserId, {
-        title: "Thanh toán QR thành công",
-        body:
-          result.fundingSource === "POSTPAID"
+        title: isTransferQr
+          ? "Chuyển tiền thành công"
+          : "Thanh toán QR thành công",
+        body: isTransferQr
+          ? `Bạn vừa chuyển -${Number(result.amount).toLocaleString("vi-VN")}đ cho ${result.destinationUserName}`
+          : result.fundingSource === "POSTPAID"
             ? `Bạn vừa thanh toán -${Number(result.amount).toLocaleString("vi-VN")}đ cho ${result.destinationUserName} bằng Ví trả sau`
             : `Bạn vừa thanh toán -${Number(result.amount).toLocaleString("vi-VN")}đ cho ${result.destinationUserName}`,
         data: {
@@ -204,7 +211,9 @@ const transactionController = {
 
       sendPushNotification(result.destinationId, {
         title: "Nhận tiền thành công",
-        body: transactionService.formatReceiveNotificationBody(result),
+        body: isTransferQr
+          ? `Bạn vừa nhận +${Number(result.amount).toLocaleString("vi-VN")}đ từ ${result.sourceUserName}${result.description ? `\nNội dung: ${result.description}` : ""}`
+          : transactionService.formatReceiveNotificationBody(result),
         data: {
           type: "RECEIVE_MONEY",
           transactionId: result.transactionId,
@@ -215,7 +224,7 @@ const transactionController = {
       return successResponse(
         res,
         200,
-        "Thanh toán QR thành công",
+        isTransferQr ? "Chuyển tiền thành công" : "Thanh toán QR thành công",
         transactionService.toTransferReceiptResponse(result),
       );
     } catch (e) {

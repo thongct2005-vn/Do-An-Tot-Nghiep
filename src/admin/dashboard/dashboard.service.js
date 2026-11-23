@@ -9,6 +9,7 @@ const CANONICAL_TX_TYPES = [
   { type: "WITHDRAW", label: "Rút tiền" },
   { type: "TRANSFER", label: "Chuyển tiền" },
   { type: "PAYMENT", label: "Thanh toán QR" },
+  { type: "REFUND", label: "Hoàn tiền" },
 ];
 
 const adminDashboardService = {

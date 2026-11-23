@@ -1,6 +1,7 @@
 const { httpError } = require("../../utils/httpError");
 
 const MIN_POSTPAID_CREDIT_LIMIT = 2000000;
+const MIN_AUTO_ADJUSTED_CREDIT_LIMIT = 1000000;
 
 const POSTPAID_LATE_FEE_TIERS = Object.freeze([
   Object.freeze({
@@ -184,6 +185,7 @@ function normalizePostpaidConfig(raw) {
 
 module.exports = {
   MIN_POSTPAID_CREDIT_LIMIT,
+  MIN_AUTO_ADJUSTED_CREDIT_LIMIT,
   POSTPAID_LATE_FEE_TIERS,
   POSTPAID_CONFIG_FIELD_LABELS,
   parseNonNegIntConfig,

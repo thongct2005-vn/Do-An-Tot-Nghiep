@@ -24,7 +24,12 @@ function sanitizeReversalResponseData(raw) {
   return copy;
 }
 
-function evaluatePostpaidRefundEligibility({ tx, postpaidSummary }) {
+function evaluatePostpaidRefundEligibility({
+  tx,
+  postpaidSummary,
+  alreadyReversed = false,
+  reversalEligibility = null,
+}) {
   const originalAmount = Number(tx?.amount || 0);
   if (!postpaidSummary) {
     return {
@@ -49,7 +54,11 @@ function evaluatePostpaidRefundEligibility({ tx, postpaidSummary }) {
   let code = null;
   let reason = null;
 
-  if (tx.status !== "SUCCESS" || tx.transaction_type !== "PAYMENT") {
+  if (alreadyReversed) {
+    eligible = false;
+    code = "TRANSACTION_ALREADY_REVERSED";
+    reason = "Giao dịch này đã được hoàn tiền trước đó";
+  } else if (tx.status !== "SUCCESS" || tx.transaction_type !== "PAYMENT") {
     eligible = false;
     code = "POSTPAID_REFUND_UNSUPPORTED_TX";
     reason = "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán đã thành công";
@@ -61,6 +70,10 @@ function evaluatePostpaidRefundEligibility({ tx, postpaidSummary }) {
     eligible = false;
     code = "POSTPAID_MISSING_MERCHANT";
     reason = "Giao dịch gốc không có tài khoản cửa hàng nhận tiền";
+  } else if (reversalEligibility && !reversalEligibility.eligible) {
+    eligible = false;
+    code = reversalEligibility.code;
+    reason = reversalEligibility.reason;
   }
 
   return {
@@ -78,15 +91,49 @@ function evaluatePostpaidRefundEligibility({ tx, postpaidSummary }) {
   };
 }
 
-function evaluateReversalEligibility({ tx, alreadyReversed, reversalInfo }) {
+function evaluateReversalEligibility({
+  tx,
+  alreadyReversed,
+  reversalInfo,
+  postpaidSummary = null,
+}) {
   if (!tx) {
-    return { eligible: false, code: "NOT_FOUND", reason: "Không tìm thấy giao dịch" };
+    return {
+      eligible: false,
+      code: "NOT_FOUND",
+      reason: "Không tìm thấy giao dịch",
+      funding_source: null,
+      refund_amount: 0,
+    };
   }
-  if (tx.transaction_type !== "TRANSFER") {
+
+  const isPostpaid = Boolean(postpaidSummary);
+  const fundingSource =
+    tx.transaction_type === "PAYMENT"
+      ? isPostpaid
+        ? "POSTPAID"
+        : tx.linked_bank_account_id
+          ? "BANK"
+          : "MAIN_WALLET"
+      : null;
+  const originalAmount = Number(tx.amount || 0);
+  const refundedAmount = isPostpaid
+    ? Number(postpaidSummary.refunded_total || 0)
+    : 0;
+  const refundAmount =
+    tx.transaction_type === "PAYMENT"
+      ? isPostpaid
+        ? Math.max(0, originalAmount - refundedAmount)
+        : originalAmount
+      : 0;
+
+  if (tx.transaction_type !== "PAYMENT") {
     return {
       eligible: false,
       code: "REVERSAL_UNSUPPORTED_TYPE",
-      reason: "Chỉ hỗ trợ hoàn tiền cho giao dịch chuyển tiền P2P (TRANSFER)",
+      reason: "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán Merchant (PAYMENT)",
+      funding_source: null,
+      refund_amount: 0,
     };
   }
   if (tx.status !== "SUCCESS") {
@@ -94,20 +141,8 @@ function evaluateReversalEligibility({ tx, alreadyReversed, reversalInfo }) {
       eligible: false,
       code: "REVERSAL_TX_NOT_SUCCESS",
       reason: "Chỉ được hoàn tiền giao dịch ở trạng thái Thành công (SUCCESS)",
-    };
-  }
-  if (tx.linked_bank_account_id) {
-    return {
-      eligible: false,
-      code: "REVERSAL_BANK_LINKED_NOT_ALLOWED",
-      reason: "Không hỗ trợ hoàn tiền giao dịch có liên kết tài khoản ngân hàng",
-    };
-  }
-  if (Number(tx.merchant_fee || 0) > 0) {
-    return {
-      eligible: false,
-      code: "REVERSAL_MERCHANT_FEE_NOT_ALLOWED",
-      reason: "Không hỗ trợ hoàn tiền giao dịch phát sinh phí Merchant",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
     };
   }
   if (
@@ -118,6 +153,8 @@ function evaluateReversalEligibility({ tx, alreadyReversed, reversalInfo }) {
       eligible: false,
       code: "REVERSAL_CANNOT_REVERSE_REVERSAL",
       reason: "Không thể hoàn tiền đối với giao dịch bù trừ hoàn tiền",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
     };
   }
   if (alreadyReversed || reversalInfo?.direction === "ORIGINAL_REVERSED") {
@@ -125,52 +162,95 @@ function evaluateReversalEligibility({ tx, alreadyReversed, reversalInfo }) {
       eligible: false,
       code: "TRANSACTION_ALREADY_REVERSED",
       reason: "Giao dịch này đã được hoàn tiền trước đó",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
     };
   }
+  if (!tx.destination_user_id) {
+    return {
+      eligible: false,
+      code: "REVERSAL_INVALID_WALLETS",
+      reason: "Giao dịch thanh toán không có tài khoản cửa hàng Merchant nhận tiền hợp lệ",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
+    };
+  }
+  if (tx.destination_user_role !== "MERCHANT") {
+    return {
+      eligible: false,
+      code: "REVERSAL_MERCHANT_ONLY",
+      reason: "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán tại cửa hàng Merchant",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
+    };
+  }
+
+  const realBuyerId = isPostpaid
+    ? postpaidSummary.buyer_user_id
+    : tx.source_user_id;
+  const realBuyerRole = isPostpaid
+    ? postpaidSummary.buyer_user_role
+    : tx.source_user_role;
+  const realBuyerStatus = isPostpaid
+    ? postpaidSummary.buyer_user_status
+    : tx.source_user_status;
+
   if (
-    !tx.source_user_id ||
-    !tx.destination_user_id ||
-    String(tx.source_user_id) === String(tx.destination_user_id)
+    !realBuyerId ||
+    String(realBuyerId) === String(tx.destination_user_id) ||
+    realBuyerRole === "SYSTEM"
   ) {
     return {
       eligible: false,
       code: "REVERSAL_INVALID_WALLETS",
-      reason: "Giao dịch không có cặp ví nguồn và ví đích hợp lệ khác nhau",
+      reason: "Giao dịch không có cặp tài khoản khách hàng và cửa hàng Merchant hợp lệ khác nhau",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
     };
   }
-  if (
-    (tx.source_user_role && tx.source_user_role !== "USER") ||
-    (tx.destination_user_role && tx.destination_user_role !== "USER")
-  ) {
+  if (isPostpaid && refundAmount <= 0) {
     return {
       eligible: false,
-      code: "REVERSAL_USER_WALLETS_ONLY",
-      reason: "Chỉ hỗ trợ hoàn tiền giao dịch P2P giữa hai tài khoản người dùng (USER)",
+      code: "POSTPAID_ALREADY_FULLY_REFUNDED",
+      reason: "Giao dịch Ví trả sau này đã được hoàn đủ trước đó",
+      funding_source: fundingSource,
+      refund_amount: 0,
     };
   }
   if (
-    (tx.source_user_status && tx.source_user_status !== "ACTIVE") ||
+    (realBuyerStatus && realBuyerStatus !== "ACTIVE") ||
     (tx.destination_user_status && tx.destination_user_status !== "ACTIVE")
   ) {
     return {
       eligible: false,
       code: "REVERSAL_ACCOUNT_NOT_ACTIVE",
       reason:
-        "Cả ví người gửi cũ và ví người nhận cũ đều phải đang ở trạng thái hoạt động (ACTIVE)",
+        "Cả tài khoản khách hàng và ví Merchant đều phải đang ở trạng thái hoạt động (ACTIVE)",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
     };
   }
   if (
     tx.destination_user_balance !== undefined &&
     tx.destination_user_balance !== null &&
-    Number(tx.destination_user_balance) < Number(tx.amount || 0)
+    Number(tx.destination_user_balance) < refundAmount
   ) {
     return {
       eligible: false,
       code: "REVERSAL_INSUFFICIENT_BALANCE",
-      reason: "Ví người nhận cũ hiện không đủ số dư để thực hiện hoàn tiền toàn bộ",
+      reason:
+        "Ví Merchant hiện không đủ số dư để thực hiện hoàn tiền 100% giá trị giao dịch",
+      funding_source: fundingSource,
+      refund_amount: refundAmount,
     };
   }
-  return { eligible: true, code: null, reason: null };
+  return {
+    eligible: true,
+    code: null,
+    reason: null,
+    funding_source: fundingSource,
+    refund_amount: refundAmount,
+  };
 }
 
 const VALID_TRANSACTION_TYPES = [
@@ -724,14 +804,18 @@ const adminTransactionService = {
       };
     }
 
+    const alreadyReversed = Boolean(t.reversal_audit_id);
     const reversalEligibility = evaluateReversalEligibility({
       tx: t,
-      alreadyReversed: Boolean(t.reversal_audit_id),
+      alreadyReversed,
       reversalInfo,
+      postpaidSummary,
     });
     const postpaidRefund = evaluatePostpaidRefundEligibility({
       tx: t,
       postpaidSummary,
+      alreadyReversed,
+      reversalEligibility,
     });
 
     // Phân tích integrity_checks và anomalies

@@ -18,7 +18,6 @@ router.post(
   "/:id/disputes/:disputeId/events",
   adminTransactionController.appendDisputeEvent
 );
-router.post("/:id/postpaid-refund", adminTransactionController.refundPostpaid);
 router.post("/:id/reverse", adminTransactionController.reverseTransaction);
 
 module.exports = router;

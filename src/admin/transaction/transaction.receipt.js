@@ -257,7 +257,7 @@ async function buildTransactionReceiptPdf({
     if (detail.reversal_info) {
       drawKeyValueRow(
         doc,
-        "Liên kết hoàn tiền P2P",
+        "Liên kết hoàn tiền Merchant",
         detail.reversal_info.direction === "IS_REVERSAL"
           ? `Giao dịch bù trừ cho GD gốc ${detail.reversal_info.original_transaction_id}`
           : `Đã hoàn toàn bộ qua GD ${detail.reversal_info.reversal_transaction_id}`,

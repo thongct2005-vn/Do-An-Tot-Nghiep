@@ -646,24 +646,52 @@ const merchantTransactionRepository = {
 
     const dailyResult = await pool.query(
       `
+      WITH base_tx AS (
+        SELECT
+          t.id,
+          t.created_at,
+          t.amount::bigint AS amount,
+          COALESCE(t.merchant_fee, 0)::bigint AS merchant_fee,
+          LEAST(
+            t.amount,
+            GREATEST(
+              COALESCE((
+                SELECT SUM(pe.amount)::bigint
+                FROM postpaid_entries pe
+                WHERE pe.ref_tx_id = t.id::text
+                  AND pe.action = 'REFUND'
+              ), 0),
+              COALESCE((
+                SELECT MAX((r.new_values->>'amount')::bigint)
+                FROM admin_user_change_history r
+                WHERE r.action = 'ADMIN_OP_REVERSAL'
+                  AND (r.new_values->>'original_transaction_id') = t.id::text
+              ), 0)
+            )
+          )::bigint AS refunded_amount
+        FROM transactions t
+        WHERE t.destination_user_id = $1
+          AND t.transaction_type = 'PAYMENT'
+          AND t.status = 'SUCCESS'
+          AND (
+            $2::boolean = false
+            OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+          )
+          AND (
+            $4::boolean = false
+            OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+          )
+      )
       SELECT
-        TO_CHAR(t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date_str,
-        COALESCE(SUM(t.amount - COALESCE(t.merchant_fee, 0)), 0) AS revenue,
-        COALESCE(SUM(t.amount), 0) AS gross_revenue,
-        COALESCE(SUM(COALESCE(t.merchant_fee, 0)), 0) AS merchant_fee,
-        COUNT(t.id) AS order_count
-      FROM transactions t
-      WHERE t.destination_user_id = $1
-        AND t.transaction_type = 'PAYMENT'
-        AND t.status = 'SUCCESS'
-        AND (
-          $2::boolean = false
-          OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
-        )
-        AND (
-          $4::boolean = false
-          OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        )
+        TO_CHAR(b.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date_str,
+        COALESCE(SUM(b.amount - b.merchant_fee - b.refunded_amount), 0)::bigint AS revenue,
+        COALESCE(SUM(GREATEST(0, b.amount - b.refunded_amount)), 0)::bigint AS gross_revenue,
+        COALESCE(SUM(b.merchant_fee), 0)::bigint AS merchant_fee,
+        COUNT(*) FILTER (WHERE b.refunded_amount = 0)::int AS order_count,
+        COUNT(*) FILTER (WHERE b.refunded_amount > 0)::int AS refunded_count,
+        COALESCE(SUM(b.refunded_amount), 0)::bigint AS refunded_amount,
+        COALESCE(SUM(CASE WHEN b.refunded_amount > 0 THEN b.merchant_fee ELSE 0 END), 0)::bigint AS refunded_merchant_fee
+      FROM base_tx b
       GROUP BY date_str
       ORDER BY date_str ASC
       `,
@@ -674,60 +702,43 @@ const merchantTransactionRepository = {
   },
 
   async getMerchantStats(userId, { startDate = null, endDate = null } = {}) {
-    const hasStartDate = Boolean(startDate);
-    const hasEndDate = Boolean(endDate);
+    const dailyRows = await this.getDailyRevenueStats(userId, {
+      startDate,
+      endDate,
+    });
 
-    const [result, dailyRows] = await Promise.all([
-      pool.query(
-        `
-      SELECT
-        -- Tổng doanh thu thực nhận sau phí: PAYMENT thành công mà merchant là bên nhận
-        COALESCE(SUM(CASE 
-          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
-          THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE 0 
-        END), 0) AS total_revenue,
+    let totalRevenue = 0;
+    let grossRevenue = 0;
+    let totalMerchantFee = 0;
+    let totalOrders = 0;
+    let refundedCount = 0;
+    let refundedAmount = 0;
+    let refundedMerchantFee = 0;
 
-        -- Tổng doanh thu gộp trước phí (tổng tiền khách thanh toán)
-        COALESCE(SUM(CASE 
-          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
-          THEN t.amount ELSE 0 
-        END), 0) AS gross_revenue,
+    for (const r of dailyRows) {
+      totalRevenue += Number(r.revenue || 0);
+      grossRevenue += Number(r.gross_revenue || 0);
+      totalMerchantFee += Number(r.merchant_fee || 0);
+      totalOrders += Number(r.order_count || 0);
+      refundedCount += Number(r.refunded_count || 0);
+      refundedAmount += Number(r.refunded_amount || 0);
+      refundedMerchantFee += Number(r.refunded_merchant_fee || 0);
+    }
 
-        -- Tổng phí giao dịch đã khấu trừ của merchant
-        COALESCE(SUM(CASE 
-          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
-          THEN COALESCE(t.merchant_fee, 0) ELSE 0 
-        END), 0) AS total_merchant_fee,
-        
-        -- Tổng số đơn hàng thành công
-        COUNT(CASE 
-          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
-          THEN 1 ELSE NULL 
-        END) AS total_orders,
-
-        -- Giá trị thực nhận trung bình mỗi đơn
-        COALESCE(AVG(CASE 
-          WHEN t.transaction_type = 'PAYMENT' AND t.destination_user_id = $1 AND t.status = 'SUCCESS' 
-          THEN (t.amount - COALESCE(t.merchant_fee, 0)) ELSE NULL 
-        END), 0) AS avg_order_value
-      FROM transactions t
-      WHERE (t.source_user_id = $1 OR (t.destination_user_id = $1 AND t.status <> 'FAILED'))
-        AND (
-          $2::boolean = false
-          OR t.created_at >= (($3::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
-        )
-        AND (
-          $4::boolean = false
-          OR t.created_at < ((($5::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        )
-      `,
-        [userId, hasStartDate, startDate, hasEndDate, endDate],
-      ),
-      this.getDailyRevenueStats(userId, { startDate, endDate }),
-    ]);
+    const avgOrderValue =
+      totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
 
     return {
-      summary: result.rows[0],
+      summary: {
+        total_revenue: totalRevenue,
+        gross_revenue: grossRevenue,
+        total_merchant_fee: totalMerchantFee,
+        total_orders: totalOrders,
+        avg_order_value: avgOrderValue,
+        refunded_count: refundedCount,
+        refunded_amount: refundedAmount,
+        refunded_merchant_fee: refundedMerchantFee,
+      },
       daily_stats: dailyRows,
     };
   },

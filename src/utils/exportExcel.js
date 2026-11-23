@@ -322,6 +322,9 @@ async function buildRevenueStatsXlsx({
 
   const totalRevenue = num(summary.total_revenue);
   const totalFee = num(summary.total_merchant_fee);
+  const refundedCount = num(summary.refunded_count);
+  const refundedAmount = num(summary.refunded_amount);
+  const refundedFee = num(summary.refunded_merchant_fee);
   const totalGross =
     summary.gross_revenue !== undefined && summary.gross_revenue !== null
       ? num(summary.gross_revenue)
@@ -336,9 +339,14 @@ async function buildRevenueStatsXlsx({
           ? `Đến ${formatDay(endDate)}`
           : "Tất cả thời gian";
 
+  const refundSubtitle =
+    refundedAmount > 0 || refundedCount > 0
+      ? ` • Hoàn tiền: -${refundedAmount.toLocaleString("vi-VN")} VND (${refundedCount.toLocaleString("vi-VN")} đơn)`
+      : "";
+
   styleReportHeader(sheet, {
     title: "BÁO CÁO THỐNG KÊ DOANH THU",
-    subtitle: `${rangeText} • Thực nhận: ${totalRevenue.toLocaleString("vi-VN")} VND • Phí CK: ${totalFee.toLocaleString("vi-VN")} VND • Số đơn: ${num(summary.total_orders).toLocaleString("vi-VN")} • Xuất lúc ${formatVnNow()}`,
+    subtitle: `${rangeText} • Thực nhận: ${totalRevenue.toLocaleString("vi-VN")} VND • Phí CK: ${totalFee.toLocaleString("vi-VN")} VND • Số đơn: ${num(summary.total_orders).toLocaleString("vi-VN")}${refundSubtitle} • Xuất lúc ${formatVnNow()}`,
     columns,
   });
 
@@ -392,6 +400,21 @@ async function buildRevenueStatsXlsx({
   totalRow.getCell(5).alignment = { vertical: "middle", horizontal: "right" };
   totalRow.getCell(6).numFmt = MONEY_FMT;
   totalRow.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
+
+  const noteRowIdx = headerRowIdx + 2 + dailyStats.length;
+  const noteRow = sheet.getRow(noteRowIdx);
+  sheet.mergeCells(noteRowIdx, 5, noteRowIdx, 6);
+  const noteText =
+    refundedAmount > 0 || refundedCount > 0
+      ? `Ghi chú hoàn tiền: Đã trừ ${refundedAmount.toLocaleString("vi-VN")} VND (${refundedCount.toLocaleString("vi-VN")} đơn hoàn) khỏi Tổng doanh thu thực nhận; tổng phí chiết khấu không hoàn lại: ${refundedFee.toLocaleString("vi-VN")} VND`
+      : "Ghi chú hoàn tiền: Đã trừ 0 VND (0 đơn hoàn); tổng phí chiết khấu không hoàn lại: 0 VND";
+  noteRow.getCell(1).value = "Chi tiết hoàn tiền & phí:";
+  noteRow.getCell(1).font = { italic: true, size: 10, color: { argb: "FF475569" } };
+  noteRow.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
+  noteRow.getCell(5).value = noteText;
+  noteRow.getCell(5).font = { italic: true, size: 10, color: { argb: "FF9F1239" } };
+  noteRow.getCell(5).alignment = { vertical: "middle", horizontal: "right", wrapText: true };
+  noteRow.height = 36;
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

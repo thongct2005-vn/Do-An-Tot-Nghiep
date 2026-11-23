@@ -632,25 +632,43 @@ const TransactionRepository = {
   },
 
   /**
-   * Thực thi giao dịch bù trừ hoàn tiền P2P (`TRANSFER` từ người nhận cũ B -> người gửi cũ A)
+   * Thực thi giao dịch bù trừ hoàn tiền thanh toán Merchant (`TRANSFER` từ ví MERCHANT -> Ví chính khách hàng)
    * bên trong PostgreSQL transaction do caller quản lý (đã giữ khóa `FOR UPDATE` trên hai ví).
-   * - Không tính lại `user_fee` hay `merchant_fee` (luôn = 0).
-   * - Miễn kiểm tra hạn mức chi trong ngày cho ví bị trừ B.
-   * - Kiểm tra số dư khả dụng của B >= amount (không cho phép âm số dư) và sức chứa ví nhận A.
+   * - Không tính lại `user_fee` hay `merchant_fee` (luôn = 0) và giữ nguyên `SYSTEM_FEE_WALLET`.
+   * - Miễn kiểm tra hạn mức chi trong ngày cho ví Merchant.
+   * - Kiểm tra số dư khả dụng của Merchant >= amount (không cho phép âm số dư) và sức chứa ví khách hàng.
    */
-  async executeReversalTransfer(
+  async executeMerchantPaymentReversal(
     client,
     {
-      sourceUser,
-      destUser,
+      merchantUser,
+      customerUser,
       amount,
       originalTransactionId,
+      originalTransactionType = "PAYMENT",
+      originalFundingSource = "MAIN_WALLET",
       idempotencyKey,
       description,
     },
   ) {
     if (!client || typeof client.query !== "function") {
       throw httpError(500, "Thiếu kết nối transaction để hoàn tiền");
+    }
+
+    if (originalTransactionType !== "PAYMENT") {
+      throw httpError(
+        422,
+        "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán Merchant (PAYMENT)",
+      );
+    }
+    if (
+      originalFundingSource !== "MAIN_WALLET" &&
+      originalFundingSource !== "BANK"
+    ) {
+      throw httpError(
+        422,
+        "Nguồn thanh toán gốc không hợp lệ cho luồng hoàn tiền về Ví chính",
+      );
     }
 
     const amountNum = Number(amount);
@@ -663,27 +681,36 @@ const TransactionRepository = {
     if (!idempotencyKey) {
       throw httpError(400, "Thiếu Idempotency-Key cho giao dịch hoàn tiền");
     }
-    if (!sourceUser?.id || !destUser?.id) {
-      throw httpError(404, "Không tìm thấy thông tin ví nguồn hoặc ví đích");
-    }
-    if (String(sourceUser.id) === String(destUser.id)) {
-      throw httpError(422, "Không thể hoàn tiền giao dịch tự chuyển cùng ví");
-    }
-    if (sourceUser.role !== "USER" || destUser.role !== "USER") {
+    if (!merchantUser?.id || !customerUser?.id) {
       throw httpError(
-        422,
-        "Chỉ hỗ trợ hoàn tiền giao dịch P2P giữa hai tài khoản USER",
+        404,
+        "Không tìm thấy thông tin tài khoản khách hàng hoặc cửa hàng Merchant",
       );
     }
-    if (sourceUser.status !== "ACTIVE" || destUser.status !== "ACTIVE") {
+    if (String(merchantUser.id) === String(customerUser.id)) {
+      throw httpError(422, "Không thể hoàn tiền giao dịch tự chuyển cùng ví");
+    }
+    if (merchantUser.role !== "MERCHANT") {
+      throw httpError(
+        422,
+        "Chỉ hỗ trợ hoàn tiền cho giao dịch thanh toán tại cửa hàng Merchant",
+      );
+    }
+    if (customerUser.role === "SYSTEM") {
+      throw httpError(422, "Không thể hoàn tiền về tài khoản hệ thống");
+    }
+    if (
+      merchantUser.status !== "ACTIVE" ||
+      customerUser.status !== "ACTIVE"
+    ) {
       throw httpError(
         403,
-        "Cả tài khoản bị trừ hoàn và tài khoản nhận hoàn phải đang ở trạng thái ACTIVE",
+        "Cả tài khoản khách hàng và ví Merchant đều phải đang ở trạng thái ACTIVE",
       );
     }
 
-    const sourceBalanceBefore = Number(sourceUser.balance);
-    const destBalanceBefore = Number(destUser.balance);
+    const sourceBalanceBefore = Number(merchantUser.balance);
+    const destBalanceBefore = Number(customerUser.balance);
     if (
       !Number.isFinite(sourceBalanceBefore) ||
       !Number.isFinite(destBalanceBefore)
@@ -693,15 +720,15 @@ const TransactionRepository = {
     if (sourceBalanceBefore < amountNum) {
       const err = httpError(
         422,
-        "Số dư ví người nhận cũ không đủ để thực hiện hoàn tiền toàn bộ",
+        "Ví Merchant hiện không đủ số dư để thực hiện hoàn tiền 100% giá trị giao dịch",
       );
       err.code = "INSUFFICIENT_BALANCE_FOR_REVERSAL";
       throw err;
     }
 
     await assertWalletCapacity(client, {
-      userId: destUser.id,
-      role: destUser.role,
+      userId: customerUser.id,
+      role: customerUser.role,
       currentBalance: destBalanceBefore,
       inboundAmount: amountNum,
       isRecipient: true,
@@ -719,23 +746,24 @@ const TransactionRepository = {
 
     await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
       sourceBalanceAfter,
-      sourceUser.id,
+      merchantUser.id,
     ]);
     await client.query(`UPDATE users SET balance = $1 WHERE id = $2`, [
       destBalanceAfter,
-      destUser.id,
+      customerUser.id,
     ]);
 
     const txFeeRateSnapshot = {
       operation_type: "REVERSAL",
       reversal_of_transaction_id: String(originalTransactionId),
       exempt_reason: "ADMIN_REVERSAL",
+      original_funding_source: originalFundingSource,
     };
 
     const resolvedDescription =
       description && String(description).trim()
         ? String(description).trim()
-        : `Hoàn tiền giao dịch ${originalTransactionId}`;
+        : `Hoàn tiền thanh toán Merchant cho giao dịch ${originalTransactionId}`;
 
     const insertResult = await client.query(
       `INSERT INTO transactions (
@@ -747,10 +775,10 @@ const TransactionRepository = {
       VALUES ('TRANSFER', $1, $2, $3, $4, $5, $6, $7, 0, 0, $8::jsonb, $9, $10, 'SUCCESS', NULL)
       RETURNING id, status, created_at`,
       [
-        sourceUser.id,
+        merchantUser.id,
         sourceBalanceBefore,
         sourceBalanceAfter,
-        destUser.id,
+        customerUser.id,
         destBalanceBefore,
         destBalanceAfter,
         amountNum,
@@ -768,9 +796,10 @@ const TransactionRepository = {
         transaction_id: createdTxId,
         original_transaction_id: String(originalTransactionId),
         transaction_type: "TRANSFER",
+        original_funding_source: originalFundingSource,
         status: insertResult.rows[0]?.status || "SUCCESS",
-        source_user_id: sourceUser.id,
-        destination_user_id: destUser.id,
+        source_user_id: merchantUser.id,
+        destination_user_id: customerUser.id,
         amount: amountNum,
         fee: 0,
         merchant_fee: 0,
@@ -786,6 +815,7 @@ const TransactionRepository = {
 
     return {
       transactionId: createdTxId,
+      excessTransactionId: null,
       status: insertResult.rows[0]?.status || "SUCCESS",
       createdAt: insertResult.rows[0]?.created_at,
       amount: amountNum,
@@ -793,11 +823,17 @@ const TransactionRepository = {
       merchantFee: 0,
       netAmount: amountNum,
       feeRateSnapshot: txFeeRateSnapshot,
+      originalFundingSource,
+      creditedToPostpaid: 0,
+      creditedToMainWallet: amountNum,
+      postpaidStatus: null,
+      usedAmountAfter: null,
+      billedAmountAfter: null,
       description: resolvedDescription,
-      sourceUserId: sourceUser.id,
-      sourceUserName: sourceUser.full_name,
-      destinationId: destUser.id,
-      destinationUserName: destUser.full_name,
+      sourceUserId: merchantUser.id,
+      sourceUserName: merchantUser.full_name,
+      destinationId: customerUser.id,
+      destinationUserName: customerUser.full_name,
       sourceBalanceBefore,
       sourceBalanceAfter,
       destBalanceBefore,

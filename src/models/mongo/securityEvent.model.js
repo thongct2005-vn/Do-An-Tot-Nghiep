@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
-const { maskPhone } = require("../../utils/mask");
-const { warnMongoAudit } = require("../../utils/mongoAuditWarning");
+const { maskPhone } = require("../../utils/common/text");
+const { warnMongoAudit } = require("../../utils/db/audit");
 
 const thresholdSchema = new mongoose.Schema(
   {

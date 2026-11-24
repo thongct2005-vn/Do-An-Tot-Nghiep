@@ -10,7 +10,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     label: "1–4 ngày",
     minDays: 1,
     maxDays: 4,
-    defaultBps: 525,
+    defaultBps: 500,
     limitReductionPercent: 0,
   }),
   Object.freeze({
@@ -19,7 +19,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     label: "5–9 ngày",
     minDays: 5,
     maxDays: 9,
-    defaultBps: 1050,
+    defaultBps: 1000,
     limitReductionPercent: 25,
   }),
   Object.freeze({
@@ -28,7 +28,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     label: "10–13 ngày",
     minDays: 10,
     maxDays: 13,
-    defaultBps: 1575,
+    defaultBps: 1500,
     limitReductionPercent: 40,
   }),
   Object.freeze({
@@ -37,7 +37,7 @@ const POSTPAID_LATE_FEE_TIERS = Object.freeze([
     label: "Từ 14 ngày trở lên",
     minDays: 14,
     maxDays: null,
-    defaultBps: 2100,
+    defaultBps: 2000,
     limitReductionPercent: 50,
   }),
 ]);

@@ -30,26 +30,31 @@ const POSTPAID_SYSTEM_CONFIG_KEYS = Object.freeze({
 const STATUS_CATALOG_LABEL = "danh mục trạng thái Ví trả sau";
 const ACTION_CATALOG_LABEL = "danh mục loại biến động Ví trả sau";
 
+// Lấy id ví trả sau hệ thống
 function assertSystemPostpaidWalletConfigured() {
   return resolveSystemPostpaidWalletId();
 }
 
+// Kiểm tra ví trả sau hệ thống
 function assertValidSystemPostpaidWalletRow(wallet) {
   return assertValidSystemWalletRow(wallet, buildSystemPostpaidWalletSpec());
 }
 
+// Định dạng ngày đến hạn
 function buildDueDateStr(year, month, dueDay) {
   const clampedDay = Math.min(28, Math.max(1, Number(dueDay) || 5));
   const pad2 = (n) => String(n).padStart(2, "0");
   return `${year}-${pad2(month)}-${pad2(clampedDay)}`;
 }
 
+// Định dạng chu kỳ tháng
 function formatCycleMonthDisplay(cycleMonth) {
   const raw = String(cycleMonth || "").trim();
   const match = /^(\d{4})-(\d{2})$/.exec(raw);
   return match ? `${match[2]}/${match[1]}` : raw;
 }
 
+// Chuyển đổi sang định dạng ngày tháng YYYY-MM-DD
 function toYmdStr(val) {
   if (!val) return null;
   if (typeof val === "string") {
@@ -71,6 +76,7 @@ function toYmdStr(val) {
   return null;
 }
 
+// Tính số ngày chênh lệch giữa 2 mốc thời gian
 function diffDaysYmd(laterVal, earlierVal) {
   const laterYmd = toYmdStr(laterVal);
   const earlierYmd = toYmdStr(earlierVal);
@@ -226,6 +232,7 @@ function normalizePostpaidCatalog(raw, categoryLabel) {
   };
 }
 
+// Lấy cấu hình hệ thống theo key trong db
 function requireCatalogCode(codes, key, categoryLabel) {
   if (!codes || !Object.prototype.hasOwnProperty.call(codes, key)) {
     throw httpError(500, `Hệ thống chưa thiết lập đầy đủ ${categoryLabel}`);

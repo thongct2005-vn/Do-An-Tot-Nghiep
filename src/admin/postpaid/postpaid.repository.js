@@ -606,6 +606,7 @@ const adminPostpaidRepository = {
     try {
       await client.query("BEGIN");
 
+      // --- BƯỚC 1: Khóa hồ sơ yêu cầu mở khóa (FOR UPDATE) để tránh 2 admin duyệt trùng cùng lúc ---
       const reqRes = await client.query(
         `SELECT * FROM postpaid_unlock_requests WHERE id = $1::uuid FOR UPDATE`,
         [requestId]
@@ -614,10 +615,12 @@ const adminPostpaidRepository = {
       if (!reqRow) {
         throw httpError(404, "Không tìm thấy hồ sơ yêu cầu mở khóa");
       }
+      // Chỉ cho phép duyệt hồ sơ đang chờ xử lý (PENDING)
       if (reqRow.status !== "PENDING") {
         throw httpError(409, "Hồ sơ yêu cầu mở khóa này đã được xử lý trước đó");
       }
 
+      // --- BƯỚC 2: Khóa ví trả sau của user và xác nhận đủ điều kiện mở khóa ---
       const pwRes = await client.query(
         `SELECT * FROM postpaid_wallets WHERE user_id = $1::uuid FOR UPDATE`,
         [reqRow.user_id]
@@ -629,9 +632,11 @@ const adminPostpaidRepository = {
       if (pw.status === "ACTIVE") {
         throw httpError(409, "Ví trả sau đã được mở lại trước đó");
       }
+      // Luồng duyệt ảnh chứng minh thu nhập chỉ áp dụng cho ví đang khóa do quá hạn lặp lại (OVERDUE_REPEAT)
       if (pw.status !== "FROZEN" || pw.lock_reason !== "OVERDUE_REPEAT") {
         throw httpError(409, "Ví không còn ở trạng thái khóa OVERDUE_REPEAT");
       }
+      // Bắt buộc user đã tất toán hết nợ gốc sao kê, phí dịch vụ và phí trễ hạn trước khi mở lại
       if (
         Number(pw.billed_amount) > 0 ||
         Number(pw.service_fee_amount) > 0 ||
@@ -640,7 +645,9 @@ const adminPostpaidRepository = {
         throw httpError(422, "Ví vẫn còn dư nợ quá hạn chưa tất toán, chưa thể duyệt mở khóa");
       }
 
-      // Approve unlocks OVERDUE_REPEAT -> ACTIVE while keeping lowered credit_limit and overdue_count >= 2 unchanged
+      // --- BƯỚC 3: Mở khóa ví từ FROZEN (OVERDUE_REPEAT) -> ACTIVE ---
+      // Lưu ý: chỉ xóa lock_reason và mở trạng thái ACTIVE; giữ nguyên credit_limit (nếu đã bị giảm)
+      // và giữ nguyên overdue_count >= 2 để theo dõi lịch sử quá hạn của tài khoản
       await client.query(
         `UPDATE postpaid_wallets
             SET status = 'ACTIVE',
@@ -650,6 +657,7 @@ const adminPostpaidRepository = {
         [reqRow.user_id]
       );
 
+      // --- BƯỚC 4: Cập nhật hồ sơ yêu cầu mở khóa sang APPROVED kèm người duyệt & lý do ---
       await client.query(
         `UPDATE postpaid_unlock_requests
             SET status = 'APPROVED',
@@ -661,6 +669,7 @@ const adminPostpaidRepository = {
         [adminId, reason, requestId]
       );
 
+      // --- BƯỚC 5: Ghi log thay đổi vào bảng lịch sử quản trị viên và audit_outbox rồi commit ---
       const historyRow = await recordAdminHistoryAndOutboxTx(client, {
         adminId,
         userId: reqRow.user_id,

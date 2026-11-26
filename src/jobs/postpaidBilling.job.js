@@ -1,6 +1,6 @@
 const postpaidRepository = require("../modules/postpaid/postpaid.repository");
 
-const INTERVAL_MS = Number(process.env.POSTPAID_BILLING_POLL_MS) || 15 * 60 * 1000;
+const INTERVAL_MS = Number(process.env.POSTPAID_BILLING_POLL_MS);
 
 let timer = null;
 let running = false;

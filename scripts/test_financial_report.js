@@ -2,7 +2,7 @@
 const {spawn}=require('node:child_process');
 const fs=require('node:fs/promises');
 const path=require('node:path');
-const {createTestDatabase}=require('../tests/merchant_test_database');
+const {createTestDatabase}=require('../tests/admin/merchant_test_database');
 async function main(){
   const target=await createTestDatabase();
   const extended=process.argv.includes('--extended');
@@ -10,7 +10,7 @@ async function main(){
   if(extended) tests.push('merchant_fee_flow');
   try{
     let output='';
-    const child=spawn(process.execPath,['--test',...tests.map(t=>`tests/${t}.test.js`)],{cwd:path.join(__dirname,'..'),env:process.env,windowsHide:true});
+    const child=spawn(process.execPath,['--test',...tests.map(t=>`tests/admin/${t}.test.js`)],{cwd:path.join(__dirname,'..'),env:process.env,windowsHide:true});
     for(const stream of [child.stdout,child.stderr]) stream.on('data',buffer=>{output+=buffer.toString();process.stdout.write(buffer);});
     const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});
     await fs.mkdir(path.join(__dirname,'../docs/samples'),{recursive:true});

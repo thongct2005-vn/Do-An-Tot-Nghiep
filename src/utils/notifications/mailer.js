@@ -121,11 +121,11 @@ async function sendMerchantAccountCreatedEmail({ to, fullName, phone, tempPasswo
   const safeName = escapeHtmlText(fullName || "Đối tác Merchant");
   const safePhone = escapeHtmlText(phone || "");
   const safePassword = escapeHtmlText(tempPassword || "");
-  const subject = "[E-Wallet] Thông tin kích hoạt tài khoản Merchant";
+  const subject = "[LumaPay] Thông tin kích hoạt tài khoản Merchant";
   const text = [
     `Xin chào ${fullName || "Đối tác Merchant"},`,
     "",
-    "Tài khoản Merchant của bạn đã được khởi tạo trên hệ thống E-Wallet.",
+    "Tài khoản Merchant của bạn đã được khởi tạo trên hệ thống LumaPay.",
     `Số điện thoại đăng nhập: ${phone || ""}`,
     `Mật khẩu tạm thời: ${tempPassword || ""}`,
     "",
@@ -136,7 +136,7 @@ async function sendMerchantAccountCreatedEmail({ to, fullName, phone, tempPasswo
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1f2937;">
       <h2 style="color: #0f4c81; margin-bottom: 12px;">Thông tin kích hoạt tài khoản Merchant</h2>
       <p>Xin chào <strong>${safeName}</strong>,</p>
-      <p>Tài khoản Merchant của bạn đã được khởi tạo trên hệ thống E-Wallet.</p>
+      <p>Tài khoản Merchant của bạn đã được khởi tạo trên hệ thống LumaPay.</p>
       <div style="background: #f3f6fa; border: 1px solid #dbe3ec; border-radius: 8px; padding: 14px 16px; margin: 16px 0;">
         <p style="margin: 4px 0;"><strong>Số điện thoại đăng nhập:</strong> <code>${safePhone}</code></p>
         <p style="margin: 4px 0;"><strong>Mật khẩu tạm thời:</strong> <code>${safePassword}</code></p>
@@ -147,7 +147,7 @@ async function sendMerchantAccountCreatedEmail({ to, fullName, phone, tempPasswo
 
   try {
     await transporter.sendMail({
-      from: `"E-Wallet System" <${process.env.GMAIL_USER}>`,
+      from: `"LumaPay" <${process.env.GMAIL_USER}>`,
       to,
       subject,
       text,
@@ -183,33 +183,33 @@ async function sendUserAccountCreatedEmail({ to, fullName, phone, tempPassword }
   const safeName = escapeHtmlText(fullName || "Quý khách");
   const safePhone = escapeHtmlText(phone || "");
   const safePassword = escapeHtmlText(tempPassword || "");
-  const subject = "[E-Wallet] Thông tin kích hoạt tài khoản ví điện tử";
+  const subject = "[LumaPay] Thông tin kích hoạt tài khoản ví điện tử";
   const text = [
     `Xin chào ${fullName || "Quý khách"},`,
     "",
-    "Tài khoản ví điện tử E-Wallet của bạn đã được quản trị viên khởi tạo.",
+    "Tài khoản ví điện tử LumaPay của bạn đã được quản trị viên khởi tạo.",
     `Số điện thoại đăng nhập: ${phone || ""}`,
     `Mật khẩu tạm thời (6 chữ số): ${tempPassword || ""}`,
     "",
-    "Lưu ý bảo mật: Vui lòng mở ứng dụng E-Wallet, đăng nhập bằng số điện thoại và mật khẩu tạm thời ở trên.",
+    "Lưu ý bảo mật: Vui lòng mở ứng dụng LumaPay, đăng nhập bằng số điện thoại và mật khẩu tạm thời ở trên.",
     "Hệ thống bắt buộc bạn phải đổi sang mật khẩu 6 chữ số mới ngay trong lần đăng nhập đầu tiên trước khi sử dụng ví.",
   ].join("\n");
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1f2937;">
       <h2 style="color: #0f4c81; margin-bottom: 12px;">Thông tin kích hoạt tài khoản ví điện tử</h2>
       <p>Xin chào <strong>${safeName}</strong>,</p>
-      <p>Tài khoản ví điện tử E-Wallet của bạn đã được quản trị viên khởi tạo.</p>
+      <p>Tài khoản ví điện tử LumaPay của bạn đã được quản trị viên khởi tạo.</p>
       <div style="background: #f3f6fa; border: 1px solid #dbe3ec; border-radius: 8px; padding: 14px 16px; margin: 16px 0;">
         <p style="margin: 4px 0;"><strong>Số điện thoại đăng nhập:</strong> <code>${safePhone}</code></p>
         <p style="margin: 4px 0;"><strong>Mật khẩu tạm thời (6 chữ số):</strong> <code>${safePassword}</code></p>
       </div>
-      <p><strong>Lưu ý bắt buộc:</strong> Vui lòng đăng nhập trên ứng dụng E-Wallet bằng mật khẩu tạm thời này; hệ thống sẽ yêu cầu bạn đổi sang mật khẩu 6 chữ số mới và đăng nhập lại ngay ở lần đầu tiên.</p>
+      <p><strong>Lưu ý bắt buộc:</strong> Vui lòng đăng nhập trên ứng dụng LumaPay bằng mật khẩu tạm thời này; hệ thống sẽ yêu cầu bạn đổi sang mật khẩu 6 chữ số mới và đăng nhập lại ngay ở lần đầu tiên.</p>
     </div>
   `;
 
   try {
     await transporter.sendMail({
-      from: `"E-Wallet System" <${process.env.GMAIL_USER}>`,
+      from: `"LumaPay" <${process.env.GMAIL_USER}>`,
       to,
       subject,
       text,

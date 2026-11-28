@@ -46,6 +46,7 @@ const adminTransactionRoutes = require("../admin/transaction/transaction.routes"
 const adminMerchantsRoutes = require("../admin/merchants/merchants.routes");
 const adminSystemConfigRoutes = require("../admin/systemConfig/systemConfig.routes");
 const adminPostpaidRoutes = require("../admin/postpaid/postpaid.routes");
+const adminAuditLogsRoutes = require("../admin/auditLogs/auditLogs.routes");
 
 router.use("/auth", authRoutes);
 router.use("/otp", otpRoutes);
@@ -67,6 +68,7 @@ router.use("/admin/merchants", adminMerchantsRoutes);
 router.use("/admin/system-configs", adminSystemConfigRoutes);
 router.use("/admin/postpaid", adminPostpaidRoutes);
 router.use("/admin/reports", require('../admin/reports/reports.routes'));
+router.use("/admin/audit-logs", adminAuditLogsRoutes);
 
 
 //MERCHANT PRODUCTION ROUTES

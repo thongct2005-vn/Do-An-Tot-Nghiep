@@ -4,7 +4,7 @@ const path=require('node:path');
 const {fork,execFileSync}=require('node:child_process');
 const {once}=require('node:events');
 const {randomUUID,createHash}=require('node:crypto');
-const {createTestDatabase}=require('../tests/merchant_test_database');
+const {createTestDatabase}=require('../tests/admin/merchant_test_database');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function main(){
   const root=path.resolve(__dirname,'..'),workspace=path.resolve(root,'..');

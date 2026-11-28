@@ -49,7 +49,7 @@ const { emitToUser } = require("../notifications/socket");
  *      + /otp/send-otp           : Điểm >= 55  (Chặn sớm nhất để chống cháy cước/bom OTP)
  *      + /auth/register, /forgot : Điểm >= 60  (Chặn bot cày acc rác, bot dính honeypot)
  *      + /transaction/transfer...: Điểm >= 65  (Bảo vệ giao dịch tiền tệ)
- *      + /auth/login             : Điểm >= 70  (Khoan dung hơn cho người gõ nhầm mật khẩu)
+ *      + /auth/login             : Điểm >= 70  (cho người gõ nhầm mật khẩu)
  *
  *    - THỬ THÁCH (CHALLENGE - bật cờ req.risk.challenge = true):
  *      Khi TỔNG ĐIỂM >= challenge (thường từ 30 - 40 điểm).

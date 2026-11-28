@@ -1,7 +1,7 @@
 const pool = require("../config/database");
 const postpaidRepository = require("../modules/postpaid/postpaid.repository");
 
-const INTERVAL_MS = Number(process.env.POSTPAID_REMINDER_POLL_MS) || 15 * 60 * 1000;
+const INTERVAL_MS = Number(process.env.POSTPAID_REMINDER_POLL_MS);
 const STARTUP_DELAY_MS = 5000;
 const DEFAULT_BATCH_SIZE = 500;
 const PUSH_CONCURRENCY = 15;

@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {randomUUID}=require('node:crypto');
-const {createTestDatabase}=require('../tests/merchant_test_database');
+const {createTestDatabase}=require('../tests/admin/merchant_test_database');
 async function main(){
   assert.equal(process.env.NODE_ENV,'test');
   const target=await createTestDatabase();

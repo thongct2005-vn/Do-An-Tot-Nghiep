@@ -967,6 +967,11 @@ const postpaidRepository = {
       // --- BƯỚC 8: Lưu giao dịch PAYMENT, hạch toán phí QR (nếu có), cộng doanh số tháng merchant & ghi sổ cái PURCHASE ---
       const description =
         paymentRequest.description || `Thanh toán QR ${referenceCode}`;
+      const purchaseFeeRateSnapshot = {
+        ...(merchantFeeDetails?.fee_rate_snapshot || {}),
+        funding_source: "POSTPAID",
+        postpaid_action: purchaseAction,
+      };
       const txInsertRes = await client.query(
         `INSERT INTO transactions (
            transaction_type,
@@ -987,7 +992,7 @@ const postpaidRepository = {
           destAfter,
           amountNum,
           merchantFeeNum,
-          serializeFeeRateSnapshot(merchantFeeDetails?.fee_rate_snapshot),
+          serializeFeeRateSnapshot(purchaseFeeRateSnapshot),
           description,
           idempotencyKey,
         ],

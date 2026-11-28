@@ -25,6 +25,7 @@ const {
   parseFilterParams,
   calculateIntegrityAndAnomalies,
   resolveAdminNetAmount,
+  resolveAdminFundingContext,
 } = require("./transaction.helpers");
 
 const adminTransactionService = {
@@ -93,9 +94,14 @@ const adminTransactionService = {
       const amount = Number(t.amount || 0);
       const fee = Number(t.fee || 0);
       const merchantFee = Number(t.merchant_fee || 0);
+      const { funding_source, postpaid_action, postpaid_leg, postpaid_buyer } =
+        resolveAdminFundingContext(t);
       return {
         id: String(t.id),
         transaction_type: t.transaction_type,
+        funding_source,
+        postpaid_action,
+        postpaid_leg,
         amount,
         fee,
         merchant_fee: merchantFee,
@@ -114,6 +120,7 @@ const adminTransactionService = {
             phone: t.source_user_phone || "",
           }
         : null,
+      postpaid_buyer,
       destination_user: t.destination_user_id
         ? {
             id: String(t.destination_user_id),
@@ -334,10 +341,16 @@ const adminTransactionService = {
     };
 
     const isConsistent = integrity_checks.overall_status === "OK";
+    const { funding_source, postpaid_action, postpaid_leg, postpaid_buyer } =
+      resolveAdminFundingContext(t, postpaidSummary);
 
     const baseData = {
       id: String(t.id),
       transaction_type: t.transaction_type,
+      funding_source,
+      postpaid_action,
+      postpaid_leg,
+      postpaid_buyer,
       status: t.status,
       amount,
       fee,

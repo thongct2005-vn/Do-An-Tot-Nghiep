@@ -25,6 +25,10 @@ const {
   executeWithAdminIdempotency,
 } = require("../shared/adminHelpers");
 const {
+  POSTPAID_REPAY_ACTIONS,
+  resolveAdminFundingContext,
+} = require("../transaction/transaction.helpers");
+const {
   MAX_ADMIN_AUTH_ATTEMPTS,
   ADMIN_LOCK_MINUTES,
   AUTH_REFERENCE_REGEX,
@@ -444,12 +448,70 @@ const adminUserService = {
         end_date: filterEndDate,
       },
       items: items.map((t) => {
-        const isOut = t.source_user_id === userId && t.transaction_type !== "TOPUP";
+        const { funding_source, postpaid_action, postpaid_leg, postpaid_buyer } =
+          resolveAdminFundingContext({
+            ...t,
+            source_user_name: t.source_name,
+            source_user_phone: t.source_phone,
+            destination_user_name: t.dest_name,
+            destination_user_phone: t.dest_phone,
+          });
+        const isDirectSource = t.source_user_id === userId;
+        const isDirectDest = t.destination_user_id === userId;
+        const isPostpaidProxyForUser = !isDirectSource && !isDirectDest;
+        const isPostpaidRepay =
+          funding_source === "POSTPAID" &&
+          postpaid_action != null &&
+          POSTPAID_REPAY_ACTIONS.has(postpaid_action);
+
+        const isOut = isPostpaidProxyForUser
+          ? postpaid_action !== "REFUND"
+          : isDirectSource && t.transaction_type !== "TOPUP";
         const amount = Number(t.amount || 0);
-        const merchantFee = !isOut ? Number(t.merchant_fee || 0) : 0;
+        const merchantFee =
+          !isOut && !isPostpaidProxyForUser ? Number(t.merchant_fee || 0) : 0;
+
+        let counterpartyName;
+        let counterpartyPhone;
+        if (isPostpaidProxyForUser) {
+          counterpartyName = isOut
+            ? t.dest_name || "Merchant"
+            : t.source_name || "Merchant";
+          counterpartyPhone = isOut ? t.dest_phone || "" : t.source_phone || "";
+        } else if (isPostpaidRepay && isDirectSource) {
+          counterpartyName = "Quỹ Ví trả sau";
+          counterpartyPhone = "";
+        } else if (
+          postpaid_buyer &&
+          ((!isOut &&
+            (t.source_name === "SYSTEM_POSTPAID_WALLET" ||
+              t.source_phone === "SYS_BNPL_1")) ||
+            (isOut &&
+              (t.dest_name === "SYSTEM_POSTPAID_WALLET" ||
+                t.dest_phone === "SYS_BNPL_1")))
+        ) {
+          counterpartyName = postpaid_buyer.full_name || "Chưa cập nhật";
+          counterpartyPhone = postpaid_buyer.phone || "";
+        } else {
+          counterpartyName = isOut
+            ? t.dest_name || t.bank_name || "Hệ thống"
+            : t.source_name || t.bank_name || "Hệ thống";
+          counterpartyPhone = isOut ? t.dest_phone || "" : t.source_phone || "";
+        }
+
+        const balanceBefore = isPostpaidProxyForUser
+          ? null
+          : Number(isOut ? t.source_balance_before : t.dest_balance_before || 0);
+        const balanceAfter = isPostpaidProxyForUser
+          ? null
+          : Number(isOut ? t.source_balance_after : t.dest_balance_after || 0);
+
         return {
           id: t.id,
           type: t.transaction_type,
+          funding_source,
+          postpaid_action,
+          postpaid_leg,
           direction: isOut ? "OUT" : "IN",
           amount,
           fee: Number(t.fee || 0),
@@ -457,19 +519,13 @@ const adminUserService = {
           net_amount: !isOut ? Math.max(0, amount - merchantFee) : amount,
           status: t.status,
           description: t.description,
-          counterparty_name: isOut
-            ? t.dest_name || t.bank_name || "Hệ thống"
-            : t.source_name || t.bank_name || "Hệ thống",
-          counterparty_phone: isOut ? t.dest_phone || "" : t.source_phone || "",
+          counterparty_name: counterpartyName,
+          counterparty_phone: counterpartyPhone,
           bank_name: t.bank_name || null,
           bank_account: t.bank_account || null,
           order_id: t.order_id || null,
-          balance_before: Number(
-            isOut ? t.source_balance_before : t.dest_balance_before || 0
-          ),
-          balance_after: Number(
-            isOut ? t.source_balance_after : t.dest_balance_after || 0
-          ),
+          balance_before: balanceBefore,
+          balance_after: balanceAfter,
           created_at: t.created_at,
         };
       }),

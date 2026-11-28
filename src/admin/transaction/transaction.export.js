@@ -1,4 +1,8 @@
 const ExcelJS = require("exceljs");
+const {
+  POSTPAID_REPAY_ACTIONS,
+  resolveAdminFundingContext,
+} = require("./transaction.helpers");
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const XLSX_MIME =
@@ -252,16 +256,28 @@ async function buildTransactionsAdminXlsx({
   rows.forEach((r, idx) => {
     const rowNum = 9 + idx;
     const excelRow = ws.getRow(rowNum);
+    const { funding_source, postpaid_action, postpaid_leg, postpaid_buyer } =
+      resolveAdminFundingContext(r);
 
     // Xử lý thông tin người gửi
     let sourceText = "";
-    if (r.source_user_name || r.source_user_phone) {
+    if (postpaid_action === "PURCHASE" && postpaid_buyer) {
+      const poolLabel = r.source_user_name || "SYSTEM_POSTPAID_WALLET";
+      sourceText = `${postpaid_buyer.full_name} (${postpaid_buyer.phone || "N/A"}) [Ví trả sau · Quỹ: ${poolLabel}]`;
+    } else if (r.source_user_name || r.source_user_phone) {
       sourceText = `${r.source_user_name || "Chưa cập nhật"} (${r.source_user_phone || "N/A"})`;
     }
 
     // Xử lý thông tin người nhận
     let destText = "";
-    if (r.destination_user_name || r.destination_user_phone) {
+    if (
+      postpaid_action === "REFUND" &&
+      postpaid_leg === "DEBT_RESTORATION" &&
+      postpaid_buyer
+    ) {
+      const poolLabel = r.destination_user_name || "SYSTEM_POSTPAID_WALLET";
+      destText = `${postpaid_buyer.full_name} (${postpaid_buyer.phone || "N/A"}) [Hoàn giảm nợ Ví trả sau · Quỹ: ${poolLabel}]`;
+    } else if (r.destination_user_name || r.destination_user_phone) {
       destText = `${r.destination_user_name || "Chưa cập nhật"} (${r.destination_user_phone || "N/A"})`;
     }
 
@@ -316,12 +332,20 @@ async function buildTransactionsAdminXlsx({
         ? Math.max(0, rowAmount - rowMerchantFee)
         : rowAmount;
 
-    const txTypeDisplay =
-      r.transaction_type === "REFUND"
+    const isPostpaidRefund =
+      funding_source === "POSTPAID" &&
+      (isReversalExportRow(r) || postpaid_action === "REFUND");
+    const txTypeDisplay = isPostpaidRefund
+      ? "Hoàn tiền thanh toán Merchant (Ví trả sau)"
+      : r.transaction_type === "REFUND"
         ? "Hoàn tiền thanh toán Merchant (REFUND)"
         : isReversalExportRow(r)
           ? "Hoàn tiền thanh toán Merchant (REVERSAL)"
-          : TYPE_LABEL[r.transaction_type] || r.transaction_type;
+          : funding_source === "POSTPAID" && POSTPAID_REPAY_ACTIONS.has(postpaid_action)
+            ? "Trả nợ Ví trả sau"
+            : funding_source === "POSTPAID" && r.transaction_type === "PAYMENT"
+              ? "Thanh toán QR (Ví trả sau)"
+              : TYPE_LABEL[r.transaction_type] || r.transaction_type;
 
     const cells = [
       idx + 1, // 1. STT

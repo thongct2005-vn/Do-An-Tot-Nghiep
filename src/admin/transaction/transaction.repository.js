@@ -15,6 +15,7 @@ const {
   resolveActiveDisputeIdFromEvents,
   hasNonEmpty,
   buildFilterConditions,
+  buildAdminPostpaidEntryLateralJoinSql,
   buildDirectCountQuery,
   canUseRollupCount,
 } = require("./transaction.queries");
@@ -156,7 +157,8 @@ const adminTransactionRepository = {
           t.description,
           t.created_at,
           t.source_user_id,
-          t.destination_user_id
+          t.destination_user_id,
+          t.linked_bank_account_id
         FROM transactions t
         ${filterJoins.join("\n        ")}
         WHERE ${whereClause}
@@ -210,6 +212,11 @@ const adminTransactionRepository = {
         p.destination_user_id,
         du.full_name AS destination_user_name,
         du.phone AS destination_user_phone,
+        p.linked_bank_account_id,
+        pp.action AS postpaid_entry_action,
+        pp.user_id AS postpaid_buyer_id,
+        pp.full_name AS postpaid_buyer_name,
+        pp.phone AS postpaid_buyer_phone,
         CASE
           WHEN pa.id IS NOT NULL THEN 'ADMIN'
           WHEN p.source_user_id IS NOT NULL THEN 'USER'
@@ -223,6 +230,7 @@ const adminTransactionRepository = {
       LEFT JOIN users du ON p.destination_user_id = du.id
       LEFT JOIN paged_audit pa ON pa.transaction_id = p.id::TEXT
       LEFT JOIN users au ON pa.admin_id = au.id
+      ${buildAdminPostpaidEntryLateralJoinSql("p")}
       ORDER BY p.created_at DESC, p.id DESC
     `;
 
@@ -320,7 +328,11 @@ const adminTransactionRepository = {
         rev.reversed_at,
         rev.reversal_admin_id,
         rev.reversal_admin_name,
-        rev.reversal_admin_email
+        rev.reversal_admin_email,
+        pp.action AS postpaid_entry_action,
+        pp.user_id AS postpaid_buyer_id,
+        pp.full_name AS postpaid_buyer_name,
+        pp.phone AS postpaid_buyer_phone
       FROM transactions t
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
@@ -329,6 +341,7 @@ const adminTransactionRepository = {
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       LEFT JOIN (${ADMIN_TX_AUDIT_MAP_SQL}) ach ON ach.transaction_id = t.id::TEXT
       LEFT JOIN users au ON ach.admin_id = au.id
+      ${buildAdminPostpaidEntryLateralJoinSql("t")}
       LEFT JOIN (
         SELECT DISTINCT ON (r.new_values->>'original_transaction_id')
           r.id AS reversal_audit_id,
@@ -414,7 +427,11 @@ const adminTransactionRepository = {
         ach.action AS admin_action,
         ach.reason AS admin_reason,
         ach.admin_auth_ref,
-        ach.admin_original_transaction_id
+        ach.admin_original_transaction_id,
+        pp.action AS postpaid_entry_action,
+        pp.user_id AS postpaid_buyer_id,
+        pp.full_name AS postpaid_buyer_name,
+        pp.phone AS postpaid_buyer_phone
       FROM transactions t
       LEFT JOIN users su ON t.source_user_id = su.id
       LEFT JOIN users du ON t.destination_user_id = du.id
@@ -423,6 +440,7 @@ const adminTransactionRepository = {
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
       LEFT JOIN (${ADMIN_TX_AUDIT_MAP_SQL}) ach ON ach.transaction_id = t.id::TEXT
       LEFT JOIN users au ON ach.admin_id = au.id
+      ${buildAdminPostpaidEntryLateralJoinSql("t")}
       WHERE ${whereClause}
       ORDER BY t.created_at DESC, t.id DESC
       LIMIT $${limitIdx}

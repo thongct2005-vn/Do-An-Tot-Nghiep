@@ -8,9 +8,16 @@ const {
 } = require("./webhook.helpers");
 
 const webhookRepository = {
+  /**
+   * Đẩy 1 sự kiện webhook (`payment.success` / `payment.failed`) vào hàng đợi `webhook_deliveries`
+   * ngay bên trong transaction DB hiện tại.
+   * - Chỉ tạo bản ghi khi đơn thanh toán thuộc Merchant (`u.role = 'MERCHANT'`).
+   * - Dùng `ON CONFLICT (payment_request_id, event_type) DO NOTHING` để chống đẩy trùng sự kiện.
+   */
   async enqueue(client, { paymentRequestId, eventType }) {
     const status = WEBHOOK_EVENT_STATUS[eventType];
     if (!status) throw new Error(`Sự kiện webhook không hợp lệ: ${eventType}`);
+    // Tạo payload chuẩn theo spec webhook gửi Merchant rồi chèn idempotent vào hàng đợi
     const result = await client.query(
       `INSERT INTO webhook_deliveries(id, payment_request_id, merchant_id, event_type, payload)
        SELECT $4:: uuid, pr.id, pr.destination_user_id, $2:: varchar,
@@ -33,6 +40,11 @@ const webhookRepository = {
     return result.rows[0]?.id ?? null;
   },
 
+  /**
+   * Chuyển các đơn QR động (`payment_requests`) quá hạn sang `FAILED` và xếp hàng gửi webhook `payment.failed`.
+   * - Khóa trước Merchant (`FOR UPDATE OF u SKIP LOCKED` theo thứ tự `u.id`) rồi mới khóa `payment_requests`
+   *   để giữ đúng thứ tự khóa tránh deadlock với luồng khách quét QR thanh toán.
+   */
   async expireDuePayments(db, { orderId = null, merchantId = null, limit = 500 } = {}) {
     const webhookIds = Array.from({ length: limit }, () => uuidv7());
     const result = await db.query(
@@ -87,6 +99,12 @@ const webhookRepository = {
     return result.rows[0]?.expired_count ?? 0;
   },
 
+  /**
+   * Bốc tối đa `limit` đơn webhook `PENDING` đã đến lịch gửi (`next_retry_at <= NOW()`).
+   * - Dùng `FOR UPDATE SKIP LOCKED` để nhiều lượt quét/worker không bốc trùng cùng 1 đơn.
+   * - Đẩy tạm `next_retry_at` lên `WEBHOOK_LEASE_SECONDS` (120s) trước khi COMMIT nhằm giữ chỗ
+   *   trong lúc gọi HTTP ra ngoài (nếu worker crash giữa chừng, sau 120s đơn sẽ tự được bốc lại).
+   */
   async claimDue(limit = 10) {
     const client = await pool.connect();
     try {
@@ -121,6 +139,9 @@ const webhookRepository = {
     }
   },
 
+  /**
+   * Cập nhật đơn webhook sang `SUCCESS` sau khi endpoint Merchant phản hồi thành công (HTTP 2xx).
+   */
   async markDelivered(id, httpStatus) {
     await pool.query(
       `UPDATE webhook_deliveries
@@ -131,6 +152,11 @@ const webhookRepository = {
     );
   },
 
+  /**
+   * Ghi nhận 1 lần gửi webhook thất bại và lên lịch retry theo `WEBHOOK_RETRY_DELAYS_SECONDS`.
+   * - Chưa vượt `maxAttempts`: giữ `PENDING` và hẹn `next_retry_at = NOW() + delay` giây.
+   * - Đã đủ `maxAttempts` (`exhausted = true`): chuyển hẳn `status = 'FAILED'`, ngừng gửi lại.
+   */
   async markAttemptFailed(id, { attemptCount, maxAttempts, httpStatus, error }) {
     const attemptsDone = attemptCount + 1;
     const exhausted = attemptsDone >= maxAttempts;

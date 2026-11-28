@@ -46,15 +46,7 @@ const initSocket = (server, corsOrigins = []) => {
     try {
       const decode = tokenUtil.verifyAccessToken(token);
       if (decode.type === "USER") {
-        const { rows } = await pool.query(
-          "SELECT refresh_token FROM users WHERE id = $1",
-          [decode.user_id],
-        );
-        const currentRefresh = rows[0]?.refresh_token;
-        const sessionOk =
-          !!currentRefresh &&
-          (decode.sid === undefined ||
-            decode.sid === tokenUtil.getSessionId(currentRefresh));
+        const sessionOk = await isActiveUserSession(decode);
         if (!sessionOk) {
           const err = new Error("Phiên đăng nhập đã kết thúc");
           err.statusCode = 401;
@@ -92,11 +84,11 @@ const initSocket = (server, corsOrigins = []) => {
     socket.join(`user_${userId}`);
     scheduleTokenExpiry(socket);
 
-    socket.on("refresh_auth", (payload, ack) => {
+    socket.on("refresh_auth", async (payload, ack) => {
       const reply = typeof ack === "function" ? ack : () => { };
       try {
         const decoded = tokenUtil.verifyAccessToken(payload?.token);
-        if (decoded.user_id !== userId) {
+        if (decoded.user_id !== userId || !(await isActiveUserSession(decoded))) {
           return reply({ ok: false });
         }
         socket.user = decoded;
@@ -117,6 +109,24 @@ const initSocket = (server, corsOrigins = []) => {
 
   return io;
 };
+
+/**
+ * Kiểm tra access token còn khớp phiên refresh_token hiện tại của user trong DB hay không.
+ * `users.refresh_token` lưu SHA-256 hex (64 ký tự), 16 ký tự đầu trùng với `decode.sid`.
+ */
+async function isActiveUserSession(decoded) {
+  if (decoded?.type !== "USER") return true;
+  const { rows } = await pool.query(
+    "SELECT refresh_token FROM users WHERE id = $1",
+    [decoded.user_id],
+  );
+  const currentRefresh = rows[0]?.refresh_token;
+  if (!currentRefresh) return false;
+  const expectedSid = /^[0-9a-f]{64}$/i.test(currentRefresh)
+    ? currentRefresh.toLowerCase().slice(0, 16)
+    : tokenUtil.getSessionId(currentRefresh);
+  return decoded.sid === undefined || decoded.sid === expectedSid;
+}
 
 const emitToUser = (userId, eventName, data) => {
   try {

@@ -6,8 +6,33 @@ const {
   assertBankFundingMinAmount,
 } = require("../../utils/common/amount");
 const { assertKyc } = require("../kyc/kyc.guard");
-const { resolveOneYearRange } = require("../../utils/common/dateRange");
+const pool = require("../../config/database");
+const { getPositiveIntConfig } = require("../../utils/limits/limitsDb");
+const {
+  resolveExportRange,
+  resolveOneYearRange,
+} = require("../../utils/common/dateRange");
+const { normalizeAmountRange } = require("../../utils/payment/historyFilters");
+const {
+  buildPostpaidEntriesXlsx,
+  buildPostpaidExportFileName,
+} = require("../../utils/files/exportExcel");
+const { sendPostpaidExportEmail } = require("../../utils/notifications/mailer");
+const { maskEmail } = require("../../utils/common/text");
 const transactionRepository = require("../transaction/transaction.repository");
+
+const ALLOWED_POSTPAID_DELTA_DIRECTIONS = ["INCREASE", "DECREASE"];
+
+function normalizePostpaidDeltaDirection(rawDirection) {
+  if (rawDirection === undefined || rawDirection === null) return null;
+  const trimmed = String(rawDirection).trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  if (!ALLOWED_POSTPAID_DELTA_DIRECTIONS.includes(upper)) {
+    throw httpError(400, "Chiều biến động dư nợ không hợp lệ");
+  }
+  return upper;
+}
 
 const postpaidService = {
   async getWalletInfo() {
@@ -59,6 +84,9 @@ const postpaidService = {
       limit,
       keyword = null,
       action = null,
+      direction = null,
+      minAmount = null,
+      maxAmount = null,
       startDate = null,
       endDate = null,
     } = {},
@@ -71,6 +99,9 @@ const postpaidService = {
       keyword && String(keyword).trim() ? String(keyword).trim() : null;
     const normalizedAction =
       action && String(action).trim() ? String(action).trim().toUpperCase() : null;
+    const normalizedDirection = normalizePostpaidDeltaDirection(direction);
+    const { minAmount: parsedMinAmount, maxAmount: parsedMaxAmount } =
+      normalizeAmountRange(minAmount, maxAmount);
 
     const { startDate: startDay, endDate: endDay } = resolveOneYearRange(
       startDate,
@@ -87,9 +118,99 @@ const postpaidService = {
       limit,
       keyword: normalizedKeyword,
       action: normalizedAction,
+      direction: normalizedDirection,
+      minAmount: parsedMinAmount,
+      maxAmount: parsedMaxAmount,
       startDate: startDay,
       endDate: endDay,
     });
+  },
+
+  /** Xuất lịch sử biến động Ví trả sau ra file Excel và gửi đến email đã đăng ký (App). */
+  async exportEntriesToEmail(
+    userId,
+    {
+      keyword = null,
+      action = null,
+      direction = null,
+      minAmount = null,
+      maxAmount = null,
+      startDate = null,
+      endDate = null,
+    } = {},
+  ) {
+    if (!userId) {
+      throw httpError(400, "Thiếu thông tin để xuất lịch sử biến động Ví trả sau");
+    }
+
+    const range = resolveExportRange(startDate, endDate);
+    const normalizedKeyword =
+      keyword && String(keyword).trim() ? String(keyword).trim() : null;
+    const normalizedAction =
+      action && String(action).trim() ? String(action).trim().toUpperCase() : null;
+    const normalizedDirection = normalizePostpaidDeltaDirection(direction);
+    const { minAmount: parsedMinAmount, maxAmount: parsedMaxAmount } =
+      normalizeAmountRange(minAmount, maxAmount);
+
+    const email = await transactionRepository.getUserEmail(userId);
+    if (!email) {
+      throw httpError(400, "Tài khoản chưa có email đăng ký để nhận file");
+    }
+
+    const exportMaxRows = await getPositiveIntConfig("EXPORT_MAX_ROWS", pool);
+    const rows = await postpaidRepository.exportEntries(userId, {
+      keyword: normalizedKeyword,
+      action: normalizedAction,
+      direction: normalizedDirection,
+      minAmount: parsedMinAmount,
+      maxAmount: parsedMaxAmount,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      limit: exportMaxRows + 1,
+    });
+
+    if (rows.length === 0) {
+      throw httpError(
+        400,
+        "Không có biến động Ví trả sau nào trong khoảng thời gian này",
+      );
+    }
+    if (rows.length > exportMaxRows) {
+      throw httpError(
+        400,
+        `Có hơn ${exportMaxRows.toLocaleString("vi-VN")} biến động trong khoảng thời gian này, vui lòng chọn khoảng ngắn hơn`,
+      );
+    }
+
+    const buffer = await buildPostpaidEntriesXlsx({
+      rows,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      filters: normalizedKeyword ? [`từ khóa "${normalizedKeyword}"`] : [],
+    });
+
+    await sendPostpaidExportEmail({
+      to: email,
+      buffer,
+      fileName: buildPostpaidExportFileName(range.startDate, range.endDate),
+      startDate: range.startDate,
+      endDate: range.endDate,
+      rowCount: rows.length,
+    });
+
+    await transactionRepository.recordAuditSafe({
+      eventType: "POSTPAID_ENTRIES_EXPORTED",
+      payload: {
+        user_id: userId,
+        channel: "APP_EMAIL",
+        start_date: range.startDate,
+        end_date: range.endDate,
+        keyword: normalizedKeyword,
+        row_count: rows.length,
+      },
+    });
+
+    return { email: maskEmail(email), row_count: rows.length };
   },
 
   async processPostpaidQRPayment({ sourceUserId, referenceCode, idempotencyKey }) {

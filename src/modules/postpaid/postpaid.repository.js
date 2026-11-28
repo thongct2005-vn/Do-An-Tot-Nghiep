@@ -593,24 +593,22 @@ const postpaidRepository = {
     });
   },
 
-  /**
-   * Lấy danh sách lịch sử biến động sổ cái Ví trả sau (`postpaid_entries`) của user
-   * hỗ trợ phân trang cursor `(created_at, id)`, lọc theo `action`, khoảng ngày (giờ VN) và tìm kiếm không dấu.
-   */
-  async getEntries(
+  async _queryEntriesRows(
     userId,
     {
       cursorId = null,
       limit = 20,
       keyword = null,
       action = null,
+      direction = null,
+      minAmount = null,
+      maxAmount = null,
       startDate = null,
       endDate = null,
+      ascending = false,
     } = {},
     db = pool,
   ) {
-    // 1. Chuẩn hóa giới hạn phân trang và kiểm tra cursor_id (UUID hợp lệ)
-    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 50);
     const validCursorId =
       cursorId && String(cursorId).trim() !== "" ? String(cursorId).trim() : null;
     if (validCursorId && !UUID_RE.test(validCursorId)) {
@@ -618,7 +616,6 @@ const postpaidRepository = {
     }
     const hasCursor = Boolean(validCursorId);
 
-    // 2. Escape ký tự đặc biệt cho tìm kiếm ILIKE và đánh dấu lọc ngày
     const trimmedKeyword = keyword && String(keyword).trim() ? String(keyword).trim() : null;
     const hasKeyword = Boolean(trimmedKeyword);
     const safeKeyword = hasKeyword
@@ -627,8 +624,13 @@ const postpaidRepository = {
 
     const hasStartDate = Boolean(startDate);
     const hasEndDate = Boolean(endDate);
+    const hasMinAmount = minAmount !== null && minAmount !== undefined;
+    const hasMaxAmount = maxAmount !== null && maxAmount !== undefined;
+    const hasDirection = Boolean(direction && String(direction).trim());
+    const normalizedDirection = hasDirection
+      ? String(direction).trim().toUpperCase()
+      : null;
 
-    // 3. Lấy danh mục action tiếng Việt để ánh xạ bộ lọc & tìm kiếm không dấu theo tên loại giao dịch
     const catalog = await postpaidRepository.getSystemCatalog(db);
     const { entryActions, entryActionLabels } = catalog;
     const filteredActions = resolvePostpaidEntryActionFilter(action, entryActions);
@@ -637,12 +639,10 @@ const postpaidRepository = {
       ? findMatchingPostpaidActions(entryActionLabels, trimmedKeyword)
       : null;
 
-    // 4. Truy vấn keyset pagination trên postpaid_entries (join thêm counterparty & order_id của QR)
-    //    Ghi chú bộ tham số SQL:
-    //    - $1: userId | $2,$3: bật lọc cursor & mốc cursorId | $4: số dòng/trang (safeLimit)
-    //    - $5,$6: bật tìm kiếm từ khóa & từ khóa đã escape ký tự % _
-    //    - $7..$10: lọc khoảng ngày [startDate, endDate] theo múi giờ Việt Nam (Asia/Ho_Chi_Minh)
-    //    - $11,$12: lọc theo danh sách mã action | $13: mã action khớp theo nhãn tiếng Việt không dấu
+    const orderClause = ascending
+      ? "ORDER BY pe.created_at ASC, pe.id ASC"
+      : "ORDER BY pe.created_at DESC, pe.id DESC";
+
     const res = await db.query(
       `WITH cursor_ref AS (
          SELECT c.created_at
@@ -671,16 +671,20 @@ const postpaidRepository = {
        LEFT JOIN users su ON su.id = t.source_user_id AND su.role <> 'SYSTEM'
        LEFT JOIN payment_requests pr ON pr.transaction_id = COALESCE(pe.ref_tx_id, t.id)
        WHERE pe.user_id = $1
-         -- Lọc các bản ghi cũ hơn dòng cursor (theo cặp created_at, id để không bỏ sót dòng trùng giây)
          AND (
            $2::boolean = false
            OR (pe.created_at, pe.id) < ((SELECT created_at FROM cursor_ref), $3::uuid)
          )
-         -- Lọc theo khoảng ngày bắt đầu / kết thúc tính từ 00:00 giờ Việt Nam
          AND ($7::boolean = false OR pe.created_at >= (($8::text)::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
          AND ($9::boolean = false OR pe.created_at < ((($10::text)::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'))
          AND ($11::boolean = false OR pe.action = ANY($12::text[]))
-         -- Tìm kiếm đa trường: mã bút toán/giao dịch, ghi chú, tên đối tác, số tiền, ngày giờ hoặc kỳ MM-YYYY
+         AND ($14::boolean = false OR pe.amount >= $15::bigint)
+         AND ($16::boolean = false OR pe.amount <= $17::bigint)
+         AND (
+           $18::boolean = false
+           OR ($19::text = 'INCREASE' AND pe.delta_used > 0)
+           OR ($19::text = 'DECREASE' AND pe.delta_used < 0)
+         )
          AND (
            $5::boolean = false
            OR pe.id::text ILIKE '%' || $6 || '%'
@@ -704,13 +708,13 @@ const postpaidRepository = {
            )
            OR ($13::text[] IS NOT NULL AND pe.action = ANY($13::text[]))
          )
-       ORDER BY pe.created_at DESC, pe.id DESC
+       ${orderClause}
        LIMIT $4`,
       [
         userId,
         hasCursor,
         validCursorId,
-        safeLimit,
+        limit,
         hasKeyword,
         safeKeyword,
         hasStartDate,
@@ -720,10 +724,16 @@ const postpaidRepository = {
         hasActions,
         filteredActions,
         keywordMatchedActions,
+        hasMinAmount,
+        hasMinAmount ? Number(minAmount) : null,
+        hasMaxAmount,
+        hasMaxAmount ? Number(maxAmount) : null,
+        hasDirection,
+        normalizedDirection,
       ],
     );
 
-    const rows = res.rows.map((row) => ({
+    return res.rows.map((row) => ({
       ...row,
       action_label: requireCatalogCode(
         entryActionLabels,
@@ -731,12 +741,83 @@ const postpaidRepository = {
         ACTION_CATALOG_LABEL,
       ),
     }));
+  },
+
+  /**
+   * Lấy danh sách lịch sử biến động sổ cái Ví trả sau (`postpaid_entries`) của user
+   * hỗ trợ phân trang cursor `(created_at, id)`, lọc theo `action`, khoảng tiền, chiều dư nợ, khoảng ngày và tìm kiếm không dấu.
+   */
+  async getEntries(
+    userId,
+    {
+      cursorId = null,
+      limit = 20,
+      keyword = null,
+      action = null,
+      direction = null,
+      minAmount = null,
+      maxAmount = null,
+      startDate = null,
+      endDate = null,
+    } = {},
+    db = pool,
+  ) {
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 50);
+    const rows = await postpaidRepository._queryEntriesRows(
+      userId,
+      {
+        cursorId,
+        limit: safeLimit,
+        keyword,
+        action,
+        direction,
+        minAmount,
+        maxAmount,
+        startDate,
+        endDate,
+        ascending: false,
+      },
+      db,
+    );
     const nextCursor = rows.length === safeLimit ? rows[rows.length - 1].id : null;
 
     return {
       entries: rows,
       next_cursor: nextCursor,
     };
+  },
+
+  /** Lấy danh sách biến động Ví trả sau phục vụ xuất Excel (tăng dần theo thời gian). */
+  async exportEntries(
+    userId,
+    {
+      keyword = null,
+      action = null,
+      direction = null,
+      minAmount = null,
+      maxAmount = null,
+      startDate,
+      endDate,
+      limit,
+    },
+    db = pool,
+  ) {
+    return postpaidRepository._queryEntriesRows(
+      userId,
+      {
+        cursorId: null,
+        limit: Number(limit),
+        keyword,
+        action,
+        direction,
+        minAmount,
+        maxAmount,
+        startDate,
+        endDate,
+        ascending: true,
+      },
+      db,
+    );
   },
 
   /**

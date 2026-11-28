@@ -2,7 +2,10 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../../middlewares/auth.middleware");
 const idempotencyMiddleware = require("../../middlewares/idempotencyKey");
-const { transactionLimiter } = require("../../middlewares/ratelimit.middleware");
+const {
+  transactionLimiter,
+  exportLimiter,
+} = require("../../middlewares/ratelimit.middleware");
 const { riskGuard } = require("../../middlewares/riskGuard");
 const { uploadPostpaidProofImages } = require("../../middlewares/upload.middleware");
 const postpaidController = require("./postpaid.controller");
@@ -36,6 +39,12 @@ router.post(
   postpaidController.close,
 );
 router.get("/entries", authMiddleware.verifyAccessToken, postpaidController.getEntries);
+router.post(
+  "/entries/export-email",
+  authMiddleware.verifyAccessToken,
+  exportLimiter,
+  postpaidController.exportEntriesToEmail,
+);
 
 router.post(
   "/repay",

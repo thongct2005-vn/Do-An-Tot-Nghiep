@@ -105,6 +105,10 @@ const postpaidController = {
         keyword,
         action,
         entry_action: entryAction,
+        delta_direction: deltaDirection,
+        direction,
+        min_amount: minAmount,
+        max_amount: maxAmount,
         start_date: startDate,
         end_date: endDate,
       } = req.query;
@@ -113,6 +117,9 @@ const postpaidController = {
         limit,
         keyword,
         action: action || entryAction,
+        direction: deltaDirection || direction,
+        minAmount,
+        maxAmount,
         startDate,
         endDate,
       });
@@ -121,6 +128,42 @@ const postpaidController = {
         200,
         "Lấy lịch sử biến động Ví trả sau thành công",
         data,
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async exportEntriesToEmail(req, res, next) {
+    try {
+      const { user_id: userId } = req.user;
+      const {
+        keyword,
+        action,
+        entry_action: entryAction,
+        delta_direction: deltaDirection,
+        direction,
+        min_amount: minAmount,
+        max_amount: maxAmount,
+        start_date: startDate,
+        end_date: endDate,
+      } = req.body || {};
+
+      const result = await postpaidService.exportEntriesToEmail(userId, {
+        keyword,
+        action: action || entryAction,
+        direction: deltaDirection || direction,
+        minAmount,
+        maxAmount,
+        startDate,
+        endDate,
+      });
+
+      return successResponse(
+        res,
+        200,
+        "Đã gửi file Excel biến động Ví trả sau đến email của bạn",
+        result,
       );
     } catch (e) {
       next(e);

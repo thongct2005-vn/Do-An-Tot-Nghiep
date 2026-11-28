@@ -121,7 +121,7 @@ function validateAndNormalizePostpaidConfig(raw) {
   if (tier1 > tier2 || tier2 > tier3 || tier3 > tier4) {
     throw httpError(
       400,
-      "Tỷ lệ phí chậm trả các bậc phải tăng dần không giảm (Bậc 1 <= Bậc 2 <= Bậc 3 <= Bậc 4)"
+      "Tỷ lệ phí trễ hạn các bậc phải tăng dần không giảm (Bậc 1 <= Bậc 2 <= Bậc 3 <= Bậc 4)"
     );
   }
 

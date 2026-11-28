@@ -212,6 +212,140 @@ function buildExportFileName(startDate, endDate) {
   return `lich-su-giao-dich_${startDate.replace(/-/g, "")}_${endDate.replace(/-/g, "")}.xlsx`;
 }
 
+function buildPostpaidExportFileName(startDate, endDate) {
+  return `bien-dong-vi-tra-sau_${startDate.replace(/-/g, "")}_${endDate.replace(/-/g, "")}.xlsx`;
+}
+
+const POSTPAID_COLUMNS = [
+  { header: "Mã biến động", width: 38 },
+  { header: "Thời gian", width: 20 },
+  { header: "Loại biến động", width: 28 },
+  { header: "Đối tác", width: 26 },
+  { header: "Mã giao dịch", width: 38 },
+  { header: "Mã đơn hàng", width: 22 },
+  { header: "Kỳ sao kê", width: 14 },
+  { header: "Số tiền (VND)", width: 17 },
+  { header: "Biến động dư nợ (VND)", width: 22 },
+  { header: "Dư nợ trước (VND)", width: 19 },
+  { header: "Dư nợ sau (VND)", width: 19 },
+  { header: "Ghi chú", width: 44 },
+];
+
+function formatPostpaidCycleLabel(rawCycle) {
+  const raw = String(rawCycle || "").trim();
+  const match = /^(\d{4})-(\d{2})$/.exec(raw);
+  return match ? `${match[2]}/${match[1]}` : raw;
+}
+
+/** Tạo file Excel lịch sử biến động Ví trả sau, trả về Buffer. */
+async function buildPostpaidEntriesXlsx({ rows, startDate, endDate, filters = [] }) {
+  let totalIncrease = 0;
+  let totalDecrease = 0;
+  const items = rows.map((row) => {
+    const delta = num(row.delta_used);
+    if (delta > 0) totalIncrease += delta;
+    else if (delta < 0) totalDecrease += Math.abs(delta);
+    return {
+      cells: [
+        String(row.id),
+        toVnDate(row.created_at),
+        row.action_label || row.action || "",
+        row.counterparty_name || "",
+        row.tx_id || row.ref_tx_id || "",
+        row.order_id || "",
+        formatPostpaidCycleLabel(row.cycle_month),
+        num(row.amount),
+        delta,
+        num(row.used_before),
+        num(row.used_after),
+        row.note || "",
+      ],
+    };
+  });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "LumaPay Wallet";
+  wb.created = new Date();
+  const ws = wb.addWorksheet("Biến động Ví trả sau", {
+    views: [{ state: "frozen", ySplit: 8 }],
+  });
+  const lastCol = POSTPAID_COLUMNS.length;
+  POSTPAID_COLUMNS.forEach((c, i) => {
+    ws.getColumn(i + 1).width = c.width;
+  });
+
+  ws.mergeCells(1, 1, 1, lastCol);
+  const title = ws.getCell(1, 1);
+  title.value = "LỊCH SỬ BIẾN ĐỘNG VÍ TRẢ SAU";
+  title.font = { bold: true, size: 16 };
+  title.alignment = { vertical: "middle" };
+  ws.getRow(1).height = 26;
+
+  let periodText = `Khoảng thời gian: ${formatDay(startDate)} - ${formatDay(endDate)}`;
+  if (filters.length) periodText += `  |  Bộ lọc: ${filters.join(", ")}`;
+  ws.getCell(2, 1).value = periodText;
+  ws.getCell(3, 1).value = `Ngày xuất: ${formatVnNow()} (giờ Việt Nam)`;
+
+  const summary = [
+    ["Số biến động", items.length, "0"],
+    ["Tổng tăng dư nợ", totalIncrease, MONEY_FMT],
+    ["Tổng giảm dư nợ", totalDecrease, MONEY_FMT],
+  ];
+  summary.forEach(([label, value, fmt], i) => {
+    const r = 4 + i;
+    ws.getCell(r, 1).value = label;
+    ws.getCell(r, 1).font = { bold: true };
+    const c = ws.getCell(r, 2);
+    c.value = value;
+    c.numFmt = fmt;
+    c.alignment = { horizontal: "right" };
+  });
+
+  const headerRow = ws.getRow(8);
+  POSTPAID_COLUMNS.forEach((c, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = c.header;
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF1F4E79" },
+    };
+    cell.alignment = {
+      vertical: "middle",
+      horizontal: "center",
+      wrapText: true,
+    };
+    cell.border = { bottom: { style: "thin", color: { argb: "FF999999" } } };
+  });
+  headerRow.height = 24;
+
+  items.forEach((it, idx) => {
+    const row = ws.getRow(9 + idx);
+    it.cells.forEach((value, i) => {
+      row.getCell(i + 1).value = value;
+    });
+    row.getCell(2).numFmt = DATETIME_FMT;
+    row.getCell(8).numFmt = MONEY_FMT;
+    row.getCell(9).numFmt = SIGNED_MONEY_FMT;
+    row.getCell(10).numFmt = MONEY_FMT;
+    row.getCell(11).numFmt = MONEY_FMT;
+    row.getCell(12).alignment = { wrapText: true, vertical: "top" };
+  });
+
+  if (items.length > 0) {
+    ws.autoFilter = {
+      from: { row: 8, column: 1 },
+      to: { row: 8 + items.length, column: lastCol },
+    };
+  } else {
+    ws.getCell(9, 1).value = "Không có biến động Ví trả sau nào trong khoảng thời gian này";
+    ws.getCell(9, 1).font = { italic: true, color: { argb: "FF777777" } };
+  }
+
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
 /** Gửi file xlsx về client. Tên file chỉ gồm ký tự ASCII nên header an toàn. */
 function sendXlsx(res, { buffer, fileName }) {
   res.setHeader("Content-Type", XLSX_MIME);
@@ -502,9 +636,11 @@ module.exports = {
   formatDay,
   formatVnNow,
   buildTransactionsXlsx,
+  buildPostpaidEntriesXlsx,
   buildRevenueStatsXlsx,
   buildProductStatsXlsx,
   buildExportFileName,
+  buildPostpaidExportFileName,
   sendXlsx,
   sendXlsxResponse: sendXlsx,
 };

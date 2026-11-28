@@ -35,35 +35,25 @@ async function sendOtpEmail({ to, otp, expiresInMinutes = 5 }) {
   }
 }
 
-// Gửi file Excel lịch sử giao dịch (đính kèm) đến email đã đăng ký
-async function sendTransactionExportEmail({
+async function sendExportAttachmentEmail({
   to,
   buffer,
   fileName,
-  startDate,
-  endDate,
-  rowCount,
+  subject,
+  text,
+  html,
 }) {
   if (!to || !buffer || !fileName) {
     throw httpError(400, "Thiếu thông tin để gửi file Excel");
   }
 
-  const toVn = (ymd) => ymd.split("-").reverse().join("/");
-  const period = `${toVn(startDate)} - ${toVn(endDate)}`;
-
   try {
     await transporter.sendMail({
       from: `"LumaPay" <${process.env.GMAIL_USER}>`,
       to,
-      subject: `Lịch sử giao dịch LumaPay (${period})`,
-      text: `Đính kèm là file Excel lịch sử giao dịch từ ${toVn(startDate)} đến ${toVn(endDate)} (${rowCount} giao dịch). Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.`,
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:480px">
-          <p>Đính kèm là file Excel lịch sử giao dịch của bạn.</p>
-          <p><b>Khoảng thời gian:</b> ${period}<br/>
-          <b>Số giao dịch:</b> ${rowCount}</p>
-          <p style="color:#777;font-size:12px">Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.</p>
-        </div>`,
+      subject,
+      text,
+      html,
       attachments: [
         {
           filename: fileName,
@@ -76,6 +66,60 @@ async function sendTransactionExportEmail({
   } catch (err) {
     throw httpError(502, "Không thể gửi email, vui lòng thử lại sau");
   }
+}
+
+// Gửi file Excel lịch sử giao dịch (đính kèm) đến email đã đăng ký
+async function sendTransactionExportEmail({
+  to,
+  buffer,
+  fileName,
+  startDate,
+  endDate,
+  rowCount,
+}) {
+  const toVn = (ymd) => ymd.split("-").reverse().join("/");
+  const period = `${toVn(startDate)} - ${toVn(endDate)}`;
+  return sendExportAttachmentEmail({
+    to,
+    buffer,
+    fileName,
+    subject: `Lịch sử giao dịch LumaPay (${period})`,
+    text: `Đính kèm là file Excel lịch sử giao dịch từ ${toVn(startDate)} đến ${toVn(endDate)} (${rowCount} giao dịch). Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px">
+        <p>Đính kèm là file Excel lịch sử giao dịch của bạn.</p>
+        <p><b>Khoảng thời gian:</b> ${period}<br/>
+        <b>Số giao dịch:</b> ${rowCount}</p>
+        <p style="color:#777;font-size:12px">Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.</p>
+      </div>`,
+  });
+}
+
+// Gửi file Excel lịch sử biến động Ví trả sau (đính kèm) đến email đã đăng ký
+async function sendPostpaidExportEmail({
+  to,
+  buffer,
+  fileName,
+  startDate,
+  endDate,
+  rowCount,
+}) {
+  const toVn = (ymd) => ymd.split("-").reverse().join("/");
+  const period = `${toVn(startDate)} - ${toVn(endDate)}`;
+  return sendExportAttachmentEmail({
+    to,
+    buffer,
+    fileName,
+    subject: `Lịch sử biến động Ví trả sau LumaPay (${period})`,
+    text: `Đính kèm là file Excel lịch sử biến động Ví trả sau từ ${toVn(startDate)} đến ${toVn(endDate)} (${rowCount} biến động). Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px">
+        <p>Đính kèm là file Excel lịch sử biến động Ví trả sau của bạn.</p>
+        <p><b>Khoảng thời gian:</b> ${period}<br/>
+        <b>Số biến động:</b> ${rowCount}</p>
+        <p style="color:#777;font-size:12px">Nếu bạn không thực hiện yêu cầu này, hãy đổi mật khẩu và liên hệ hỗ trợ ngay.</p>
+      </div>`,
+  });
 }
 
 const LOWER_CHARS = "abcdefghijkmnpqrstuvwxyz";
@@ -223,6 +267,7 @@ async function sendUserAccountCreatedEmail({ to, fullName, phone, tempPassword }
 module.exports = {
   sendOtpEmail,
   sendTransactionExportEmail,
+  sendPostpaidExportEmail,
   generateTemporaryPassword,
   sendMerchantAccountCreatedEmail,
   isWeakUserTemporaryPassword,

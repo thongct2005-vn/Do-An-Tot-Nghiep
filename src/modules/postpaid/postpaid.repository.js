@@ -2,6 +2,7 @@
 require("dotenv").config();
 const pool = require("../../config/database");
 const { httpError } = require("../../utils/common/http");
+const { UUID_REGEX: UUID_RE } = require("../../utils/common/validators");
 const { assertDailyLimit, assertWalletCapacity } = require("../../utils/limits/dailyLimit");
 const { assertKyc } = require("../kyc/kyc.guard");
 const paymentRequestRepository = require("../paymentRequest/paymentRequest.repository");
@@ -2646,7 +2647,7 @@ const postpaidRepository = {
                 usedBefore + deltaPenalty,
                 effectiveCycle,
                 tierSpec.tier,
-                `Phí chậm trả bậc ${tierSpec.tier} (${tierSpec.label}) kỳ ${formatCycleMonthDisplay(effectiveCycle)}`,
+                `Phí trễ hạn bậc ${tierSpec.tier} (${tierSpec.label}) kỳ ${formatCycleMonthDisplay(effectiveCycle)}`,
               ],
             );
             if (feeInsert.rows[0]) {

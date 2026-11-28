@@ -403,7 +403,7 @@ function buildPostpaidInfoPayload(catalog) {
       billed_formula: "max(0, used_amount - service_fee_amount - late_fee_amount)",
       summary: `Chốt sao kê tự động từ ngày ${config.billing_day} hàng tháng (múi giờ Việt Nam). Toàn bộ dư nợ gốc đang sử dụng được chốt thành dư nợ gốc kỳ sao kê và cộng phí dịch vụ tháng nếu đủ điều kiện.`,
       due_rule: `Hạn thanh toán là ngày ${config.due_day} của tháng kế tiếp sau kỳ chốt sao kê.`,
-      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ gốc kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}" (nếu đang khóa thì giữ nguyên trạng thái khóa), tạm khóa chi tiêu QR mới và tính phí chậm trả theo 4 bậc ngày quá hạn (chỉ thu bù chênh lệch khi sang bậc cao hơn). Quá hạn từ ngày thứ 5 trở lên có dư nợ gốc quá hạn sẽ tự động giảm hạn mức khi tất toán kỳ nợ theo bậc ngày trễ (${limitReductionSummaryText}, tối thiểu còn ${formatVndDot(MIN_AUTO_ADJUSTED_CREDIT_LIMIT)}); từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết dư nợ kỳ sao kê cho tới khi gửi 1–3 ảnh chứng minh thu nhập và được Quản trị viên duyệt mở lại.`,
+      overdue_rule: `Sau ngày ${config.due_day} tháng kế tiếp, nếu dư nợ gốc kỳ sao kê hoặc phí dịch vụ tháng vẫn lớn hơn 0đ, ví chuyển sang trạng thái "${pastDueLabel}" (nếu đang khóa thì giữ nguyên trạng thái khóa), tạm khóa chi tiêu QR mới và tính phí trễ hạn theo 4 bậc ngày quá hạn (chỉ thu bù chênh lệch khi sang bậc cao hơn). Quá hạn từ ngày thứ 5 trở lên có dư nợ gốc quá hạn sẽ tự động giảm hạn mức khi tất toán kỳ nợ theo bậc ngày trễ (${limitReductionSummaryText}, tối thiểu còn ${formatVndDot(MIN_AUTO_ADJUSTED_CREDIT_LIMIT)}); từ lần quá hạn thứ 2 trở đi ví chuyển "${frozenLabel}" sau khi trả hết dư nợ kỳ sao kê cho tới khi gửi 1–3 ảnh chứng minh thu nhập và được Quản trị viên duyệt mở lại.`,
     },
     fee_rules: {
       activation_fee: 0,
@@ -415,7 +415,7 @@ function buildPostpaidInfoPayload(catalog) {
       late_fee_tiers: lateFeeTiers,
       calculation_basis: "billed_amount + service_fee_amount",
       formula: "round((billed_amount + service_fee_amount) * tier_bps / 10000)",
-      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí chậm trả áp dụng theo 4 bậc ngày quá hạn (${tierSummaryText}) trên tổng dư nợ kỳ sao kê chưa trả (nợ gốc đã chốt + phí dịch vụ tháng); mỗi kỳ chỉ thu bù phần chênh lệch khi bước sang bậc mới (tổng phí tối đa theo tỷ lệ bậc cao nhất).`,
+      summary: `Miễn phí (0đ) kích hoạt ví, thanh toán QR bằng Ví trả sau và thanh toán dư nợ. ${serviceFeeRule} Khi quá hạn, phí trễ hạn áp dụng theo 4 bậc ngày quá hạn (${tierSummaryText}) trên tổng dư nợ kỳ sao kê chưa trả (nợ gốc đã chốt + phí dịch vụ tháng); mỗi kỳ chỉ thu bù phần chênh lệch khi bước sang bậc mới (tổng phí tối đa theo tỷ lệ bậc cao nhất).`,
       example: {
         billed_amount: sampleBilled,
         applied_fee: sampleAppliedFee,

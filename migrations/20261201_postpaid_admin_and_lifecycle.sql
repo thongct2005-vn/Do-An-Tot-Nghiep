@@ -157,7 +157,7 @@ UPDATE system_configs
               COALESCE((value->'late_fee_tier4_bps')::int, 2100)
             )
        ),
-       description = 'Cấu hình Ví trả sau (hạn mức mặc định >= 2.000.000đ, chốt kỳ ngày 20, hạn trả ngày 5 tháng sau, phí chậm trả 4 bậc 5.25%/10.5%/15.75%/21%, phí dịch vụ tháng 20.000đ miễn 1 GD đầu)',
+       description = 'Cấu hình Ví trả sau (hạn mức mặc định >= 2.000.000đ, chốt kỳ ngày 20, hạn trả ngày 5 tháng sau, phí trễ hạn 4 bậc 5.25%/10.5%/15.75%/21%, phí dịch vụ tháng 20.000đ miễn 1 GD đầu)',
        updated_at = NOW()
  WHERE key = 'POSTPAID_CONFIG';
 

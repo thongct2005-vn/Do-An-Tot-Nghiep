@@ -47,10 +47,10 @@ const POSTPAID_CONFIG_FIELD_LABELS = Object.freeze({
   min_account_days: "số ngày hoạt động tối thiểu để mở Ví trả sau",
   billing_day: "ngày chốt sao kê Ví trả sau",
   due_day: "ngày đến hạn thanh toán Ví trả sau",
-  late_fee_tier1_bps: "tỷ lệ phí chậm trả bậc 1 (1–4 ngày)",
-  late_fee_tier2_bps: "tỷ lệ phí chậm trả bậc 2 (5–9 ngày)",
-  late_fee_tier3_bps: "tỷ lệ phí chậm trả bậc 3 (10–13 ngày)",
-  late_fee_tier4_bps: "tỷ lệ phí chậm trả bậc 4 (từ 14 ngày trở lên)",
+  late_fee_tier1_bps: "tỷ lệ phí trễ hạn bậc 1 (1–4 ngày)",
+  late_fee_tier2_bps: "tỷ lệ phí trễ hạn bậc 2 (5–9 ngày)",
+  late_fee_tier3_bps: "tỷ lệ phí trễ hạn bậc 3 (10–13 ngày)",
+  late_fee_tier4_bps: "tỷ lệ phí trễ hạn bậc 4 (từ 14 ngày trở lên)",
   monthly_service_fee: "phí dịch vụ hàng tháng của Ví trả sau",
   free_service_fee_tx_count: "số giao dịch miễn phí dịch vụ ban đầu của Ví trả sau",
 });
@@ -165,7 +165,7 @@ function normalizePostpaidConfig(raw) {
     tier2 > tier3 ||
     tier3 > tier4
   ) {
-    throw httpError(500, "Cấu hình biểu phí chậm trả 4 bậc Ví trả sau không hợp lệ");
+    throw httpError(500, "Cấu hình biểu phí trễ hạn 4 bậc Ví trả sau không hợp lệ");
   }
 
   return {

@@ -571,6 +571,109 @@ function resolveAdminNetAmount({ transactionType, amount, merchantFee }) {
   return amount;
 }
 
+const POSTPAID_REPAY_ACTIONS = new Set([
+  "REPAY_PRINCIPAL",
+  "REPAY_SERVICE_FEE",
+  "REPAY_LATE_FEE",
+]);
+
+function resolveAdminFundingContext(tx, postpaidSummary = null) {
+  const snapshot =
+    tx?.fee_rate_snapshot && typeof tx.fee_rate_snapshot === "object"
+      ? tx.fee_rate_snapshot
+      : null;
+  const txType = String(tx?.transaction_type || "").toUpperCase();
+  const snapshotFunding = snapshot?.funding_source
+    ? String(snapshot.funding_source).trim().toUpperCase()
+    : null;
+  const snapshotOriginalFunding = snapshot?.original_funding_source
+    ? String(snapshot.original_funding_source).trim().toUpperCase()
+    : null;
+  const snapshotAction = snapshot?.postpaid_action
+    ? String(snapshot.postpaid_action).trim().toUpperCase()
+    : null;
+  const snapshotLeg = snapshot?.postpaid_leg
+    ? String(snapshot.postpaid_leg).trim().toUpperCase()
+    : null;
+  const entryAction = tx?.postpaid_entry_action
+    ? String(tx.postpaid_entry_action).trim().toUpperCase()
+    : null;
+  const isSourcePostpaidWallet =
+    tx?.source_user_name === "SYSTEM_POSTPAID_WALLET" ||
+    tx?.source_user_phone === "SYS_BNPL_1";
+  const isDestPostpaidWallet =
+    tx?.destination_user_name === "SYSTEM_POSTPAID_WALLET" ||
+    tx?.destination_user_phone === "SYS_BNPL_1";
+  const isReversal =
+    txType === "REFUND" ||
+    String(snapshot?.operation_type || "").trim().toUpperCase() === "REVERSAL" ||
+    tx?.admin_action === "ADMIN_OP_REVERSAL";
+
+  const isPostpaid = Boolean(
+    entryAction ||
+      postpaidSummary ||
+      snapshotFunding === "POSTPAID" ||
+      snapshotOriginalFunding === "POSTPAID" ||
+      isSourcePostpaidWallet ||
+      isDestPostpaidWallet,
+  );
+
+  const funding_source = isPostpaid
+    ? "POSTPAID"
+    : tx?.linked_bank_account_id || snapshotFunding === "BANK"
+      ? "BANK"
+      : "MAIN_WALLET";
+
+  let postpaid_action = null;
+  if (isPostpaid) {
+    postpaid_action =
+      snapshotAction ||
+      entryAction ||
+      (postpaidSummary ? "PURCHASE" : null) ||
+      (snapshotOriginalFunding === "POSTPAID" || isReversal ? "REFUND" : null) ||
+      (isDestPostpaidWallet && txType === "PAYMENT" ? "REPAY_PRINCIPAL" : null) ||
+      (isSourcePostpaidWallet && txType === "PAYMENT" ? "PURCHASE" : null);
+  }
+
+  let postpaid_leg = null;
+  if (isPostpaid) {
+    postpaid_leg =
+      snapshotLeg ||
+      (postpaid_action === "REFUND" && isDestPostpaidWallet
+        ? "DEBT_RESTORATION"
+        : null);
+  }
+
+  const shouldIncludePostpaidBuyer =
+    postpaid_action === "PURCHASE" ||
+    (postpaid_action === "REFUND" && postpaid_leg === "DEBT_RESTORATION");
+
+  const buyerId = shouldIncludePostpaidBuyer
+    ? postpaidSummary?.buyer_user_id || tx?.postpaid_buyer_id || null
+    : null;
+  const buyerName = shouldIncludePostpaidBuyer
+    ? postpaidSummary?.buyer_name || tx?.postpaid_buyer_name || null
+    : null;
+  const buyerPhone = shouldIncludePostpaidBuyer
+    ? postpaidSummary?.buyer_phone || tx?.postpaid_buyer_phone || ""
+    : "";
+
+  const postpaid_buyer = buyerId
+    ? {
+        id: String(buyerId),
+        full_name: buyerName || "Chưa cập nhật",
+        phone: buyerPhone || "",
+      }
+    : null;
+
+  return {
+    funding_source,
+    postpaid_action,
+    postpaid_leg,
+    postpaid_buyer,
+  };
+}
+
 module.exports = {
   ADMIN_REVERSE_REQUEST_PATH,
   REVERSE_BODY_ALLOWLIST,
@@ -580,6 +683,7 @@ module.exports = {
   VALID_ANOMALIES,
   VALID_DISPUTE_TYPES,
   VALID_RESOLUTION_RESULTS,
+  POSTPAID_REPAY_ACTIONS,
   sanitizeReversalResponseData,
   evaluatePostpaidRefundEligibility,
   evaluateReversalEligibility,
@@ -587,5 +691,6 @@ module.exports = {
   parseFilterParams,
   calculateIntegrityAndAnomalies,
   resolveAdminNetAmount,
+  resolveAdminFundingContext,
 };
 

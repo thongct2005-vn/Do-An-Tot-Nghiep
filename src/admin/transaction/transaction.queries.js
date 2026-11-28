@@ -187,12 +187,50 @@ function buildFilterConditions({
         OR du.full_name ILIKE $${kwIdx} 
         OR su.phone LIKE $${kwIdx} 
         OR du.phone LIKE $${kwIdx} 
-        OR t.description ILIKE $${kwIdx})`,
+        OR t.description ILIKE $${kwIdx}
+        OR (
+          t.transaction_type IN ('PAYMENT', 'REFUND')
+          AND EXISTS (
+            SELECT 1
+            FROM postpaid_entries pe
+            JOIN users pu ON pu.id = pe.user_id
+            WHERE pe.tx_id = t.id
+              AND (
+                (t.transaction_type = 'PAYMENT' AND pe.action = 'PURCHASE')
+                OR (t.transaction_type = 'REFUND' AND pe.action = 'REFUND')
+              )
+              AND (pu.full_name ILIKE $${kwIdx} OR pu.phone LIKE $${kwIdx})
+          )
+        ))`,
     );
   }
 
   const whereClause = conditions.length > 0 ? conditions.join(" AND ") : "1=1";
   return { whereClause, params };
+}
+
+function buildAdminPostpaidEntryLateralJoinSql(txAlias = "t") {
+  return `LEFT JOIN LATERAL (
+    SELECT
+      pe.user_id,
+      pe.action,
+      pu.full_name,
+      pu.phone
+    FROM postpaid_entries pe
+    JOIN users pu ON pu.id = pe.user_id
+    WHERE pe.tx_id = ${txAlias}.id
+      AND pe.action IN ('PURCHASE', 'REPAY_PRINCIPAL', 'REPAY_SERVICE_FEE', 'REPAY_LATE_FEE', 'REFUND')
+    ORDER BY
+      CASE pe.action
+        WHEN 'PURCHASE' THEN 1
+        WHEN 'REPAY_PRINCIPAL' THEN 2
+        WHEN 'REPAY_SERVICE_FEE' THEN 3
+        WHEN 'REPAY_LATE_FEE' THEN 4
+        WHEN 'REFUND' THEN 5
+        ELSE 9
+      END
+    LIMIT 1
+  ) pp ON true`;
 }
 
 function buildDirectCountQuery(filters) {
@@ -245,6 +283,7 @@ module.exports = {
   resolveActiveDisputeIdFromEvents,
   hasNonEmpty,
   buildFilterConditions,
+  buildAdminPostpaidEntryLateralJoinSql,
   buildDirectCountQuery,
   canUseRollupCount,
 };

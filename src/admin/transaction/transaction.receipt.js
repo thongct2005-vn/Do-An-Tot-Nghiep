@@ -3,6 +3,7 @@ const path = require("node:path");
 const PDFDocument = require("pdfkit");
 const { httpError } = require("../../utils/common/http");
 const { maskAccountNumber } = require("./transaction.export");
+const { POSTPAID_REPAY_ACTIONS } = require("./transaction.helpers");
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 const FONTS_DIR = path.resolve(__dirname, "../../../assets/fonts");
@@ -22,6 +23,97 @@ const STATUS_LABEL = {
   PENDING: "Đang xử lý",
   FAILED: "Thất bại",
 };
+
+function resolveReceiptTypeLabel(detail) {
+  const txType = String(detail?.transaction_type || "").toUpperCase();
+  const isPostpaid =
+    String(detail?.funding_source || "").toUpperCase() === "POSTPAID" ||
+    detail?.postpaid_refund?.is_postpaid_payment === true;
+  const postpaidAction = String(
+    detail?.postpaid_action || detail?.fee_rate_snapshot?.postpaid_action || "",
+  ).toUpperCase();
+  const isReversal =
+    txType === "REFUND" ||
+    String(detail?.fee_rate_snapshot?.operation_type || "").toUpperCase() ===
+      "REVERSAL" ||
+    detail?.admin_intervention?.action === "ADMIN_OP_REVERSAL" ||
+    postpaidAction === "REFUND";
+
+  if (isReversal) {
+    return isPostpaid
+      ? "Hoàn tiền thanh toán Merchant (Ví trả sau)"
+      : TYPE_LABEL.REFUND;
+  }
+  if (isPostpaid && POSTPAID_REPAY_ACTIONS.has(postpaidAction)) {
+    return "Trả nợ Ví trả sau";
+  }
+  if (isPostpaid && txType === "PAYMENT") {
+    return "Thanh toán QR Merchant (Ví trả sau)";
+  }
+  return TYPE_LABEL[txType] || detail?.transaction_type || "—";
+}
+
+function buildPaymentReceiptPayerRows(detail) {
+  if (detail?.postpaid_refund?.is_postpaid_payment) {
+    const buyerName =
+      detail.postpaid_refund.buyer_name || detail.payer?.full_name || "—";
+    const buyerPhone = String(detail.postpaid_refund.buyer_phone || "").trim();
+    const buyerText = buyerPhone
+      ? `${buyerName} (${buyerPhone}) — Ví trả sau`
+      : `${buyerName} — Ví trả sau`;
+    const poolName = detail.payer?.full_name || "SYSTEM_POSTPAID_WALLET";
+    const poolPhone = detail.payer?.phone || "SYS_BNPL_1";
+    return [
+      { label: "Người thanh toán", value: buyerText },
+      { label: "Ví hạch toán nguồn", value: `${poolName} (${poolPhone})` },
+    ];
+  }
+  return [
+    {
+      label: "Người thanh toán",
+      value: `${detail?.payer?.full_name || "—"} (${detail?.payer?.phone || "—"})`,
+    },
+  ];
+}
+
+function buildRefundReceiptReceiverRows(detail) {
+  const txType = String(detail?.transaction_type || "").toUpperCase();
+  const isRefund =
+    txType === "REFUND" ||
+    String(detail?.postpaid_action || "").toUpperCase() === "REFUND";
+  const isPostpaid =
+    String(detail?.funding_source || "").toUpperCase() === "POSTPAID";
+  const postpaidLeg = String(
+    detail?.postpaid_leg || detail?.fee_rate_snapshot?.postpaid_leg || "",
+  ).toUpperCase();
+  const isDebtRestoration =
+    isRefund &&
+    isPostpaid &&
+    (postpaidLeg === "DEBT_RESTORATION" ||
+      detail?.receiver?.full_name === "SYSTEM_POSTPAID_WALLET" ||
+      detail?.receiver?.phone === "SYS_BNPL_1");
+
+  if (isDebtRestoration && detail?.postpaid_buyer?.full_name) {
+    const buyerName = detail.postpaid_buyer.full_name;
+    const buyerPhone = String(detail.postpaid_buyer.phone || "").trim();
+    const buyerText = buyerPhone
+      ? `${buyerName} (${buyerPhone}) — Hoàn giảm nợ Ví trả sau`
+      : `${buyerName} — Hoàn giảm nợ Ví trả sau`;
+    const poolName = detail.receiver?.full_name || "SYSTEM_POSTPAID_WALLET";
+    const poolPhone = detail.receiver?.phone || "SYS_BNPL_1";
+    return [
+      { label: "Người nhận hoàn tiền", value: buyerText },
+      { label: "Ví hạch toán đích", value: `${poolName} (${poolPhone})` },
+    ];
+  }
+
+  return [
+    {
+      label: txType === "REFUND" ? "Người nhận hoàn tiền" : "Người nhận",
+      value: `${detail?.receiver?.full_name || "—"} (${detail?.receiver?.phone || "—"})`,
+    },
+  ];
+}
 
 function assertUnicodeFontsAvailable() {
   if (!fs.existsSync(REGULAR_FONT_PATH) || !fs.existsSync(BOLD_FONT_PATH)) {
@@ -154,7 +246,7 @@ async function buildTransactionReceiptPdf({
     drawKeyValueRow(
       doc,
       "Loại giao dịch",
-      TYPE_LABEL[detail.transaction_type] || detail.transaction_type,
+      resolveReceiptTypeLabel(detail),
       { boldValue: true },
     );
     drawKeyValueRow(
@@ -195,23 +287,25 @@ async function buildTransactionReceiptPdf({
         detail.transaction_type === "REFUND" ? "Bên hoàn tiền (Merchant)" : "Người gửi",
         `${detail.sender?.full_name || "—"} (${detail.sender?.phone || "—"})`,
       );
-      drawKeyValueRow(
-        doc,
-        detail.transaction_type === "REFUND" ? "Người nhận hoàn tiền" : "Người nhận",
-        `${detail.receiver?.full_name || "—"} (${detail.receiver?.phone || "—"})`,
-      );
+      for (const row of buildRefundReceiptReceiverRows(detail)) {
+        drawKeyValueRow(doc, row.label, row.value);
+      }
     } else if (detail.transaction_type === "PAYMENT") {
+      for (const row of buildPaymentReceiptPayerRows(detail)) {
+        drawKeyValueRow(doc, row.label, row.value);
+      }
+      const postpaidAction = String(
+        detail.postpaid_action || detail.fee_rate_snapshot?.postpaid_action || "",
+      ).toUpperCase();
+      const isRepay = POSTPAID_REPAY_ACTIONS.has(postpaidAction);
       drawKeyValueRow(
         doc,
-        "Người thanh toán",
-        detail.postpaid_refund?.is_postpaid_payment
-          ? `${detail.postpaid_refund.buyer_name || detail.payer?.full_name || "—"} (Ví trả sau)`
-          : `${detail.payer?.full_name || "—"} (${detail.payer?.phone || "—"})`,
-      );
-      drawKeyValueRow(
-        doc,
-        "Merchant thụ hưởng",
-        `${detail.merchant?.full_name || "—"} (${detail.merchant?.phone || "—"})`,
+        isRepay ? "Đích thụ hưởng (Ví trả sau)" : "Merchant thụ hưởng",
+        detail.merchant
+          ? `${detail.merchant.full_name || "—"} (${detail.merchant.phone || "—"})`
+          : isRepay
+            ? "SYSTEM_POSTPAID_WALLET (SYS_BNPL_1)"
+            : "— (—)",
       );
       if (detail.payment_request?.order_id) {
         drawKeyValueRow(doc, "Mã đơn hàng (Order ID)", detail.payment_request.order_id);
@@ -304,6 +398,9 @@ function sendReceiptPdfResponse(res, { buffer, txId }) {
 module.exports = {
   buildTransactionReceiptPdf,
   sendReceiptPdfResponse,
+  resolveReceiptTypeLabel,
+  buildPaymentReceiptPayerRows,
+  buildRefundReceiptReceiverRows,
   REGULAR_FONT_PATH,
   BOLD_FONT_PATH,
 };

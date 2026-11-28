@@ -19,6 +19,7 @@ const TransactionRepository = require("../../modules/transaction/transaction.rep
 const { httpError } = require("../../utils/common/http");
 const { maskPhone } = require("../../utils/common/text");
 const { assertDailyLimit, getDailyUsage } = require("../../utils/limits/dailyLimit");
+const { buildAdminPostpaidEntryLateralJoinSql } = require("../transaction/transaction.queries");
 
 const adminUserRepository = {
   async getUserStats() {
@@ -479,7 +480,15 @@ const adminUserRepository = {
         OR du.phone LIKE $${kwIdx}
         OR t.description ILIKE $${kwIdx}
         OR b.name ILIKE $${kwIdx}
-        OR pr.reference_code ILIKE $${kwIdx})`;
+        OR pr.reference_code ILIKE $${kwIdx}
+        OR EXISTS (
+          SELECT 1
+          FROM postpaid_entries pe_kw
+          JOIN users pbu ON pbu.id = pe_kw.user_id
+          WHERE pe_kw.tx_id = t.id
+            AND pe_kw.action IN ('PURCHASE', 'REFUND')
+            AND (pbu.full_name ILIKE $${kwIdx} OR pbu.phone LIKE $${kwIdx})
+        ))`;
     }
 
     const commonSuffix = baseConditions.length > 0 ? `AND ${baseConditions.join(" AND ")}` : "";
@@ -494,6 +503,15 @@ const adminUserRepository = {
         FROM transactions t
         ${keywordJoins}
         WHERE t.destination_user_id = $1 ${commonSuffix} ${keywordFilterClause}
+        UNION
+        SELECT t.id, t.created_at
+        FROM postpaid_entries pe
+        JOIN transactions t ON t.id = pe.tx_id
+        ${keywordJoins}
+        WHERE pe.user_id = $1
+          AND pe.tx_id IS NOT NULL
+          AND pe.action IN ('PURCHASE', 'REFUND')
+          ${commonSuffix} ${keywordFilterClause}
       )
     `;
 
@@ -528,6 +546,8 @@ const adminUserRepository = {
         t.amount,
         t.user_fee AS fee,
         t.merchant_fee,
+        t.fee_rate_snapshot,
+        t.linked_bank_account_id,
         t.status,
         t.description,
         t.created_at,
@@ -543,7 +563,11 @@ const adminUserRepository = {
         t.dest_balance_after,
         b.name AS bank_name,
         lba.account_number AS bank_account,
-        pr.reference_code
+        pr.reference_code,
+        pp.action AS postpaid_entry_action,
+        pp.user_id AS postpaid_buyer_id,
+        pp.full_name AS postpaid_buyer_name,
+        pp.phone AS postpaid_buyer_phone
       FROM paged_tx p
       JOIN transactions t ON t.id = p.id
       LEFT JOIN users su ON t.source_user_id = su.id
@@ -551,6 +575,7 @@ const adminUserRepository = {
       LEFT JOIN linked_bank_accounts lba ON t.linked_bank_account_id = lba.id
       LEFT JOIN banks b ON lba.bank_id = b.id
       LEFT JOIN payment_requests pr ON pr.transaction_id = t.id
+      ${buildAdminPostpaidEntryLateralJoinSql("t")}
       ORDER BY t.created_at DESC, t.id DESC
       `,
       queryParams
